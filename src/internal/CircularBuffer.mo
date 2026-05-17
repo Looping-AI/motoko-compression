@@ -9,13 +9,14 @@
 /// Typical usage: `CircularBuffer(32768)` as an LZSS back-reference window.
 
 import Prim "mo:⛔";
+import Runtime "mo:core/Runtime";
 import Iter "mo:core/Iter";
 
 module {
 
   public class CircularBuffer(initCapacity : Nat) {
 
-    if (initCapacity == 0) Prim.trap("CircularBuffer: capacity must be > 0");
+    if (initCapacity == 0) Runtime.trap("CircularBuffer: capacity must be > 0");
 
     let cap : Nat = initCapacity;
     let buf : [var Nat8] = Prim.Array_init<Nat8>(cap, (0 : Nat8));

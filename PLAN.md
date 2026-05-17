@@ -28,13 +28,13 @@ Work through phases in order. Each phase ends with `mops test` passing before th
 
 **External packages evaluated and replaced:**
 
-| Package             | Used for                                              | Decision                                                        |
-| ------------------- | ----------------------------------------------------- | --------------------------------------------------------------- |
-| `base@0`            | Array, Buffer, Iter, Nat8/16/32, Hash, etc.           | Removed — all migrated to `mo:core`                             |
-| `bitbuffer@1`       | Bit-level read/write buffer                           | Replaced by `src/internal/BitBuffer.mo` (custom, `mo:core` only) |
-| `itertools@0`       | `RevIter`, `Itertools.equal`, `Itertools.chunks`      | Replaced by helpers in `src/utils.mo` + `mo:core/Iter`          |
-| `circular-buffer@0` | Rolling window buffer for LZSS                        | Replaced by `src/internal/CircularBuffer.mo` (custom)           |
-| `buffer-deque@0`    | Deque operations                                      | Replaced by `mo:core/Deque`                                     |
+| Package             | Used for                                         | Decision                                                         |
+| ------------------- | ------------------------------------------------ | ---------------------------------------------------------------- |
+| `base@0`            | Array, Buffer, Iter, Nat8/16/32, Hash, etc.      | Removed — all migrated to `mo:core`                              |
+| `bitbuffer@1`       | Bit-level read/write buffer                      | Replaced by `src/internal/BitBuffer.mo` (custom, `mo:core` only) |
+| `itertools@0`       | `RevIter`, `Itertools.equal`, `Itertools.chunks` | Replaced by helpers in `src/utils.mo` + `mo:core/Iter`           |
+| `circular-buffer@0` | Rolling window buffer for LZSS                   | Replaced by `src/internal/CircularBuffer.mo` (custom)            |
+| `buffer-deque@0`    | Deque operations                                 | Replaced by `mo:core/Deque`                                      |
 
 **Files created:**
 
@@ -84,37 +84,38 @@ Work through phases in order. Each phase ends with `mops test` passing before th
 
 ---
 
-## Phase 3 — BitReader
+## Phase 3 — BitReader [x]
 
-**Files to create:**
+**Files created:**
 
-- `src/BitReader.mo` — bit-level reader backed by `src/internal/BitBuffer.mo`
+- [x] `src/BitReader.mo` — bit-level reader backed by `src/internal/BitBuffer.mo`
+- [x] `tests/BitReader.Test.mo` — 29 sync tests
+- [x] `tests/helpers/TrapCanister.mo` — helper actor class for trap testing
+- [x] `tests/BitReaderTraps.Test.mo` — 4 replica tests for out-of-bounds traps
 
-**Source reference:**
+**Files modified:**
 
-- [src/BitReader.mo](https://github.com/edjcase/motoko_compression/blob/main/src/BitReader.mo)
+- [x] `src/internal/BitBuffer.mo` — `Prim.trap` → `Runtime.trap` (added `import Runtime "mo:core/Runtime"`)
+- [x] `src/internal/CircularBuffer.mo` — `Prim.trap` → `Runtime.trap` (added `import Runtime "mo:core/Runtime"`)
 
-**Key migration work:**
+**Key migration decisions:**
 
-- Replace `mo:base@0/*` imports with `mo:core/*`
-- Replace `mo:bitbuffer@1/BitBuffer` with `src/internal/BitBuffer.mo` (our Phase 1 implementation); API is `new`, `addBit`/`getBit`, `addBits`/`getBits`, `addByte`/`getByte`, `addBytes`/`getBytes`, `byteAlign`, `dropBits`, `clear`, `bytes`
+- `mo:core/Debug` has no `trap` function (only `print` and `todo`). Used `Runtime.trap(msg)` from `mo:core/Runtime` for all synchronous error paths.
+- `throw` is async-only in Motoko; `Runtime.trap` is the only option for sync bounds-checking.
+- Three API improvements over the original:
+  1. `peekByte()` — removed dead `nbits < 8` branch (unreachable after `is_valid(8)` guard)
+  2. `peekBytes(n)` — replaced mutate-then-restore tabulate with `bitbuffer.getBytes(offset, n)` directly
+  3. `readBytes(n)` — uses `bitbuffer.getBytes(offset, min_bytes)` + `offset += min_bytes * 8` (no side-effectful tabulate)
 
-**Test file:** `tests/BitReader.Test.mo`
+**Trap testing approach:**
 
-**Test coverage required:**
+- `expect.call(fn).reject()` only catches `#canister_reject` (thrown errors); it cannot catch `#canister_error` (traps). The `trap()` method in `mo:test` is commented out as "unable to catch".
+- Pattern used: deploy a `persistent actor class TrapCanister` that wraps each trapping sync call in a public `async` method. From the replica test, call each method inside a `try/catch` and check `Error.code(err) == #canister_error`.
+- Cycles: the mops test replica actor requires `(with cycles = 10_000_000_000_000)` (10 trillion) to instantiate a helper canister. 1 trillion is not enough — results in `install-code-not-enough-cycles`.
 
-- `readBit` / `peekBit` — single bit, multiple bits, boundary
-- `readBits` / `peekBits` — multi-bit reads, correct value reconstruction
-- `readByte` / `peekByte` — full byte, boundary
-- `readBytes` / `peekBytes` — multi-byte, exact vs over-read
-- `skipBits` — advance without reading
-- `byteAlign` — alignment padding
-- `hideTailBits` / `showTailBits` — tail masking
-- `clearRead` / `reset` / `clear` — state reset
-- `getPosition` / `setPosition` — seek behaviour
-- Trap on out-of-bounds reads (use `expect` trap checks)
+**Total new tests: 33** (29 sync + 4 replica)
 
-**Verify:** `mops test`
+**Verify:** `mops test` — all 6 files passing
 
 ---
 

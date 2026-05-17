@@ -11,6 +11,7 @@
 /// The backing array never shrinks; it doubles in capacity when full.
 
 import Prim "mo:⛔";
+import Runtime "mo:core/Runtime";
 import Nat8 "mo:core/Nat8";
 import Iter "mo:core/Iter";
 import Array "mo:core/Array";
@@ -151,7 +152,7 @@ module {
     /// Discard the first `n` bits from the logical read position.
     /// Traps if `n > bitSize()`.
     public func dropBits(n : Nat) {
-      if (n > bitSize()) Prim.trap("BitBuffer.dropBits: cannot drop more bits than available");
+      if (n > bitSize()) Runtime.trap("BitBuffer.dropBits: cannot drop more bits than available");
       readBit += n;
     };
 
@@ -172,7 +173,7 @@ module {
     /// or `byteAlign` the read side via their own accounting before iterating.
     public func bytes() : Iter.Iter<Nat8> {
       if (readBit % BYTE != 0) {
-        Prim.trap("BitBuffer.bytes: readBit is not byte-aligned")
+        Runtime.trap("BitBuffer.bytes: readBit is not byte-aligned")
       };
       let startByte = readBit  / BYTE;
       let endByte   = (writeBit + BYTE - 1) / BYTE;
