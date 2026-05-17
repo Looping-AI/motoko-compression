@@ -1,0 +1,45 @@
+name: "Copilot Setup Steps"
+
+# Automatically run the setup steps when they are changed to allow for easy
+# validation, and allow manual testing through the repository's "Actions" tab.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Load version pins
+        run: grep -Ev '^[[:space:]]*(#|$)' versions.env >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup ICP CLI
+        run: npm install -g @icp-sdk/icp-cli@${ICP_CLI_VERSION} @icp-sdk/ic-wasm@${IC_WASM_VERSION}
+
+      - name: Setup DIDC
+        run: |
+          wget https://github.com/dfinity/candid/releases/download/${DIDC_VERSION}/didc-linux64
+          sudo mv didc-linux64 /usr/local/bin/didc
+          sudo chmod +x /usr/local/bin/didc
+
+      - name: Setup Mops
+        uses: dfinity/setup-mops@v1
+
+      - name: Install Mops packages
+        run: mops install

@@ -1,0 +1,12 @@
+[package]
+name = "motoko-compression"
+version = "0.1.0"
+
+[dependencies]
+core = "2.5.0"
+
+[toolchain]
+moc = "1.7.0"
+
+[dev-dependencies]
+test = "2.1.2"
