@@ -250,6 +250,30 @@ suite("CircularBuffer clear", func() {
 
 });
 
+// ── popFront ────────────────────────────────────────────────────────────
+
+suite("CircularBuffer popFront", func() {
+
+  test("popFront on empty buffer returns null", func() {
+    let b = CircularBuffer.CircularBuffer(4);
+    expect.option(b.popFront(), Nat8.toText, Nat8.equal).isNull();
+  });
+
+  test("popFront removes oldest element and shrinks size", func() {
+    let b = CircularBuffer.CircularBuffer(4);
+    b.push(10); b.push(20); b.push(30);
+    let first = b.popFront();
+    expect.option(first, Nat8.toText, Nat8.equal).equal(?(10 : Nat8));
+    expect.nat(b.size()).equal(2);
+    expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(20 : Nat8));
+    expect.option(b.get(1), Nat8.toText, Nat8.equal).equal(?(30 : Nat8));
+    let second = b.popFront();
+    expect.option(second, Nat8.toText, Nat8.equal).equal(?(20 : Nat8));
+    expect.nat(b.size()).equal(1);
+  });
+
+});
+
 // ── LZSS sliding-window simulation ───────────────────────────────────────
 
 suite("CircularBuffer LZSS sliding-window simulation", func() {

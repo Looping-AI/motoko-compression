@@ -147,39 +147,45 @@ Work through phases in order. Each phase ends with `mops test` passing before th
 
 ---
 
-## Phase 5 — LZSS
+## Phase 5 — LZSS [x]
 
-**Files to create:**
+**Files created:**
 
-- `src/LZSS/Common.mo` — `LzssEntry`, `CompressionLevel`, constants (`MATCH_WINDOW_SIZE`, `MATCH_MAX_SIZE`)
-- `src/LZSS/Encoder/PrefixTable/HashValueTrie.mo`
-- `src/LZSS/Encoder/PrefixTable/HashValueTrieMap.mo`
-- `src/LZSS/Encoder/PrefixTable/lib.mo`
-- `src/LZSS/Encoder/lib.mo` — stateful `Encoder` class
-- `src/LZSS/Decoder.mo` — `Decoder` class and `decode` function
-- `src/LZSS/lib.mo` — public facade (`encode`, `decode`, re-exports)
+- [x] `src/LZSS/Common.mo` — `LzssEntry`, `CompressionLevel` (3 variants: `#fast`, `#balance`, `#best`; `#none` dropped — was unused), constants (`MATCH_WINDOW_SIZE = 32_768`, `MATCH_MAX_SIZE = 258`)
+- [x] `src/LZSS/Encoder/PrefixTable/lib.mo` — flat 65,536-slot prefix table (bug fix: original used `258^2 = 66,564`; correct value is `256×256 = 65,536`)
+- [x] `src/LZSS/Encoder/lib.mo` — stateful `Encoder` class with `CompressionLevel` wiring (`#fast`→1 024, `#balance`→8 192, `#best`→32 768 window)
+- [x] `src/LZSS/Decoder.mo` — `Decoder` class and top-level `decode` function; dead RLE branch removed
+- [x] `src/LZSS/lib.mo` — public facade (`encode`, `decode`, re-exports)
 
-**Source reference:**
+**Dead code removed vs original:**
 
-- [src/LZSS/](https://github.com/edjcase/motoko_compression/tree/main/src/LZSS)
+- `HashValueTrie.mo`, `HashValueTrieMap.mo` — `#small` PrefixTable path was commented out in original; dropped entirely
+- `encode_v1` — unused alternate encoder; dropped
+- `longest_prefix_length` — unused helper; dropped
 
-**Key migration work:**
+**Key migration decisions:**
 
-- Replace all `mo:base@0/*` imports with `mo:core/*`
-- `TrieMap` / hash map usage — audit against `mo:core/Map`
-- `Buffer.Buffer` → `mo:core/Buffer`
+- `mo:base/Buffer.Buffer<T>` → `mo:core/List.List<T>` for public API (array-backed, O(1) get)
+- `buffer-deque@0` → `CircularBuffer` reused with `popFront()` added
+- `CompressionLevel` type was defined but completely unused in original — wired up in `Encoder`
+- Table index computed inline: `Nat8.toNat(b0) * 256 + Nat8.toNat(b1)` (no `nat8_to_16` util needed)
+- `Runtime.unreachable()` for all impossible branches; `Runtime.trap` for validated errors
 
-**Test files:** `tests/LZSS/Encoder.Test.mo`, `tests/LZSS/PrefixTable.Test.mo`
+**Files modified:**
 
-**Test coverage required:**
+- [x] `src/internal/CircularBuffer.mo` — added `popFront() : ?Nat8` method
 
-- `encode` / `decode` round-trip: short string, long repeated string, random bytes, empty input, single byte
-- Compression levels: `#none`, `#fast`, `#balance`, `#best` — verify `#best` produces smaller or equal output vs `#fast`
-- `#pointer` entries reference valid previous positions (offset within window, length within `MATCH_MAX_SIZE`)
-- `#literal` entries pass through unchanged
-- PrefixTable: insert, lookup (found / not found), window eviction, hash collision handling
+**Test files created:**
 
-**Verify:** `mops test`
+- [x] `tests/LZSS.Test.mo` — sync tests: PrefixTable (5), Encoder (7), CompressionLevel (3), Decoder (4), round-trip (6) = 25 tests
+- [x] `tests/helpers/LzssTrapCanister.mo` — helper actor for trap testing
+- [x] `tests/LzssTraps.Test.mo` — 1 replica test: invalid pointer offset traps
+
+**Test files modified:**
+
+- [x] `tests/internal/CircularBuffer.Test.mo` — added 2 tests for `popFront`
+
+**Verify:** `mops test` — all 9 files passing
 
 ---
 

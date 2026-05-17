@@ -6,6 +6,8 @@
 /// Intended for use from tests/BitReaderTraps.Test.mo (replica test).
 
 import BitReader "../../src/BitReader";
+import List "mo:core/List";
+import LZSS "../../src/LZSS/lib";
 
 persistent actor class TrapCanister() {
 
@@ -27,6 +29,12 @@ persistent actor class TrapCanister() {
   public func peekByteOnEmpty() : async () {
     let r = BitReader.BitReader();
     ignore r.peekByte(); // traps: needs 8 bits, none available
+  };
+
+  public func decodeBadOffset() : async () {
+    let entries = List.empty<LZSS.LzssEntry>();
+    List.add(entries, #pointer(5, 3)); // backward_offset=5 > output.size()=0
+    ignore LZSS.decode(entries);
   };
 
 };

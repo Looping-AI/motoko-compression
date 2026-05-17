@@ -64,6 +64,15 @@ module {
       ?(buf[(head + i) % cap])
     };
 
+    /// Remove and return the oldest element (head), or null if empty.
+    public func popFront() : ?Nat8 {
+      if (count == 0) return null;
+      let v = buf[head];
+      head  := (head + 1) % cap;
+      count -= 1;
+      ?v
+    };
+
     /// Iterate over all elements from oldest to newest.
     public func values() : Iter.Iter<Nat8> {
       object {
