@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-This is an ICP (Internet Computer Protocol) canister built with Motoko, focused on compression algorithms for on-chain data.
+This is a **Motoko library package** implementing compression algorithms (Gzip, DEFLATE, LZSS, Huffman) for the Internet Computer. It is intended for use by other canisters via `mops add compression`.
 
-- **Language**: Motoko (`src/main.mo`)
+- **Language**: Motoko
 - **Package manager**: `mops` for Motoko dependencies
-- **Build tool**: `icp` CLI (`@icp-sdk/icp-cli`)
+- **Build tool**: `icp` CLI (`@icp-sdk/icp-cli`) — used only for compilation checks
 
 ## Important: Package Manager
 
@@ -39,18 +39,16 @@ Always start by checking for errors using the `get_errors` tool. This catches co
 
 ### For Motoko Code
 
-Use `icp build` to verify Motoko source code without deploying:
+Run the test suite after every change:
 
 ```bash
-# Check Motoko files for compilation errors
-icp build compression
+mops test
 ```
 
-If you modified Motoko test files, run:
+To check compilation without deploying:
 
 ```bash
-# Run Motoko unit tests
-mops test
+icp build compression
 ```
 
 ## Motoko Conventions
@@ -66,14 +64,14 @@ STOP and REQUEST USER FEEDBACK before proceeding in these situations:
 
 ### Design Decision Blockers
 
-- Architecture changes that affect the public canister API
+- Architecture changes that affect the public library API
 - Algorithm design choices with multiple valid trade-offs (speed vs. compression ratio)
-- Breaking changes to existing canister interfaces
+- Dependency decisions where multiple options exist (e.g. replacing an external package with inline logic)
 
 ### Technical Blockers
 
 - Multiple solution paths exist with unclear "best" choice
-- External dependency limitations
+- External dependency limitations (package not compatible with mo:core or moc version)
 - Workarounds needed that compromise original requirements
 
 ### How to Request Feedback
@@ -93,7 +91,3 @@ Steps:
 In Motoko tests, use `expect` syntax instead of `assert`. The `expect` API provides better error messages with actual vs expected values.
 
 Refer to `.mops/test@{version}/README.md` for complete `expect` documentation and examples.
-
-## Architecture
-
-The canister entry point is `src/main.mo`. Keep guard rails (authentication, authorization, validation) at the actor level, not buried inside helper functions.
