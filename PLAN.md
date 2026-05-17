@@ -22,56 +22,63 @@ Work through phases in order. Each phase ends with `mops test` passing before th
 
 ---
 
-## Phase 1 — Dependency Audit + `mops.toml` Setup
+## Phase 1 — Internal Primitives [x]
 
-Determine which external mops packages are still needed after replacing `mo:base@0` with `mo:core`.
+**Decision:** All external mops packages (`bitbuffer@1`, `itertools@0`, `circular-buffer@0`, `buffer-deque@0`) were audited and **none are needed**. All required functionality is implemented directly in Motoko using `mo:core` only — no additional entries in `mops.toml`.
 
-**Reference repo dependencies to evaluate:**
+**External packages evaluated and replaced:**
 
-| Package             | Used for                                                                    | mo:core covers? | Action                              |
-| ------------------- | --------------------------------------------------------------------------- | --------------- | ----------------------------------- |
-| `base@0`            | Array, Buffer, Iter, Nat8/16/32, Hash, Deque, Order, Debug, Result, Prelude | ✅ Yes          | Remove — migrate to `mo:core`       |
-| `bitbuffer@1`       | `BitBuffer` (bit-level buffer), `BitBuffer.getByte`, `BitBuffer.addBytes`   | ❌ No           | Keep — add to `mops.toml`           |
-| `itertools@0`       | `RevIter.fromDeque`, `Itertools.equal`, `Itertools.chunks`                  | Partial         | Audit — check `mo:core/Iter` first  |
-| `circular-buffer@0` | Rolling window buffer in LZSS                                               | Partial         | Audit — check `mo:core`             |
-| `buffer-deque@0`    | Deque operations                                                            | Partial         | Audit — `mo:core/Deque` may suffice |
+| Package             | Used for                                              | Decision                                                        |
+| ------------------- | ----------------------------------------------------- | --------------------------------------------------------------- |
+| `base@0`            | Array, Buffer, Iter, Nat8/16/32, Hash, etc.           | Removed — all migrated to `mo:core`                             |
+| `bitbuffer@1`       | Bit-level read/write buffer                           | Replaced by `src/internal/BitBuffer.mo` (custom, `mo:core` only) |
+| `itertools@0`       | `RevIter`, `Itertools.equal`, `Itertools.chunks`      | Replaced by helpers in `src/utils.mo` + `mo:core/Iter`          |
+| `circular-buffer@0` | Rolling window buffer for LZSS                        | Replaced by `src/internal/CircularBuffer.mo` (custom)           |
+| `buffer-deque@0`    | Deque operations                                      | Replaced by `mo:core/Deque`                                     |
 
-**Tasks:**
+**Files created:**
 
-- [ ] Run `mops search bitbuffer` — confirm latest compatible version
-- [ ] Run `mops search itertools` — check if a mo:core-compatible version exists
-- [ ] Run `mops search circular-buffer` — same check
-- [ ] Run `mops search buffer-deque` — same check
-- [ ] Add confirmed packages via `mops add <pkg>`
-- [ ] Run `mops install` and confirm no errors
+- [x] `src/utils.mo` — iterator helpers: `range(lo, hi)` (exclusive), `revRange(hi, lo)`, `iterEqual`
+- [x] `src/internal/BitBuffer.mo` — LSB-first bit buffer; `[var Nat8]` auto-doubling array; API: `new`, `addBit`/`getBit`, `addBits`/`getBits`, `addByte`/`getByte`, `addBytes`/`getBytes`, `byteAlign`, `dropBits`, `clear`, `bytes`
+- [x] `src/internal/CircularBuffer.mo` — fixed-capacity `Nat8` ring buffer for LZSS sliding window (default 32 768 slots); API: `capacity`, `size`, `isFull`, `push`, `get`, `values`, `clear`
+
+**Test files created:**
+
+- [x] `tests/Utils.Test.mo` — 24 tests
+- [x] `tests/internal/BitBuffer.Test.mo` — 38 tests
+- [x] `tests/internal/CircularBuffer.Test.mo` — 30 tests
+
+**Total: 92 tests passing**
 
 ---
 
-## Phase 2 — Utils + CRC32
+## Phase 2 — Utils expansion + CRC32
 
-**Files to create:**
+**Note:** `src/utils.mo` and `tests/Utils.Test.mo` already exist from Phase 1 (iterator helpers). This phase **expands** `src/utils.mo` with the functions from the [edjcase source](https://github.com/edjcase/motoko_compression/blob/main/src/utils.mo) and adds the CRC32 module.
 
-- `src/utils.mo` — general utility functions
-- `src/libs/CRC32.mo` — CRC32 checksum (IEEE polynomial, slicing-by-8 optimisation)
+**File to expand:**
 
-**Source reference:**
+- `src/utils.mo` — add: `div_ceil`, `nat_to_le_bytes`, `le_bytes_to_nat`, `bytes_to_nat`, `array_equal`, `nat8_to_32`, `nat8_to_16`
 
-- [src/utils.mo](https://github.com/edjcase/motoko_compression/blob/main/src/utils.mo)
-- [src/libs/CRC32.mo](https://github.com/edjcase/motoko_compression/blob/main/src/libs/CRC32.mo)
+**File to create:**
+
+- `src/libs/CRC32.mo` — CRC32 checksum (IEEE polynomial); source: [src/libs/CRC32.mo](https://github.com/edjcase/motoko_compression/blob/main/src/libs/CRC32.mo)
 
 **Key migration work:**
 
 - Replace all `mo:base@0/*` imports with `mo:core/*` equivalents
-- Replace `mo:itertools@0/RevIter` usage (if not available, inline or use `mo:core/Iter`)
 - `Hash.Hash` → `Nat32` (mo:core drops the Hash type alias)
-- `Buffer.last(buf)` → `buf.get(buf.size() - 1)` if API differs
+- No `mo:itertools` needed — use `mo:core/Iter` and existing `Utils.range` / `Utils.revRange`
 
-**Test file:** `tests/Utils.Test.mo`, `tests/CRC32.Test.mo`
+**Test files:**
+
+- `tests/Utils.Test.mo` — already exists (24 tests for Phase 1 helpers); **expand** with tests for the new functions
+- `tests/CRC32.Test.mo` — create new
 
 **Test coverage required:**
 
-- `utils.mo`: `div_ceil`, `nat_to_le_bytes`, `le_bytes_to_nat`, `bytes_to_nat`, `array_equal`, `nat8_to_32`, `nat8_to_16`; edge cases: zero, max Nat8, empty arrays, multi-byte roundtrips
-- `CRC32.mo`: known CRC32 vectors (e.g. `[]` → `0x00000000`, `[0x61]` → `0xE8B7BE43`), empty input, single byte, multi-byte, `reset()` behaviour, `updateByte` vs `update` equivalence
+- `utils.mo` additions: `div_ceil`, `nat_to_le_bytes`, `le_bytes_to_nat`, `bytes_to_nat`, `array_equal`, `nat8_to_32`, `nat8_to_16`; edge cases: zero, max `Nat8`, empty arrays, multi-byte roundtrips
+- `CRC32.mo`: known vectors (`[]` → `0x00000000`, `[0x61]` → `0xE8B7BE43`), empty input, single byte, multi-byte, `reset()` behaviour, `updateByte` vs `update` equivalence
 
 **Verify:** `mops test`
 
@@ -81,7 +88,7 @@ Determine which external mops packages are still needed after replacing `mo:base
 
 **Files to create:**
 
-- `src/BitReader.mo` — bit-level reader wrapping `mo:bitbuffer@1/BitBuffer`
+- `src/BitReader.mo` — bit-level reader backed by `src/internal/BitBuffer.mo`
 
 **Source reference:**
 
@@ -90,8 +97,7 @@ Determine which external mops packages are still needed after replacing `mo:base
 **Key migration work:**
 
 - Replace `mo:base@0/*` imports with `mo:core/*`
-- Keep `mo:bitbuffer@1/BitBuffer` (no core equivalent)
-- Verify `BitBuffer` API compatibility with the version added in Phase 1
+- Replace `mo:bitbuffer@1/BitBuffer` with `src/internal/BitBuffer.mo` (our Phase 1 implementation); API is `new`, `addBit`/`getBit`, `addBits`/`getBits`, `addByte`/`getByte`, `addBytes`/`getBytes`, `byteAlign`, `dropBits`, `clear`, `bytes`
 
 **Test file:** `tests/BitReader.Test.mo`
 
@@ -284,8 +290,11 @@ Trigger: decide during Phase 7 if there are any correctness concerns with the Gz
 ```
 src/
   main.mo                              ← Phase 8
-  utils.mo                             ← Phase 2
+  utils.mo                             ← Phase 1 (expanded Phase 2)
   BitReader.mo                         ← Phase 3
+  internal/
+    BitBuffer.mo                       ← Phase 1
+    CircularBuffer.mo                  ← Phase 1
   libs/
     CRC32.mo                           ← Phase 2
   Huffman/
@@ -315,9 +324,12 @@ src/
     lib.mo                             ← Phase 7
 
 tests/
-  Utils.Test.mo                        ← Phase 2
+  Utils.Test.mo                        ← Phase 1 (expanded Phase 2)
   CRC32.Test.mo                        ← Phase 2
   BitReader.Test.mo                    ← Phase 3
+  internal/
+    BitBuffer.Test.mo                  ← Phase 1
+    CircularBuffer.Test.mo             ← Phase 1
   Huffman.Test.mo                      ← Phase 4
   LZSS/
     Encoder.Test.mo                    ← Phase 5

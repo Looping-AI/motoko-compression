@@ -1,6 +1,7 @@
 import { test; suite; expect } "mo:test";
 import Iter "mo:core/Iter";
 import Nat "mo:core/Nat";
+import Nat8 "mo:core/Nat8";
 import Utils "../src/utils";
 
 // ── range ──────────────────────────────────────────────────────────────────
@@ -155,3 +156,161 @@ suite("Utils.iterEqual", func() {
   });
 
 });
+
+// ── INSTRUCTION_LIMIT ──────────────────────────────────────────────────────
+
+suite("Utils.INSTRUCTION_LIMIT", func() {
+
+  test("value is 1_048_576", func() {
+    expect.nat(Utils.INSTRUCTION_LIMIT).equal(1_048_576);
+  });
+
+});
+
+// ── div_ceil ───────────────────────────────────────────────────────────────
+
+suite("Utils.div_ceil", func() {
+
+  test("10 / 3 = ceil 4", func() {
+    expect.nat(Utils.div_ceil(10, 3)).equal(4);
+  });
+
+  test("exact division returns quotient", func() {
+    expect.nat(Utils.div_ceil(9, 3)).equal(3);
+  });
+
+  test("divisor larger than num returns 1", func() {
+    expect.nat(Utils.div_ceil(1, 5)).equal(1);
+  });
+
+  test("0 / any returns 0", func() {
+    expect.nat(Utils.div_ceil(0, 7)).equal(0);
+  });
+
+  test("div_ceil(n, 1) = n", func() {
+    expect.nat(Utils.div_ceil(100, 1)).equal(100);
+  });
+
+});
+
+// ── nat_to_le_bytes ────────────────────────────────────────────────────────
+
+suite("Utils.nat_to_le_bytes", func() {
+
+  test("zero fills with zeros", func() {
+    let result = Utils.nat_to_le_bytes(0, 4);
+    expect.array(result, Nat8.toText, Nat8.equal).equal([0, 0, 0, 0]);
+  });
+
+  test("single byte value", func() {
+    let result = Utils.nat_to_le_bytes(42, 1);
+    expect.array(result, Nat8.toText, Nat8.equal).equal([42]);
+  });
+
+  test("little-endian ordering: LSB first", func() {
+    // 0x0102 = 258 → LE bytes [0x02, 0x01]
+    let result = Utils.nat_to_le_bytes(258, 2);
+    expect.array(result, Nat8.toText, Nat8.equal).equal([2, 1]);
+  });
+
+  test("four-byte encoding", func() {
+    // 0x01020304 = 16909060
+    let result = Utils.nat_to_le_bytes(16909060, 4);
+    expect.array(result, Nat8.toText, Nat8.equal).equal([4, 3, 2, 1]);
+  });
+
+  test("extra bytes are zero-padded", func() {
+    let result = Utils.nat_to_le_bytes(1, 4);
+    expect.array(result, Nat8.toText, Nat8.equal).equal([1, 0, 0, 0]);
+  });
+
+});
+
+// ── bytes_to_nat ───────────────────────────────────────────────────────────
+
+suite("Utils.bytes_to_nat", func() {
+
+  test("empty array returns 0", func() {
+    expect.nat(Utils.bytes_to_nat([])).equal(0);
+  });
+
+  test("single byte", func() {
+    expect.nat(Utils.bytes_to_nat([42])).equal(42);
+  });
+
+  test("two bytes big-endian", func() {
+    // [0x01, 0x02] = 258
+    expect.nat(Utils.bytes_to_nat([1, 2])).equal(258);
+  });
+
+  test("four bytes big-endian", func() {
+    // [0x01, 0x02, 0x03, 0x04] = 16909060
+    expect.nat(Utils.bytes_to_nat([1, 2, 3, 4])).equal(16909060);
+  });
+
+});
+
+// ── le_bytes_to_nat ────────────────────────────────────────────────────────
+
+suite("Utils.le_bytes_to_nat", func() {
+
+  test("empty array returns 0", func() {
+    expect.nat(Utils.le_bytes_to_nat([])).equal(0);
+  });
+
+  test("single byte", func() {
+    expect.nat(Utils.le_bytes_to_nat([42])).equal(42);
+  });
+
+  test("two bytes little-endian", func() {
+    // [0x02, 0x01] = 258
+    expect.nat(Utils.le_bytes_to_nat([2, 1])).equal(258);
+  });
+
+  test("four bytes little-endian", func() {
+    // [0x04, 0x03, 0x02, 0x01] = 16909060
+    expect.nat(Utils.le_bytes_to_nat([4, 3, 2, 1])).equal(16909060);
+  });
+
+  test("roundtrip with nat_to_le_bytes", func() {
+    let n = 123456789;
+    let encoded = Utils.nat_to_le_bytes(n, 4);
+    expect.nat(Utils.le_bytes_to_nat(encoded)).equal(n);
+  });
+
+  test("roundtrip preserves zero", func() {
+    let encoded = Utils.nat_to_le_bytes(0, 4);
+    expect.nat(Utils.le_bytes_to_nat(encoded)).equal(0);
+  });
+
+});
+
+// ── array_equal ────────────────────────────────────────────────────────────
+
+suite("Utils.array_equal", func() {
+
+  let natEq = Utils.array_equal<Nat>(Nat.equal);
+
+  test("two empty arrays are equal", func() {
+    expect.bool(natEq([], [])).isTrue();
+  });
+
+  test("equal arrays return true", func() {
+    expect.bool(natEq([1, 2, 3], [1, 2, 3])).isTrue();
+  });
+
+  test("arrays with different values return false", func() {
+    expect.bool(natEq([1, 2, 3], [1, 2, 4])).isFalse();
+  });
+
+  test("arrays of different lengths return false", func() {
+    expect.bool(natEq([1, 2], [1, 2, 3])).isFalse();
+  });
+
+  test("uses provided equality function", func() {
+    let alwaysEq = Utils.array_equal<Nat>(func(_, _) = true);
+    expect.bool(alwaysEq([1, 2], [9, 9])).isTrue();
+  });
+
+});
+
