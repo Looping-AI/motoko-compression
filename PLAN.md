@@ -119,36 +119,31 @@ Work through phases in order. Each phase ends with `mops test` passing before th
 
 ---
 
-## Phase 4 — Huffman
+## Phase 4 — Huffman [x]
 
-**Files to create:**
+**Files created:**
 
-- `src/Huffman/Common.mo` — `Code` type, `reverseCodeBits`, `restore_huffman_codes`, `BuilderInterface`
-- `src/Huffman/Encoder.mo` — build Huffman codes from symbol frequencies
-- `src/Huffman/Decoder.mo` — decode Huffman-encoded bit streams
+- [x] `src/Huffman/Common.mo` — `Code` type, `reverseCodeBits`, `restore_huffman_codes`, `BuilderInterface`
+- [x] `src/Huffman/Encoder.mo` — build Huffman codes from symbol frequencies
+- [x] `src/Huffman/Decoder.mo` — decode Huffman-encoded bit streams
 
-**Source reference:**
+**Key migration decisions:**
 
-- [src/Huffman/Common.mo](https://github.com/edjcase/motoko_compression/blob/main/src/Huffman/Common.mo)
-- [src/Huffman/Encoder.mo](https://github.com/edjcase/motoko_compression/blob/main/src/Huffman/Encoder.mo)
-- [src/Huffman/Decoder.mo](https://github.com/edjcase/motoko_compression/blob/main/src/Huffman/Decoder.mo)
+- `mo:base/Buffer.Buffer<T>` → `mo:core/List` (mutable growable array). `List.get` returns `?T` — unwrap inline with `else Runtime.unreachable()`.
+- `mo:base/Heap` → `mo:core/PriorityQueue` with inverted compare. PriorityQueue is max-first; inverting the compare function restores min-heap semantics.
+- `Prelude.unreachable()` → `Runtime.unreachable()` (exists in mo:core/Runtime).
+- `Array.init<T>` → `Prim.Array_init<T>`. `Array.freeze` → `Array.fromVarArray` (mo:core).
+- `Itertools.enumerate` → `Iter.enumerate` (same API in mo:core).
+- `Itertools.range(a, b)` is **exclusive** `[a, b)` — same as `Utils.range(a, b)`.
+- `Iter.range(a, b)` from **mo:base** is **inclusive** `[a, b]` → `Utils.range(a, b + 1)`.
+- Drop dead import `nat8_to_16` from Common (never used in body).
+- Remove redundant `assert` before `#err` in Encoder.Builder.setMapping.
+- Fix typo `min_bidwidth` → `min_bitwidth` in Decoder.
+- Simplify `% (2 ** 5)` → `% 32` and `/ (2 ** 5)` → `/ 32` in Decoder.
 
-**Key migration work:**
+**Test file:** `tests/Huffman.Test.mo` — 30 sync tests across 5 suites
 
-- Replace all `mo:base@0/*` imports with `mo:core/*`
-- `Buffer.sort` API — verify signature against `mo:core/Buffer`
-- `Order.Order` → `mo:core/Order`
-
-**Test file:** `tests/Huffman.Test.mo`
-
-**Test coverage required:**
-
-- `reverseCodeBits` — known input/output pairs, zero bitwidth, max bitwidth (15)
-- `restore_huffman_codes` — empty bitwidth array (expect `#err`), single symbol, canonical codes, fixed Huffman table (DEFLATE spec), degenerate (all same bitwidth)
-- Encoder: frequency array → code table, symbol with zero frequency excluded, uniform distribution
-- Decoder: round-trip with encoder output, invalid code (expect `#err`), single-symbol alphabet
-
-**Verify:** `mops test`
+**Verify:** `mops test` — all 7 files passing
 
 ---
 
