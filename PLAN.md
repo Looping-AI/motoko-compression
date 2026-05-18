@@ -209,7 +209,7 @@ Work through phases in order. Each phase ends with `mops test` passing before th
 
 ---
 
-## Phase 7 — Gzip
+## Phase 7 — Gzip ✅
 
 **Files to create:**
 
