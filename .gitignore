@@ -4,3 +4,6 @@ node_modules
 
 # IDE
 .vscode
+
+# ICP Cli
+.icp
