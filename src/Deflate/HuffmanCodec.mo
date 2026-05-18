@@ -277,7 +277,8 @@ module {
       let dcc  = reader.readBits(5) + 1;     // HDIST + 1
       let bwcc = reader.readBits(4) + 4;     // HCLEN + 4
 
-      if (dcc > 30) return #err("HDIST too large: " # debug_show dcc);
+      if (lcc > 286) return #err("HLIT too large: " # debug_show lcc);
+      if (dcc > 30)  return #err("HDIST too large: " # debug_show dcc);
 
       // Read meta code lengths in BITWIDTH_CODE_ORDER
       let bw_arr = Prim.Array_init<Nat>(19, 0);
@@ -301,6 +302,9 @@ module {
           case (#ok(_)) {};
           case (#err(msg)) return #err(msg);
         };
+      };
+      if (List.size(lit_bws) > lcc) {
+        return #err("Literal bitwidths overflow: " # debug_show(List.size(lit_bws)));
       };
 
       // Decode distance code bitwidths

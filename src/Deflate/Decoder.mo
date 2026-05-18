@@ -33,8 +33,12 @@ module {
     /// Process deflate blocks until the final block or the stream is empty.
     public func decode() : Result<(), Text> {
       label _loop loop {
-        // Stop if the final block has been processed, or no bits remain
-        if (end_of_blocks or bitreader.bitSize() == 0) break _loop;
+        // Stop if the final block has been processed
+        if (end_of_blocks) break _loop;
+        // Stream ran out of bits before we saw BFINAL=1
+        if (bitreader.bitSize() == 0) {
+          return #err("Deflate: stream ended before final block");
+        };
 
         end_of_blocks := bitreader.readBit();         // BFINAL
         let block_type = bitreader.readBits(2);       // BTYPE

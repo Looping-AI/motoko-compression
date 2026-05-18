@@ -7,6 +7,7 @@ import Array        "mo:core/Array";
 import List         "mo:core/List";
 import Nat          "mo:core/Nat";
 import Queue        "mo:core/Queue";
+import Runtime      "mo:core/Runtime";
 import BitBuffer    "../internal/BitBuffer";
 import LzssCommon   "../LZSS/Common";
 import LzssEncoder  "../LZSS/Encoder/lib";
@@ -44,7 +45,11 @@ module {
     size   : () -> Nat;
     append : ([Nat8]) -> ();
     add    : (Nat8) -> ();
-    flush  : (BitBuffer) -> ();
+    /// Emit the block payload. `is_final` indicates whether this is the
+    /// last block of the stream — only then is the underlying LZSS
+    /// encoder allowed to drain its lookahead buffer. Calling LZSS flush
+    /// between non-final blocks would corrupt cross-block matches.
+    flush  : (BitBuffer, Bool) -> ();
     clear  : () -> ();
   };
 
@@ -78,8 +83,10 @@ module {
       for (b in bytes.vals()) add(b);
     };
 
-    public func flush(bitbuffer : BitBuffer) {
-      // Pad to byte boundary (BFINAL + BTYPE may have left partial byte)
+    public func flush(bitbuffer : BitBuffer, _is_final : Bool) {
+      // `_is_final` is unused here: Raw blocks hold no LZSS lookahead
+      // buffer, so there is nothing extra to drain on the final block.
+      // The Bool exists only to satisfy the shared BlockInterface.
       bitbuffer.byteAlign();
       let sz       = Nat.min(NO_COMPRESSION_MAX_BLOCK_SIZE, input_size);
       let sz_bytes = Utils.nat_to_le_bytes(sz, 2);
@@ -129,18 +136,24 @@ module {
       lzss.encode(bytes, sink);
     };
 
-    public func flush(bitbuffer : BitBuffer) {
-      // Drain the LZSS lookahead buffer
-      lzss.flush(sink);
+    public func flush(bitbuffer : BitBuffer, is_final : Bool) {
+      // Drain the LZSS lookahead buffer ONLY on the final block. For
+      // non-final blocks, pending bytes stay in the LZSS encoder so that
+      // matches may span across block boundaries (legal per RFC 1951 — the
+      // decoder maintains a single 32 KB sliding window across all blocks).
+      if (is_final) lzss.flush(sink);
 
       // Build the Huffman codec for the symbols collected so far
       let symbol_encoder = switch (huffman.build(List.values(compressed))) {
         case (#ok(e)) e;
-        case (#err(_)) return;  // should never happen
+        case (#err(msg)) Runtime.trap("Deflate.Compress.flush: build failed: " # msg);
       };
 
       // Write the codec header (no-op for fixed, code lengths for dynamic)
-      ignore huffman.save(bitbuffer, symbol_encoder);
+      switch (huffman.save(bitbuffer, symbol_encoder)) {
+        case (#ok(_)) {};
+        case (#err(msg)) Runtime.trap("Deflate.Compress.flush: save failed: " # msg);
+      };
 
       // Encode each compressed symbol
       for (sym in List.values(compressed)) {
