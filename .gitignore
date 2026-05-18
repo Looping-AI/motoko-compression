@@ -1,3 +1,6 @@
 # Package Dependencies
 .mops
 node_modules
+
+# IDE
+.vscode

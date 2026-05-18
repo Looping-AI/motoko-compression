@@ -189,38 +189,23 @@ Work through phases in order. Each phase ends with `mops test` passing before th
 
 ---
 
-## Phase 6 — Deflate
+## Phase 6 — Deflate ✅
 
-**Files to create:**
+**Files created:**
 
-- `src/Deflate/Symbol.mo` — `Symbol` type (literal/length/distance/end-of-block)
-- `src/Deflate/Block.mo` — DEFLATE block types (stored, fixed Huffman, dynamic Huffman)
-- `src/Deflate/Encoder.mo` — `Encoder` class
-- `src/Deflate/Decoder.mo` — `Decoder` class
-- `src/Deflate/lib.mo` — public facade (`buildEncoder`, `buildDecoder`, `DeflateOptions`, re-exports)
+- [x] `src/Deflate/Symbol.mo` — `Symbol` type + bitwidth-code order tables
+- [x] `src/Deflate/HuffmanCodec.mo` — Fixed and Dynamic Huffman codecs (load/save)
+- [x] `src/Deflate/Encoder.mo` — `Encoder` class
+- [x] `src/Deflate/Decoder.mo` — `Decoder` class
+- [x] `src/Deflate/lib.mo` — public facade (`buildEncoder`, `DeflateOptions`)
 
-**Source reference:**
+**Test file:** `tests/Deflate.Test.mo` — passing
+- Symbol encoding/decoding (literals, lengths, distances, EOB)
+- Raw block round-trip
+- Fixed Huffman round-trip
+- Dynamic Huffman round-trip (incl. empty input edge case)
 
-- [src/Deflate/](https://github.com/edjcase/motoko_compression/tree/main/src/Deflate)
-
-**Key migration work:**
-
-- Replace all `mo:base@0/*` imports with `mo:core/*`
-- `BitBuffer` / `BitReader` usage — internal cross-module
-- Depends on Phases 3 (BitReader), 4 (Huffman), 5 (LZSS)
-
-**Test file:** `tests/Deflate.Test.mo`
-
-**Test coverage required:**
-
-- Stored block mode (no compression): round-trip, empty, max block size
-- Fixed Huffman mode: round-trip, known compressed byte sequence
-- Dynamic Huffman mode: round-trip, correct code table generation
-- `block_size` boundary: data exactly at boundary, data spanning multiple blocks
-- `DeflateOptions.lzss = null` vs custom `LzssEncoder` — both paths exercised
-- Decoder: truncated input (expect `#err`), corrupt header (expect `#err`)
-
-**Verify:** `mops test`
+**Verify:** `mops test` — all 10 files passing
 
 ---
 

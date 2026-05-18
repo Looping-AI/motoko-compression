@@ -51,6 +51,34 @@ To check compilation without deploying:
 icp build compression
 ```
 
+## Debugging with `mops test`
+
+`mops test` (without arguments) suppresses all stdout — `Debug.print` calls are silently discarded. To see console output, run a **specific test file** by passing the filename stem (the filename without the `.Test.mo` suffix):
+
+```bash
+mops test Deflate      # runs tests/Deflate.Test.mo and shows stdout
+mops test Huffman      # runs tests/Huffman.Test.mo and shows stdout
+mops test BitReader    # runs tests/BitReader.Test.mo and shows stdout
+```
+
+### Tracing values with `Debug.print`
+
+Scatter `Debug.print` calls in the code under test, using `debug_show` to serialise any value:
+
+```motoko
+import Debug "mo:core/Debug";
+
+Debug.print("myVar=" # debug_show myVar);
+```
+
+Then run `mops test <Stem>` to see the trace. This is the fastest way to understand what values flow through a function without needing an interactive debugger.
+
+### Cleanup after debugging
+
+Remove all `Debug.print` calls and their `import Debug` lines before committing. Do not leave debug instrumentation in source files.
+
+---
+
 ## Motoko Conventions
 
 - Model function parameter order: place the state/collection parameter first, aligning with `mo:core` idioms (e.g. `Map.get(map, compare, key)`).
