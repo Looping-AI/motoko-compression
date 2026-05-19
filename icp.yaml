@@ -14,6 +14,13 @@ canisters:
         main: example/compress-images.mo
         args: ""
 
+  - name: external-decompress
+    recipe:
+      type: "@dfinity/motoko@v4.1.0"
+      configuration:
+        main: example/external-decompress.mo
+        args: ""
+
 networks:
   - name: local
     mode: managed
@@ -21,4 +28,4 @@ networks:
 environments:
   - name: local
     network: local
-    canisters: [compression, image-compression]
+    canisters: [compression, image-compression, external-decompress]
