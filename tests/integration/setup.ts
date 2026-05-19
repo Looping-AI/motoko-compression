@@ -1,0 +1,56 @@
+/**
+ * Shared PocketIC helpers for integration tests.
+ *
+ * IDL types and factories are imported from the generated builds/ directory.
+ * Run `bun run build:canisters` before running tests.
+ */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import type { PocketIc } from "@dfinity/pic";
+import type { _SERVICE as CompressionService } from "./builds/compression.did.d.ts";
+import { idlFactory as compressionIdlFactory } from "./builds/compression.did.js";
+import type { _SERVICE as ExternalDecompressService } from "./builds/external-decompress.did.d.ts";
+import { idlFactory as externalDecompressIdlFactory } from "./builds/external-decompress.did.js";
+
+export type { CompressionService, ExternalDecompressService };
+
+const BUILDS = resolve(import.meta.dir, "builds");
+
+// ── WASM cache — loaded once, reused across all tests ────────────────────────
+
+let _compressionWasm: Uint8Array | undefined;
+let _externalDecompressWasm: Uint8Array | undefined;
+
+function getCompressionWasm(): Uint8Array {
+  if (!_compressionWasm)
+    _compressionWasm = new Uint8Array(
+      readFileSync(resolve(BUILDS, "compression.wasm")),
+    );
+  return _compressionWasm;
+}
+
+function getExternalDecompressWasm(): Uint8Array {
+  if (!_externalDecompressWasm)
+    _externalDecompressWasm = new Uint8Array(
+      readFileSync(resolve(BUILDS, "external-decompress.wasm")),
+    );
+  return _externalDecompressWasm;
+}
+
+// ── Canister factory helpers ──────────────────────────────────────────────────
+
+export async function createCompressionCanister(pic: PocketIc) {
+  const fixture = await pic.setupCanister<CompressionService>({
+    idlFactory: compressionIdlFactory,
+    wasm: getCompressionWasm(),
+  });
+  return { actor: fixture.actor, canisterId: fixture.canisterId };
+}
+
+export async function createExternalDecompressCanister(pic: PocketIc) {
+  const fixture = await pic.setupCanister<ExternalDecompressService>({
+    idlFactory: externalDecompressIdlFactory,
+    wasm: getExternalDecompressWasm(),
+  });
+  return { actor: fixture.actor, canisterId: fixture.canisterId };
+}

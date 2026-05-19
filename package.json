@@ -1,0 +1,20 @@
+{
+  "name": "motoko-compression",
+  "private": true,
+  "scripts": {
+    "build:canisters": "bun run tests/integration/build.ts",
+    "test": "bun test tests/integration/",
+    "test:correctness": "bun test tests/integration/gzip-correctness.test.ts",
+    "test:interop": "bun test tests/integration/gzip-interop.test.ts"
+  },
+  "devDependencies": {
+    "@dfinity/agent": "*",
+    "@dfinity/candid": "*",
+    "@dfinity/pic": "*",
+    "@dfinity/principal": "*",
+    "@types/bun": "*"
+  },
+  "trustedDependencies": [
+    "@dfinity/pic"
+  ]
+}
