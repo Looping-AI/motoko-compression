@@ -101,20 +101,6 @@ suite(
     );
 
     test(
-      "updateIter matches update",
-      func() {
-        let data : [Nat8] = [0x68, 0x65, 0x6C, 0x6C, 0x6F];
-        let crc1 = CRC32.CRC32();
-        crc1.update(data);
-        let expected = crc1.finish();
-
-        let crc2 = CRC32.CRC32();
-        crc2.updateIter(data.vals());
-        expect.nat32(crc2.finish()).equal(expected);
-      },
-    );
-
-    test(
       "two update calls equal one combined update",
       func() {
         let a : [Nat8] = [0x31, 0x32, 0x33];

@@ -171,19 +171,8 @@ suite(
 );
 
 suite(
-  "peekBytes / readBytes",
+  "readBytes",
   func() {
-    test(
-      "peekBytes is non-mutating",
-      func() {
-        let r = BitReader.fromBytes([0xA5 : Nat8, 0x42 : Nat8]);
-        let b1 = r.peekBytes(2);
-        let b2 = r.peekBytes(2);
-        expect.array(b1, Nat8.toText, Nat8.equal).equal(b2);
-        expect.nat(r.getPosition()).equal(0);
-      },
-    );
-
     test(
       "readBytes reads correct values and advances",
       func() {
@@ -236,32 +225,6 @@ suite(
         ignore r.readBit();
         r.byteAlign();
         expect.nat(r.bitSize()).equal(8);
-      },
-    );
-  },
-);
-
-suite(
-  "hideTailBits / showTailBits / hiddenTailBits",
-  func() {
-    test(
-      "hideTailBits reduces visible bitSize",
-      func() {
-        let r = BitReader.fromBytes([0xA5 : Nat8]);
-        r.hideTailBits(2);
-        expect.nat(r.bitSize()).equal(6);
-        expect.nat(r.hiddenTailBits()).equal(2);
-      },
-    );
-
-    test(
-      "showTailBits restores full bitSize",
-      func() {
-        let r = BitReader.fromBytes([0xA5 : Nat8]);
-        r.hideTailBits(2);
-        r.showTailBits();
-        expect.nat(r.bitSize()).equal(8);
-        expect.nat(r.hiddenTailBits()).equal(0);
       },
     );
   },
@@ -326,7 +289,6 @@ suite(
         r.clear();
         expect.nat(r.bitSize()).equal(0);
         expect.nat(r.getPosition()).equal(0);
-        expect.nat(r.hiddenTailBits()).equal(0);
       },
     );
   },

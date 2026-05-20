@@ -26,8 +26,7 @@ module {
   };
 
   /// Create a fresh Deflate decoder with an internal output buffer.
-  /// Feed compressed bytes via `decoder.addBytes(...)`, then call
-  /// `decoder.finish()` and read results with `decoder.toArray()`.
+  /// Call `decoder.finish()` and read results with `decoder.toArray()`.
   public func buildDecoder(buffer : ?List.List<Nat8>) : DeflateDecoder.Decoder {
     DeflateDecoder.Decoder(BitReader.BitReader(), buffer);
   };

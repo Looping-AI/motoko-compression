@@ -1,14 +1,19 @@
 import { test; suite; expect } "mo:test";
-import Iter "mo:core/Iter";
+import Array "mo:core/Array";
 import Nat8 "mo:core/Nat8";
 import Utils "../../src/internal/utils";
 import CircularBuffer "../../src/internal/CircularBuffer";
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-// Collect all elements of `buf` into an immutable array via values().
+// Collect all elements of `buf` into an immutable array.
 func toArray(buf : CircularBuffer.CircularBuffer) : [Nat8] {
-  Iter.toArray(buf.values());
+  Array.tabulate<Nat8>(
+    buf.size(),
+    func(i) {
+      switch (buf.get(i)) { case (?v) v; case null 0 };
+    },
+  );
 };
 
 // ── size / capacity ───────────────────────────────────────────────────────
@@ -18,26 +23,10 @@ suite(
   func() {
 
     test(
-      "capacity reflects construction argument",
-      func() {
-        let b = CircularBuffer.CircularBuffer(16);
-        expect.nat(b.capacity()).equal(16);
-      },
-    );
-
-    test(
       "size is 0 on a fresh buffer",
       func() {
         let b = CircularBuffer.CircularBuffer(8);
         expect.nat(b.size()).equal(0);
-      },
-    );
-
-    test(
-      "isFull is false on empty buffer",
-      func() {
-        let b = CircularBuffer.CircularBuffer(4);
-        expect.bool(b.isFull()).isFalse();
       },
     );
 
@@ -56,23 +45,11 @@ suite(
     );
 
     test(
-      "isFull becomes true once capacity is reached",
-      func() {
-        let b = CircularBuffer.CircularBuffer(3);
-        b.push(1);
-        b.push(2);
-        b.push(3);
-        expect.bool(b.isFull()).isTrue();
-      },
-    );
-
-    test(
       "size stays at capacity after overflow pushes",
       func() {
         let b = CircularBuffer.CircularBuffer(4);
         for (_ in Utils.range(0, 10)) b.push(0x42);
         expect.nat(b.size()).equal(4);
-        expect.bool(b.isFull()).isTrue();
       },
     );
 
@@ -151,7 +128,7 @@ suite(
     );
 
     test(
-      "values() after full fill matches push order",
+      "push order preserved after full fill",
       func() {
         let b = CircularBuffer.CircularBuffer(4);
         b.push(0xAA);
@@ -243,63 +220,6 @@ suite(
   },
 );
 
-// ── values() iterator ─────────────────────────────────────────────────────
-
-suite(
-  "CircularBuffer values()",
-  func() {
-
-    test(
-      "empty buffer yields nothing",
-      func() {
-        let b = CircularBuffer.CircularBuffer(4);
-        expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([]);
-      },
-    );
-
-    test(
-      "partial fill yields elements in push order",
-      func() {
-        let b = CircularBuffer.CircularBuffer(8);
-        b.push(7);
-        b.push(8);
-        b.push(9);
-        expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([7, 8, 9]);
-      },
-    );
-
-    test(
-      "values() after overflow matches get() sequence",
-      func() {
-        let b = CircularBuffer.CircularBuffer(4);
-        for (i in Utils.range(0, 7)) b.push(Nat8.fromNat(i)); // last 4: [3,4,5,6]
-        let via_values = toArray(b);
-        let via_get : [Nat8] = [
-          switch (b.get(0)) { case (?v) v; case null (0xFF : Nat8) },
-          switch (b.get(1)) { case (?v) v; case null (0xFF : Nat8) },
-          switch (b.get(2)) { case (?v) v; case null (0xFF : Nat8) },
-          switch (b.get(3)) { case (?v) v; case null (0xFF : Nat8) },
-        ];
-        expect.array(via_values, Nat8.toText, Nat8.equal).equal(via_get);
-      },
-    );
-
-    test(
-      "multiple values() calls on same buffer are independent",
-      func() {
-        let b = CircularBuffer.CircularBuffer(4);
-        b.push(1);
-        b.push(2);
-        b.push(3);
-        let first = Iter.toArray(b.values());
-        let second = Iter.toArray(b.values());
-        expect.array(first, Nat8.toText, Nat8.equal).equal(second);
-      },
-    );
-
-  },
-);
-
 // ── clear ────────────────────────────────────────────────────────────────
 
 suite(
@@ -315,7 +235,6 @@ suite(
         b.push(3);
         b.clear();
         expect.nat(b.size()).equal(0);
-        expect.bool(b.isFull()).isFalse();
       },
     );
 
@@ -357,17 +276,6 @@ suite(
         b.push(0xBB);
         b.push(0xCC);
         expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([0xAA, 0xBB, 0xCC]);
-      },
-    );
-
-    test(
-      "capacity is unchanged by clear",
-      func() {
-        let b = CircularBuffer.CircularBuffer(8);
-        b.push(1);
-        b.push(2);
-        b.clear();
-        expect.nat(b.capacity()).equal(8);
       },
     );
 
@@ -431,7 +339,6 @@ suite(
         let b = CircularBuffer.CircularBuffer(32768);
         for (i in Utils.range(0, 32768)) b.push(Nat8.fromNat(i % 256));
         expect.nat(b.size()).equal(32768);
-        expect.bool(b.isFull()).isTrue();
         // oldest = i=0 → value 0
         expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(0 : Nat8));
         // newest = i=32767 → 32767 % 256 = 255

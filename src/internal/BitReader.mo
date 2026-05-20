@@ -80,12 +80,6 @@ module {
       byte;
     };
 
-    /// Return the next `nbytes` bytes without advancing the read position.
-    /// Uses BitBuffer.getBytes directly — no side-effectful tabulate.
-    public func peekBytes(nbytes : Nat) : [Nat8] {
-      bitbuffer.getBytes(offset, nbytes);
-    };
-
     /// Consume up to `nbytes` bytes (clamped to available `byteSize()`).
     public func readBytes(nbytes : Nat) : [Nat8] {
       let min_bytes = Nat.min(nbytes, byteSize());
@@ -156,11 +150,6 @@ module {
     /// Hide the last `n` bits from reads (reduces visible `bitSize` by `n`).
     public func hideTailBits(n : Nat) { tailBits := n };
 
-    /// Return the number of currently hidden tail bits.
-    public func hiddenTailBits() : Nat { tailBits };
-
-    /// Unhide all tail bits (restore full `bitSize`).
-    public func showTailBits() { tailBits := 0 };
   };
 
   /// Convenience constructor: create a BitReader pre-loaded with `bytes`.

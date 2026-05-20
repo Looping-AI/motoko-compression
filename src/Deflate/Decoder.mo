@@ -105,9 +105,6 @@ module {
 
     /// Return all decoded bytes as an immutable array.
     public func toArray() : [Nat8] { List.toArray(buffer) };
-
-    /// Feed more compressed bytes into the underlying bit-reader.
-    public func addBytes(bytes : [Nat8]) { bitreader.addBytes(bytes) };
   };
 
 };

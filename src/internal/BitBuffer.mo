@@ -14,7 +14,6 @@ import Prim "mo:⛔";
 import Runtime "mo:core/Runtime";
 import Nat8 "mo:core/Nat8";
 import Nat32 "mo:core/Nat32";
-import Iter "mo:core/Iter";
 import Array "mo:core/Array";
 
 module {
@@ -201,29 +200,6 @@ module {
       while (i < live) { buf[i] := 0; i += 1 };
       writeBit := 0;
       readBit := 0;
-    };
-
-    // ── Iteration ─────────────────────────────────────────────────────────
-
-    /// Iterate over bytes from the logical read position to the end.
-    /// Traps if `readBit` is not byte-aligned (mid-byte iteration is ambiguous).
-    /// Callers that mix `dropBits` with `bytes()` must `dropBits` in multiples of 8
-    /// or `byteAlign` the read side via their own accounting before iterating.
-    public func bytes() : Iter.Iter<Nat8> {
-      if (readBit % BYTE != 0) {
-        Runtime.trap("BitBuffer.bytes: readBit is not byte-aligned");
-      };
-      let startByte = readBit / BYTE;
-      let endByte = (writeBit + BYTE - 1) / BYTE;
-      object {
-        var pos = startByte;
-        public func next() : ?Nat8 {
-          if (pos >= endByte) return null;
-          let b = buf[pos];
-          pos += 1;
-          ?b;
-        };
-      };
     };
 
   }; // end class BitBuffer

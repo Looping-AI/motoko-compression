@@ -242,15 +242,6 @@ suite(
       },
     );
 
-    test(
-      "windowSize() reflects the chosen level",
-      func() {
-        expect.nat(EncoderLib.Encoder(#fast).windowSize()).equal(1_024);
-        expect.nat(EncoderLib.Encoder(#balance).windowSize()).equal(8_192);
-        expect.nat(EncoderLib.Encoder(#best).windowSize()).equal(32_768);
-      },
-    );
-
   },
 );
 

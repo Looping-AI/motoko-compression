@@ -1,7 +1,6 @@
 import { test; suite; expect } "mo:test";
 import Nat16 "mo:core/Nat16";
 import Array "mo:core/Array";
-import Iter "mo:core/Iter";
 import Result "mo:core/Result";
 import Runtime "mo:core/Runtime";
 import Prim "mo:⛔";
@@ -412,7 +411,7 @@ suite(
           case (#ok(enc), #ok(dec)) {
             let buf = BitBuffer.BitBuffer(8);
             enc.encode(buf, 0);
-            let reader = BitReader.fromBytes(Iter.toArray(buf.bytes()));
+            let reader = BitReader.fromBytes(buf.getBytes(0, buf.byteSize()));
             switch (dec.decode(reader)) {
               case (#ok(sym)) expect.nat(sym).equal(0);
               case (#err(msg)) Runtime.trap("Decode failed: " # msg);
@@ -433,7 +432,7 @@ suite(
           case (#ok(enc), #ok(dec)) {
             let buf = BitBuffer.BitBuffer(8);
             enc.encode(buf, 1);
-            let reader = BitReader.fromBytes(Iter.toArray(buf.bytes()));
+            let reader = BitReader.fromBytes(buf.getBytes(0, buf.byteSize()));
             switch (dec.decode(reader)) {
               case (#ok(sym)) expect.nat(sym).equal(1);
               case (#err(msg)) Runtime.trap("Decode failed: " # msg);
@@ -458,7 +457,7 @@ suite(
             enc.encode(buf, 2);
             enc.encode(buf, 3);
             buf.byteAlign();
-            let reader = BitReader.fromBytes(Iter.toArray(buf.bytes()));
+            let reader = BitReader.fromBytes(buf.getBytes(0, buf.byteSize()));
             for (expected in [0, 1, 2, 3].vals()) {
               switch (dec.decode(reader)) {
                 case (#ok(sym)) expect.nat(sym).equal(expected);
@@ -496,7 +495,7 @@ suite(
                   if (enc.lookup(sym).bitwidth > 0) enc.encode(buf, sym);
                 };
                 buf.byteAlign();
-                let reader = BitReader.fromBytes(Iter.toArray(buf.bytes()));
+                let reader = BitReader.fromBytes(buf.getBytes(0, buf.byteSize()));
                 for (sym in [0, 1, 2, 3, 4].vals()) {
                   if (enc.lookup(sym).bitwidth > 0) {
                     switch (dec.decode(reader)) {

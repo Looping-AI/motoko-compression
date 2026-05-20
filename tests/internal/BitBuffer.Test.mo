@@ -1,5 +1,4 @@
 import { test; suite; expect } "mo:test";
-import Iter "mo:core/Iter";
 import Nat8 "mo:core/Nat8";
 import Utils "../../src/internal/utils";
 import BitBuffer "../../src/internal/BitBuffer";
@@ -414,57 +413,6 @@ suite(
   },
 );
 
-// ── bytes() iterator ──────────────────────────────────────────────────────
-
-suite(
-  "BitBuffer.bytes",
-  func() {
-
-    test(
-      "bytes() over 3 bytes",
-      func() {
-        let b = BitBuffer.BitBuffer(8);
-        b.addBytes([0x01, 0x02, 0x03]);
-        let result = Iter.toArray(b.bytes());
-        expect.array(result, Nat8.toText, Nat8.equal).equal([0x01, 0x02, 0x03]);
-      },
-    );
-
-    test(
-      "bytes() on empty buffer yields nothing",
-      func() {
-        let b = BitBuffer.BitBuffer(8);
-        let result = Iter.toArray(b.bytes());
-        expect.array(result, Nat8.toText, Nat8.equal).equal([]);
-      },
-    );
-
-    test(
-      "bytes() after byteAlign includes padding byte",
-      func() {
-        let b = BitBuffer.BitBuffer(8);
-        b.addBits(3, 5); // low 3 bits = 5
-        b.byteAlign();
-        let result = Iter.toArray(b.bytes());
-        expect.nat(result.size()).equal(1);
-        expect.nat8(result[0]).equal(0x05);
-      },
-    );
-
-    test(
-      "bytes() after dropBits(8) skips first byte",
-      func() {
-        let b = BitBuffer.BitBuffer(8);
-        b.addBytes([0xAA, 0xBB]);
-        b.dropBits(8);
-        let result = Iter.toArray(b.bytes());
-        expect.array(result, Nat8.toText, Nat8.equal).equal([0xBB]);
-      },
-    );
-
-  },
-);
-
 // ── capacity growth ────────────────────────────────────────────────────────
 
 suite(
@@ -683,37 +631,6 @@ suite(
           expect.nat(b.getBits(0, n)).equal(masked);
           expect.nat(b.bitSize()).equal(n);
         };
-      },
-    );
-
-  },
-);
-
-// ── bytes() alignment guard ───────────────────────────────────────────────
-
-suite(
-  "BitBuffer.bytes alignment guard",
-  func() {
-
-    test(
-      "bytes() and getBytes(0, byteSize) agree when aligned",
-      func() {
-        let b = BitBuffer.BitBuffer(8);
-        b.addBytes([0xDE, 0xAD, 0xBE, 0xEF]);
-        let viaIter = Iter.toArray(b.bytes());
-        let viaGet = b.getBytes(0, b.byteSize());
-        expect.array(viaIter, Nat8.toText, Nat8.equal).equal(viaGet);
-      },
-    );
-
-    test(
-      "bytes() after byte-aligned dropBits(16)",
-      func() {
-        let b = BitBuffer.BitBuffer(8);
-        b.addBytes([0x11, 0x22, 0x33, 0x44]);
-        b.dropBits(16);
-        let result = Iter.toArray(b.bytes());
-        expect.array(result, Nat8.toText, Nat8.equal).equal([0x33, 0x44]);
       },
     );
 

@@ -44,12 +44,6 @@ module CRC32 {
       input_size += 1;
     };
 
-    public func updateIter(iter : { next : () -> ?Nat8 }) {
-      for (byte in iter) {
-        updateByte(byte);
-      };
-    };
-
     public func update(data : [Nat8]) {
       for (byte in data.vals()) {
         updateByte(byte);

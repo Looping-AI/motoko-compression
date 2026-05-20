@@ -89,6 +89,12 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       ],
     },
   ],
+  utils: [
+    {
+      file: "src/internal/utils.mo",
+      funcs: ["natToLeBytes", "leBytesToNat", "range", "revRange"],
+    },
+  ],
 };
 
 /**
@@ -103,6 +109,7 @@ const PAYLOAD_BYTES: Record<string, number> = {
   lzss: 1024 * 1024,
   bitbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   circularbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
+  utils: 10 * 1024, // 10 KiB — fine-grained primitive
 };
 
 // ── CLI ────────────────────────────────────────────────────────────────────────

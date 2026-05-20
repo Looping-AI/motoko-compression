@@ -79,10 +79,6 @@ module {
     var match_index : ?Nat = null;
     var input_size : Nat = 0;
 
-    // ── Queries ────────────────────────────────────────────────────────────
-
-    public func windowSize() : Nat = window_size;
-
     // ── Internals ──────────────────────────────────────────────────────────
 
     /// Unwrap get() from a CircularBuffer, trapping if out of bounds.

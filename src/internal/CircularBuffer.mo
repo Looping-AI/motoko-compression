@@ -10,7 +10,6 @@
 
 import Prim "mo:⛔";
 import Runtime "mo:core/Runtime";
-import Iter "mo:core/Iter";
 
 module {
 
@@ -25,14 +24,8 @@ module {
 
     // ── Queries ───────────────────────────────────────────────────────────
 
-    /// Maximum number of elements the buffer can hold.
-    public func capacity() : Nat { cap };
-
     /// Current number of elements in the buffer.
     public func size() : Nat { count };
-
-    /// True iff the buffer holds exactly `capacity()` elements.
-    public func isFull() : Bool { count == cap };
 
     // ── Mutation ──────────────────────────────────────────────────────────
 
@@ -69,19 +62,6 @@ module {
       head := (head + 1) % cap;
       count -= 1;
       ?v;
-    };
-
-    /// Iterate over all elements from oldest to newest.
-    public func values() : Iter.Iter<Nat8> {
-      object {
-        var i = 0;
-        public func next() : ?Nat8 {
-          if (i >= count) return null;
-          let v = buf[(head + i) % cap];
-          i += 1;
-          ?v;
-        };
-      };
     };
 
   }; // end class CircularBuffer
