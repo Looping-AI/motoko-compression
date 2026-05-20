@@ -13,6 +13,7 @@
 ///   4. Call `clear()` to reset for the next test run.
 import Array "mo:core/Array";
 import Nat "mo:core/Nat";
+import Principal "mo:core/Principal";
 import Runtime "mo:core/Runtime";
 import Gzip "../src/Gzip/lib";
 
@@ -35,6 +36,8 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
   transient var gzip_decoder = Gzip.Decoder();
 
   // ── Helpers ────────────────────────────────────────────────────────────
+
+  func canisterId() : Principal { Principal.fromActor(self) };
 
   /// Return up to PAGE_SIZE bytes at index `page` (2 MiB pages, 0-indexed).
   /// Returns [] when `page` is past the end of `data`.
@@ -68,13 +71,22 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
     total;
   };
 
+  /// Internal: decode one compressed chunk.
+  /// Guarded so only this canister may call it — each await gives the caller
+  /// a fresh ICP instruction budget.
+  public shared ({ caller }) func _decodeChunk(chunk : [Nat8]) : async () {
+    assert caller == canisterId();
+    switch (gzip_decoder.decode(chunk)) {
+      case (#err(msg)) Runtime.trap("_decodeChunk: " # msg);
+      case (#ok(_)) {};
+    };
+  };
+
   /// Decompress all accumulated chunks and cache the result in _decompressed.
+  /// Spreads work across ICP messages via self-calls.
   public func decompress() : async () {
     for (chunk in _chunks.vals()) {
-      switch (gzip_decoder.decode(chunk)) {
-        case (#err(msg)) Runtime.trap("decompress: " # msg);
-        case (#ok(_)) {};
-      };
+      await _decodeChunk(chunk);
     };
     switch (gzip_decoder.finish()) {
       case (#err(msg)) Runtime.trap("decompress finish: " # msg);

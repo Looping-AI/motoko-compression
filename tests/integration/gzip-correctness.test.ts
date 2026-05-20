@@ -47,19 +47,31 @@ describe("Gzip Correctness", () => {
   });
 
   it("round-trips 1 MiB through gzip and compressed size is within ±20% of node:zlib", async () => {
-    // 1. Generate 1 MiB of pseudo-random data (seeded, deterministic).
-    await actor.generateData(1n);
+    const SIZE_MIB = 1n;
 
-    // 2. Compress.
-    await actor.compressData();
+    // 1. Generate SIZE_MIB MiB of pseudo-random data (seeded, deterministic).
+    await actor.generateData(SIZE_MIB);
+
+    // 2. Compress — dispatch without awaiting, then tick once per MiB to process self-calls.
+    const compressPromise = actor.compressData();
+    for (let i = 0; i < Number(SIZE_MIB); i++) {
+      await pic.advanceTime(10_000);
+      await pic.tick();
+    }
+    await compressPromise;
 
     // 3. Collect compressed bytes.
     const compressedBytes = await readAllPages((p) =>
       actor.getCompressedData(p),
     );
 
-    // 4. Decompress.
-    await actor.decompressData();
+    // 4. Decompress — dispatch without awaiting, then tick once per MiB to process self-calls.
+    const decompressPromise = actor.decompressData();
+    for (let i = 0; i < Number(SIZE_MIB); i++) {
+      await pic.advanceTime(10_000);
+      await pic.tick();
+    }
+    await decompressPromise;
 
     // 5. Collect decompressed and original bytes.
     const [decompressedBytes, originalBytes] = await Promise.all([
