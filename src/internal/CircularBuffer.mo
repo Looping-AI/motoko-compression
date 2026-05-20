@@ -48,10 +48,8 @@ module {
       };
     };
 
-    /// Reset to empty, zeroing all slots.
+    /// Reset to empty. Existing slots are left untouched; count gates access.
     public func clear() {
-      var i = 0;
-      while (i < cap) { buf[i] := 0; i += 1 };
       head := 0;
       count := 0;
     };

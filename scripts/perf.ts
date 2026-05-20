@@ -74,6 +74,21 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       ],
     },
   ],
+  circularbuffer: [
+    {
+      file: "src/internal/CircularBuffer.mo",
+      funcs: [
+        "capacity",
+        "size",
+        "isFull",
+        "push",
+        "clear",
+        "get",
+        "popFront",
+        "values",
+      ],
+    },
+  ],
 };
 
 /**
@@ -87,6 +102,7 @@ const PAYLOAD_BYTES: Record<string, number> = {
   gzip: 1024 * 1024,
   lzss: 1024 * 1024,
   bitbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
+  circularbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
 };
 
 // ── CLI ────────────────────────────────────────────────────────────────────────
