@@ -44,6 +44,49 @@ const REGISTRY: Record<string, PatchTarget[]> = {
     { file: "src/Gzip/Decoder.mo", funcs: ["decode"] },
   ],
   lzss: [{ file: "src/LZSS/lib.mo", funcs: ["encode", "decode"] }],
+  bitbuffer: [
+    {
+      file: "src/internal/BitBuffer.mo",
+      // Instrument every meaningful method (public + key private helpers).
+      // Read-side (getBit/getBits/getByte/getBytes/bytes) is included even
+      // though the encode workload doesn't exercise it — unused tags simply
+      // produce zero marks, costing nothing.
+      //
+      // `getPos` is the private tuple-returning helper suspected of per-bit
+      // heap allocations; `ensureCapacity` exposes reallocation churn.
+      funcs: [
+        "ensureCapacity",
+        "getPos",
+        "bitSize",
+        "byteSize",
+        "addBit",
+        "addBits",
+        "addByte",
+        "addBytes",
+        "getBit",
+        "getBits",
+        "getByte",
+        "getBytes",
+        "byteAlign",
+        "dropBits",
+        "clear",
+        "bytes",
+      ],
+    },
+  ],
+};
+
+/**
+ * Workload size in bytes per component. Low-level primitive components use a
+ * tiny payload because their methods fire many times per byte; high-level
+ * components stay at 1 MiB to keep the run representative.
+ */
+const PAYLOAD_BYTES: Record<string, number> = {
+  huffman: 1024 * 1024,
+  deflate: 1024 * 1024,
+  gzip: 1024 * 1024,
+  lzss: 1024 * 1024,
+  bitbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
 };
 
 // ── CLI ────────────────────────────────────────────────────────────────────────
@@ -228,6 +271,7 @@ type Report = {
   component: string;
   timestamp: string;
   total_marks: number;
+  skipped_boundaries: number;
   timeline: TimelineEntry[];
   per_method: Record<string, MethodStats>;
 };
@@ -245,14 +289,36 @@ function computeTimeline(marks: Mark[], points = 11): TimelineEntry[] {
     .map((idx) => ({ index: idx, ...marks[idx] }));
 }
 
-/** Compute per-method delta statistics (instrs/mem/heap) from consecutive calls. */
-function computePerMethod(marks: Mark[]): Record<string, MethodStats> {
-  // Group in first-seen insertion order.
-  const groups = new Map<string, Mark[]>();
-  for (const m of marks) {
+/** Compute per-method delta statistics (instrs/mem/heap) from consecutive calls.
+ *
+ * IC.performanceCounter(1) resets to zero at the start of each new ICP message
+ * (e.g. every inter-canister self-call boundary in the gzip encoder). Any pair
+ * of consecutive marks where instrs[i] < instrs[i-1] is a cross-message pair
+ * and its delta is meaningless — we detect these globally and exclude them.
+ */
+function computePerMethod(marks: Mark[]): {
+  stats: Record<string, MethodStats>;
+  skipped_boundaries: number;
+} {
+  // Build a sorted array of reset global indices for efficient range queries.
+  const resetIndices: number[] = [];
+  for (let i = 1; i < marks.length; i++) {
+    if (marks[i].instrs < marks[i - 1].instrs) resetIndices.push(i);
+  }
+
+  /** Returns true if a message boundary reset occurred strictly between
+   *  global indices `a` (exclusive) and `b` (inclusive). */
+  function hasResetBetween(a: number, b: number): boolean {
+    return resetIndices.some((r) => r > a && r <= b);
+  }
+
+  // Group marks in first-seen insertion order, tagging each with its global index.
+  const groups = new Map<string, Array<{ mark: Mark; globalIdx: number }>>();
+  for (let i = 0; i < marks.length; i++) {
+    const m = marks[i];
     const g = groups.get(m.tag);
-    if (g) g.push(m);
-    else groups.set(m.tag, [m]);
+    if (g) g.push({ mark: m, globalIdx: i });
+    else groups.set(m.tag, [{ mark: m, globalIdx: i }]);
   }
 
   const result: Record<string, MethodStats> = {};
@@ -269,14 +335,20 @@ function computePerMethod(marks: Mark[]): Record<string, MethodStats> {
     const stats = (key: "instrs" | "mem" | "heap"): DeltaStat => {
       let sum = 0,
         min = Infinity,
-        max = -Infinity;
+        max = -Infinity,
+        count = 0;
       for (let i = 1; i < group.length; i++) {
-        const d = group[i][key] - group[i - 1][key];
+        // Skip the pair if a message boundary reset occurred anywhere between
+        // the two marks (not just at the second mark's global index).
+        if (hasResetBetween(group[i - 1].globalIdx, group[i].globalIdx))
+          continue;
+        const d = group[i].mark[key] - group[i - 1].mark[key];
         sum += d;
         if (d < min) min = d;
         if (d > max) max = d;
+        count++;
       }
-      const count = group.length - 1;
+      if (count === 0) return null;
       return {
         avg_delta: Math.round(sum / count),
         min_delta: min,
@@ -290,7 +362,7 @@ function computePerMethod(marks: Mark[]): Record<string, MethodStats> {
       heap: stats("heap"),
     };
   }
-  return result;
+  return { stats: result, skipped_boundaries: resetIndices.length };
 }
 
 /** Write one compact JSON object per line (JSON Lines format). */
@@ -331,9 +403,19 @@ async function main() {
     //          the OS level; no JS write() monkey-patching is needed.
     console.log("Starting PocketIC (subprocess)...");
     const runnerScript = resolve(ROOT, "scripts", "_perf_run.ts");
+    const payloadBytes = PAYLOAD_BYTES[component] ?? 1024 * 1024;
+    console.log(
+      `  Workload size: ${payloadBytes.toLocaleString("en-US")} bytes`,
+    );
     const perfLines: string[] = [];
     const inner = Bun.spawn({
-      cmd: [process.execPath, runnerScript, component, outputFile],
+      cmd: [
+        process.execPath,
+        runnerScript,
+        component,
+        outputFile,
+        String(payloadBytes),
+      ],
       stdout: "pipe",
       stderr: "pipe",
       env: { ...process.env },
@@ -415,12 +497,20 @@ async function main() {
 
     writeJsonl(marks, `${base}.jsonl`);
 
+    const { stats: perMethod, skipped_boundaries } = computePerMethod(marks);
+    if (skipped_boundaries > 0) {
+      console.log(
+        `  ⚠ Skipped ${skipped_boundaries} cross-message boundary pair(s) from delta stats`,
+      );
+    }
+
     const report: Report = {
       component,
       timestamp,
       total_marks: marks.length,
+      skipped_boundaries,
       timeline: computeTimeline(marks),
-      per_method: computePerMethod(marks),
+      per_method: perMethod,
     };
     writeFileSync(`${base}.json`, JSON.stringify(report, null, 2));
 

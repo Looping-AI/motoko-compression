@@ -1,329 +1,314 @@
-# PLAN.md — motoko-compression Migration
+# Performance Optimization Plan
 
-Incremental migration of [edjcase/motoko_compression](https://github.com/edjcase/motoko_compression) into this repo, replacing `mo:base` with `mo:core`, targeting `moc = "1.7.0"`, with full test coverage at every phase.
+## Overview
 
-Work through phases in order. Each phase ends with `mops test` passing before the next begins.
+Scientific, bottom-up performance improvement of the motoko-compression library.
+Each component is profiled **before and after** every change using `bun run perf component=<name>`.
+A change is accepted only when it reduces the target metric without regressing others.
 
----
-
-## Status Legend
-
-- `[ ]` Not started
-- `[~]` In progress
-- `[x]` Complete
+Optimization order follows the dependency graph: primitives first, then algorithms,
+then codec layers, then the public Gzip API.
 
 ---
 
-## Phase 0 — Housekeeping
-
-- [x] Create `README.md`
-- [x] Update `AGENTS.md`
-- [x] Create `PLAN.md`
-
----
-
-## Phase 1 — Internal Primitives [x]
-
-**Decision:** All external mops packages (`bitbuffer@1`, `itertools@0`, `circular-buffer@0`, `buffer-deque@0`) were audited and **none are needed**. All required functionality is implemented directly in Motoko using `mo:core` only — no additional entries in `mops.toml`.
-
-**External packages evaluated and replaced:**
-
-| Package             | Used for                                         | Decision                                                         |
-| ------------------- | ------------------------------------------------ | ---------------------------------------------------------------- |
-| `base@0`            | Array, Buffer, Iter, Nat8/16/32, Hash, etc.      | Removed — all migrated to `mo:core`                              |
-| `bitbuffer@1`       | Bit-level read/write buffer                      | Replaced by `src/internal/BitBuffer.mo` (custom, `mo:core` only) |
-| `itertools@0`       | `RevIter`, `Itertools.equal`, `Itertools.chunks` | Replaced by helpers in `src/utils.mo` + `mo:core/Iter`           |
-| `circular-buffer@0` | Rolling window buffer for LZSS                   | Replaced by `src/internal/CircularBuffer.mo` (custom)            |
-| `buffer-deque@0`    | Deque operations                                 | Replaced by `mo:core/Deque`                                      |
-
-**Files created:**
-
-- [x] `src/utils.mo` — iterator helpers: `range(lo, hi)` (exclusive), `revRange(hi, lo)`, `iterEqual`
-- [x] `src/internal/BitBuffer.mo` — LSB-first bit buffer; `[var Nat8]` auto-doubling array; API: `new`, `addBit`/`getBit`, `addBits`/`getBits`, `addByte`/`getByte`, `addBytes`/`getBytes`, `byteAlign`, `dropBits`, `clear`, `bytes`
-- [x] `src/internal/CircularBuffer.mo` — fixed-capacity `Nat8` ring buffer for LZSS sliding window (default 32 768 slots); API: `capacity`, `size`, `isFull`, `push`, `get`, `values`, `clear`
-
-**Test files created:**
-
-- [x] `tests/Utils.Test.mo` — 24 tests
-- [x] `tests/internal/BitBuffer.Test.mo` — 38 tests
-- [x] `tests/internal/CircularBuffer.Test.mo` — 30 tests
-
-**Total: 92 tests passing**
-
----
-
-## Phase 2 — Utils expansion + CRC32
-
-**Note:** `src/utils.mo` and `tests/Utils.Test.mo` already exist from Phase 1 (iterator helpers). This phase **expands** `src/utils.mo` with the functions from the [edjcase source](https://github.com/edjcase/motoko_compression/blob/main/src/utils.mo) and adds the CRC32 module.
-
-**File to expand:**
-
-- `src/utils.mo` — add: `div_ceil`, `nat_to_le_bytes`, `le_bytes_to_nat`, `bytes_to_nat`, `array_equal`, `nat8_to_32`, `nat8_to_16`
-
-**File to create:**
-
-- `src/libs/CRC32.mo` — CRC32 checksum (IEEE polynomial); source: [src/libs/CRC32.mo](https://github.com/edjcase/motoko_compression/blob/main/src/libs/CRC32.mo)
-
-**Key migration work:**
-
-- Replace all `mo:base@0/*` imports with `mo:core/*` equivalents
-- `Hash.Hash` → `Nat32` (mo:core drops the Hash type alias)
-- No `mo:itertools` needed — use `mo:core/Iter` and existing `Utils.range` / `Utils.revRange`
-
-**Test files:**
-
-- `tests/Utils.Test.mo` — already exists (24 tests for Phase 1 helpers); **expand** with tests for the new functions
-- `tests/CRC32.Test.mo` — create new
-
-**Test coverage required:**
-
-- `utils.mo` additions: `div_ceil`, `nat_to_le_bytes`, `le_bytes_to_nat`, `bytes_to_nat`, `array_equal`, `nat8_to_32`, `nat8_to_16`; edge cases: zero, max `Nat8`, empty arrays, multi-byte roundtrips
-- `CRC32.mo`: known vectors (`[]` → `0x00000000`, `[0x61]` → `0xE8B7BE43`), empty input, single byte, multi-byte, `reset()` behaviour, `updateByte` vs `update` equivalence
-
-**Verify:** `mops test`
-
----
-
-## Phase 3 — BitReader [x]
-
-**Files created:**
-
-- [x] `src/BitReader.mo` — bit-level reader backed by `src/internal/BitBuffer.mo`
-- [x] `tests/BitReader.Test.mo` — 29 sync tests
-- [x] `tests/helpers/TrapCanister.mo` — helper actor class for trap testing
-- [x] `tests/BitReaderTraps.Test.mo` — 4 replica tests for out-of-bounds traps
-
-**Files modified:**
-
-- [x] `src/internal/BitBuffer.mo` — `Prim.trap` → `Runtime.trap` (added `import Runtime "mo:core/Runtime"`)
-- [x] `src/internal/CircularBuffer.mo` — `Prim.trap` → `Runtime.trap` (added `import Runtime "mo:core/Runtime"`)
-
-**Key migration decisions:**
-
-- `mo:core/Debug` has no `trap` function (only `print` and `todo`). Used `Runtime.trap(msg)` from `mo:core/Runtime` for all synchronous error paths.
-- `throw` is async-only in Motoko; `Runtime.trap` is the only option for sync bounds-checking.
-- Three API improvements over the original:
-  1. `peekByte()` — removed dead `nbits < 8` branch (unreachable after `is_valid(8)` guard)
-  2. `peekBytes(n)` — replaced mutate-then-restore tabulate with `bitbuffer.getBytes(offset, n)` directly
-  3. `readBytes(n)` — uses `bitbuffer.getBytes(offset, min_bytes)` + `offset += min_bytes * 8` (no side-effectful tabulate)
-
-**Trap testing approach:**
-
-- `expect.call(fn).reject()` only catches `#canister_reject` (thrown errors); it cannot catch `#canister_error` (traps). The `trap()` method in `mo:test` is commented out as "unable to catch".
-- Pattern used: deploy a `persistent actor class TrapCanister` that wraps each trapping sync call in a public `async` method. From the replica test, call each method inside a `try/catch` and check `Error.code(err) == #canister_error`.
-- Cycles: the mops test replica actor requires `(with cycles = 10_000_000_000_000)` (10 trillion) to instantiate a helper canister. 1 trillion is not enough — results in `install-code-not-enough-cycles`.
-
-**Total new tests: 33** (29 sync + 4 replica)
-
-**Verify:** `mops test` — all 6 files passing
-
----
-
-## Phase 4 — Huffman [x]
-
-**Files created:**
-
-- [x] `src/Huffman/Common.mo` — `Code` type, `reverseCodeBits`, `restore_huffman_codes`, `BuilderInterface`
-- [x] `src/Huffman/Encoder.mo` — build Huffman codes from symbol frequencies
-- [x] `src/Huffman/Decoder.mo` — decode Huffman-encoded bit streams
-
-**Key migration decisions:**
-
-- `mo:base/Buffer.Buffer<T>` → `mo:core/List` (mutable growable array). `List.get` returns `?T` — unwrap inline with `else Runtime.unreachable()`.
-- `mo:base/Heap` → `mo:core/PriorityQueue` with inverted compare. PriorityQueue is max-first; inverting the compare function restores min-heap semantics.
-- `Prelude.unreachable()` → `Runtime.unreachable()` (exists in mo:core/Runtime).
-- `Array.init<T>` → `Prim.Array_init<T>`. `Array.freeze` → `Array.fromVarArray` (mo:core).
-- `Itertools.enumerate` → `Iter.enumerate` (same API in mo:core).
-- `Itertools.range(a, b)` is **exclusive** `[a, b)` — same as `Utils.range(a, b)`.
-- `Iter.range(a, b)` from **mo:base** is **inclusive** `[a, b]` → `Utils.range(a, b + 1)`.
-- Drop dead import `nat8_to_16` from Common (never used in body).
-- Remove redundant `assert` before `#err` in Encoder.Builder.setMapping.
-- Fix typo `min_bidwidth` → `min_bitwidth` in Decoder.
-- Simplify `% (2 ** 5)` → `% 32` and `/ (2 ** 5)` → `/ 32` in Decoder.
-
-**Test file:** `tests/Huffman.Test.mo` — 30 sync tests across 5 suites
-
-**Verify:** `mops test` — all 7 files passing
-
----
-
-## Phase 5 — LZSS [x]
-
-**Files created:**
-
-- [x] `src/LZSS/Common.mo` — `LzssEntry`, `CompressionLevel` (3 variants: `#fast`, `#balance`, `#best`; `#none` dropped — was unused), constants (`MATCH_WINDOW_SIZE = 32_768`, `MATCH_MAX_SIZE = 258`)
-- [x] `src/LZSS/Encoder/PrefixTable/lib.mo` — flat 65,536-slot prefix table (bug fix: original used `258^2 = 66,564`; correct value is `256×256 = 65,536`)
-- [x] `src/LZSS/Encoder/lib.mo` — stateful `Encoder` class with `CompressionLevel` wiring (`#fast`→1 024, `#balance`→8 192, `#best`→32 768 window)
-- [x] `src/LZSS/Decoder.mo` — `Decoder` class and top-level `decode` function; dead RLE branch removed
-- [x] `src/LZSS/lib.mo` — public facade (`encode`, `decode`, re-exports)
-
-**Dead code removed vs original:**
-
-- `HashValueTrie.mo`, `HashValueTrieMap.mo` — `#small` PrefixTable path was commented out in original; dropped entirely
-- `encode_v1` — unused alternate encoder; dropped
-- `longest_prefix_length` — unused helper; dropped
-
-**Key migration decisions:**
-
-- `mo:base/Buffer.Buffer<T>` → `mo:core/List.List<T>` for public API (array-backed, O(1) get)
-- `buffer-deque@0` → `CircularBuffer` reused with `popFront()` added
-- `CompressionLevel` type was defined but completely unused in original — wired up in `Encoder`
-- Table index computed inline: `Nat8.toNat(b0) * 256 + Nat8.toNat(b1)` (no `nat8_to_16` util needed)
-- `Runtime.unreachable()` for all impossible branches; `Runtime.trap` for validated errors
-
-**Files modified:**
-
-- [x] `src/internal/CircularBuffer.mo` — added `popFront() : ?Nat8` method
-
-**Test files created:**
-
-- [x] `tests/LZSS.Test.mo` — sync tests: PrefixTable (5), Encoder (7), CompressionLevel (3), Decoder (4), round-trip (6) = 25 tests
-- [x] `tests/helpers/LzssTrapCanister.mo` — helper actor for trap testing
-- [x] `tests/LzssTraps.Test.mo` — 1 replica test: invalid pointer offset traps
-
-**Test files modified:**
-
-- [x] `tests/internal/CircularBuffer.Test.mo` — added 2 tests for `popFront`
-
-**Verify:** `mops test` — all 9 files passing
-
----
-
-## Phase 6 — Deflate ✅
-
-**Files created:**
-
-- [x] `src/Deflate/Symbol.mo` — `Symbol` type + bitwidth-code order tables
-- [x] `src/Deflate/HuffmanCodec.mo` — Fixed and Dynamic Huffman codecs (load/save)
-- [x] `src/Deflate/Encoder.mo` — `Encoder` class
-- [x] `src/Deflate/Decoder.mo` — `Decoder` class
-- [x] `src/Deflate/lib.mo` — public facade (`buildEncoder`, `DeflateOptions`)
-
-**Test file:** `tests/Deflate.Test.mo` — passing
-
-- Symbol encoding/decoding (literals, lengths, distances, EOB)
-- Raw block round-trip
-- Fixed Huffman round-trip
-- Dynamic Huffman round-trip (incl. empty input edge case)
-
-**Verify:** `mops test` — all 10 files passing
-
----
-
-## Phase 7 — Gzip ✅
-
-**Files to create:**
-
-- `src/Gzip/Header.mo` — Gzip header parsing and serialisation
-- `src/Gzip/Encoder.mo` — `Encoder` class and `EncoderBuilder`, `EncodedResponse`
-- `src/Gzip/Decoder.mo` — `Decoder` class, `DecodedResponse`
-- `src/Gzip/lib.mo` — public facade (re-exports, type aliases)
-
-**Source reference:**
-
-- [src/Gzip/](https://github.com/edjcase/motoko_compression/tree/main/src/Gzip)
-
-**Key migration work:**
-
-- Replace all `mo:base@0/*` imports with `mo:core/*`
-- CRC32 integration — uses `src/libs/CRC32.mo` for footer checksum
-- Depends on Phase 6 (Deflate), Phase 2 (CRC32)
-
-**Test files:** `tests/Gzip/Encoder.Test.mo`, `tests/Gzip/Decoder.Test.mo`
-
-**Test coverage required:**
-
-- Round-trip (encode then decode): empty bytes, single byte, short text, 100 KB repeated pattern
-- `EncoderBuilder` defaults and custom options
-- `EncodedResponse.chunks` — multiple chunks on large input
-- Header: magic bytes (`\x1f\x8b`), compression method (`\x08`), flags, modification time
-- CRC32 footer verification — corrupt checksum detected (expect `#err`)
-- ISIZE footer — correct uncompressed size modulo 2^32
-- Decoder: wrong magic bytes (expect `#err`), truncated stream (expect `#err`), mismatched CRC32 (expect `#err`)
-- Chunk-based decode: feed compressed data in multiple small chunks, same result as single-pass
-
-**Verify:** `mops test`
-
----
-
-## Phase 8 — Public API
-
-**File to update:**
-
-- `src/main.mo` — replace placeholder with clean module re-exports
-
-**Tasks:**
-
-- Expose `Gzip`, `Deflate`, `LZSS` as top-level named imports
-- Verify `icp build compression` passes (full compilation check)
-- Final `mops test` — all phases green
-
----
-
-## Optional: TypeScript Cross-Validation (Bun)
-
-If binary-level validation against a reference gzip implementation is needed:
-
-- Set up `bun` runtime with a small TypeScript script
-- Use Node.js built-in `zlib` to compress known test vectors
-- Compare output bytes with this library's Gzip encoder output
-- Integrate as a separate `make validate` step (not part of `mops test`)
-
-Trigger: decide during Phase 7 if there are any correctness concerns with the Gzip footer (CRC32 / ISIZE).
-
----
-
-## File Map (final state)
-
+## How to measure
+
+```bash
+# Run perf for a component and save the report
+bun run perf component=huffman    # Layer 1
+bun run perf component=deflate    # Layer 2
+bun run perf component=gzip       # Layer 3 (end-to-end)
+bun run perf component=lzss       # Layer 1
 ```
-src/
-  main.mo                              ← Phase 8
-  utils.mo                             ← Phase 1 (expanded Phase 2)
-  BitReader.mo                         ← Phase 3
-  internal/
-    BitBuffer.mo                       ← Phase 1
-    CircularBuffer.mo                  ← Phase 1
-  libs/
-    CRC32.mo                           ← Phase 2
-  Huffman/
-    Common.mo                          ← Phase 4
-    Encoder.mo                         ← Phase 4
-    Decoder.mo                         ← Phase 4
-  LZSS/
-    Common.mo                          ← Phase 5
-    Decoder.mo                         ← Phase 5
-    lib.mo                             ← Phase 5
-    Encoder/
-      lib.mo                           ← Phase 5
-      PrefixTable/
-        HashValueTrie.mo               ← Phase 5
-        HashValueTrieMap.mo            ← Phase 5
-        lib.mo                         ← Phase 5
-  Deflate/
-    Symbol.mo                          ← Phase 6
-    Block.mo                           ← Phase 6
-    Encoder.mo                         ← Phase 6
-    Decoder.mo                         ← Phase 6
-    lib.mo                             ← Phase 6
-  Gzip/
-    Header.mo                          ← Phase 7
-    Encoder.mo                         ← Phase 7
-    Decoder.mo                         ← Phase 7
-    lib.mo                             ← Phase 7
 
-tests/
-  Utils.Test.mo                        ← Phase 1 (expanded Phase 2)
-  CRC32.Test.mo                        ← Phase 2
-  BitReader.Test.mo                    ← Phase 3
-  internal/
-    BitBuffer.Test.mo                  ← Phase 1
-    CircularBuffer.Test.mo             ← Phase 1
-  Huffman.Test.mo                      ← Phase 4
-  LZSS/
-    Encoder.Test.mo                    ← Phase 5
-    PrefixTable.Test.mo                ← Phase 5
-  Deflate.Test.mo                      ← Phase 6
-  Gzip/
-    Encoder.Test.mo                    ← Phase 7
-    Decoder.Test.mo                    ← Phase 7
-```
+Reports land in `scripts/output/` as `perf-<component>-<timestamp>.json`.
+Compare `per_method.avg_delta` for instructions, `mem`, and `heap` across runs.
+
+---
+
+## Checkbox legend
+
+| Symbol | Meaning                      |
+| ------ | ---------------------------- |
+| `[ ]`  | Not started                  |
+| `[~]`  | In progress                  |
+| `[x]`  | Done – improvement confirmed |
+| `[-]`  | Skipped / not applicable     |
+
+---
+
+## Layer 0 — Primitives
+
+These are the innermost hot-path components. Gains here compound upward.
+
+### `src/utils.mo`
+
+Helper math and byte-conversion functions called throughout the library.
+
+- [ ] **Baseline measured** — capture `avg_delta` for each util call site
+- [ ] `natToLeBytes` — avoid intermediate allocations
+- [ ] `leBytesToNat` / `bytesToNat` — loop unroll or bitshift path
+- [ ] `divCeil` — verify compiler constant-folds; otherwise inline at call sites
+- [ ] `range` / `revRange` — check if `Iter` wrapper adds overhead vs raw loops
+
+**Notes:** <!-- fill in deltas and commit refs -->
+
+---
+
+### `src/internal/BitBuffer.mo`
+
+Bit-level LSB-first read/write buffer. Central to every encode/decode path.
+Most hot operations: `addBits`, `readBits`, `byteAt`, `ensureCapacity`.
+
+- [ ] **Baseline measured**
+- [ ] Reduce `ensureCapacity` copy overhead (copy only live bytes, consider doubling strategy)
+- [ ] `addBits` — eliminate branch for common single-byte case
+- [ ] `readBits` — profile vs. raw bit-shift; avoid boxing intermediate Nat values
+- [ ] Evaluate replacing `[var Nat8]` backing store with a tighter representation
+
+**Notes:**
+
+---
+
+### `src/BitReader.mo`
+
+Forward-only bit reader wrapping a `[Nat8]`. Used by every decoder.
+
+- [ ] **Baseline measured**
+- [ ] `readBit` / `readBits` — inline shift arithmetic, eliminate redundant bounds checks
+- [ ] `readByte` / `readBytes` — fast-path when bit cursor is byte-aligned
+- [ ] Evaluate lazy vs. eager buffering strategy
+
+**Notes:**
+
+---
+
+### `src/internal/CircularBuffer.mo`
+
+Fixed-capacity O(1) ring buffer for the LZSS sliding window (32 KiB).
+
+- [ ] **Baseline measured**
+- [ ] `push` — ensure single modular-index write, no branch
+- [ ] `get` — profile index computation vs. linear scan alternatives
+- [ ] Evaluate whether Prim.Array_init inlining is necessary
+
+**Notes:**
+
+---
+
+### `src/internal/CRC32.mo`
+
+Single-pass 32-bit checksum over `[Nat8]`.
+
+- [ ] **Baseline measured**
+- [ ] Replace table-driven lookup with the standard 256-entry precomputed table (if not already)
+- [ ] Ensure loop body avoids unnecessary boxing of Nat32 intermediate values
+
+**Notes:**
+
+---
+
+## Layer 1 — Core Algorithms
+
+### Huffman
+
+#### `src/Huffman/Common.mo`
+
+Shared types and helpers: `reverseCodeBits`, `restoreHuffmanCodes`.
+
+- [ ] **Baseline measured**
+- [ ] `reverseCodeBits` — use bit-parallel reverse or precomputed 8-bit table
+- [ ] `restoreHuffmanCodes` — profile sort step; consider radix sort for small alphabets
+
+**Notes:**
+
+---
+
+#### `src/Huffman/Encoder.mo`
+
+Builds a Huffman encoder from bit-widths or symbol frequencies.
+
+- [ ] **Baseline measured** (use `bun run perf component=huffman`)
+- [ ] `fromFrequencies` — heap-sort priority queue vs. current structure
+- [ ] Tree traversal — eliminate List allocations in canonical-code assignment
+- [ ] `tupleCompare` — ensure it is inlined by the compiler
+
+**Notes:**
+
+---
+
+#### `src/Huffman/Decoder.mo`
+
+Decodes Huffman-coded bit streams.
+
+- [ ] **Baseline measured**
+- [ ] `fromBitwidths` — profile table construction cost
+- [ ] Inner decode loop — look-up table (LUT) decode vs. tree traversal
+- [ ] Evaluate canonical Huffman LUT (256-entry, O(1) per symbol)
+
+**Notes:**
+
+---
+
+### LZSS
+
+#### `src/LZSS/Encoder/PrefixTable/lib.mo`
+
+65 536-bucket hash table mapping 3-byte prefixes to most-recent positions.
+
+- [ ] **Baseline measured** (use `bun run perf component=lzss`)
+- [ ] `insert` — reduce allocation of `List` cons cells per collision
+- [ ] Bucket eviction strategy — keep only N most-recent matches per prefix
+- [ ] Evaluate flat array or chained array representation instead of `List`
+
+**Notes:**
+
+---
+
+#### `src/LZSS/Encoder/lib.mo`
+
+Main LZSS encoder: sliding-window match search producing `LzssEntry` streams.
+
+- [ ] **Baseline measured**
+- [ ] Match search loop — limit look-back depth when `PrefixTable` has many hits
+- [ ] Lazy matching — try next byte before committing to current match
+- [ ] Output `List` accumulation — consider building in reverse then reversing once
+
+**Notes:**
+
+---
+
+#### `src/LZSS/Decoder.mo`
+
+Expands back-references from an `LzssEntry` list.
+
+- [ ] **Baseline measured**
+- [ ] Back-copy loop — avoid re-indexing `CircularBuffer` per byte; batch copies
+- [ ] Output `List` building — minimize cons allocations
+
+**Notes:**
+
+---
+
+## Layer 2 — DEFLATE
+
+#### `src/Deflate/Symbol.mo`
+
+Maps LZSS entries to DEFLATE length/distance symbols and extra bits.
+
+- [ ] **Baseline measured** (captured within `bun run perf component=deflate`)
+- [ ] `lengthCode` / `distanceCode` — verify static tables are compiled as constants
+- [ ] Replace `switch` chains with binary-search or precomputed lookup arrays
+
+**Notes:**
+
+---
+
+#### `src/Deflate/Block.mo`
+
+Block type management and block boundary encoding.
+
+- [ ] **Baseline measured**
+- [ ] `blockToNat` — trivial, likely already optimal
+- [ ] `block` factory — ensure no closure overhead per block
+
+**Notes:**
+
+---
+
+#### `src/Deflate/HuffmanCodec.mo`
+
+Fixed and Dynamic Huffman codec: `build`, `save`, `load`.
+
+- [ ] **Baseline measured**
+- [ ] Dynamic `build` — profile frequency counting pass
+- [ ] `save` — minimize BitBuffer write calls (batch multi-bit writes)
+- [ ] `load` — optimize decoding-tree reconstruction from bit-widths
+
+**Notes:**
+
+---
+
+#### `src/Deflate/Encoder.mo`
+
+DEFLATE encoder: converts symbol stream to compressed bit stream.
+
+- [ ] **Baseline measured**
+- [ ] Symbol emission loop — reduce per-symbol dispatch overhead
+- [ ] BitBuffer interaction — batch writes where symbol + extra bits fit in one call
+- [ ] Block flush strategy — tune block-size threshold
+
+**Notes:**
+
+---
+
+#### `src/Deflate/Decoder.mo`
+
+DEFLATE decoder: reconstructs byte stream from compressed blocks.
+
+- [ ] **Baseline measured**
+- [ ] Block loop — reduce redundant state checks
+- [ ] Back-reference copy — batch byte writes into CircularBuffer
+
+**Notes:**
+
+---
+
+## Layer 3 — Gzip
+
+#### `src/Gzip/Header.mo`
+
+Gzip header encode/decode (RFC 1952).
+
+- [ ] **Baseline measured** (use `bun run perf component=gzip`)
+- [ ] `encode` — profile optional-field branches; most headers are default
+- [ ] `decode` — fast-path for default-format headers
+
+**Notes:**
+
+---
+
+#### `src/Gzip/Encoder.mo`
+
+Full Gzip encode pipeline: header → DEFLATE → CRC32 → trailer.
+
+- [ ] **Baseline measured**
+- [ ] Pipeline allocation — ensure intermediate buffers are sized correctly upfront
+- [ ] CRC32 update frequency — batch vs. per-byte
+
+**Notes:**
+
+---
+
+#### `src/Gzip/Decoder.mo`
+
+Full Gzip decode pipeline: header → DEFLATE → CRC32 verification.
+
+- [ ] **Baseline measured**
+- [ ] Verification pass — avoid re-scanning output bytes for CRC
+
+**Notes:**
+
+---
+
+## End-to-end baseline
+
+Record the last clean perf run for each component here before any optimization work.
+Update these numbers each time a new baseline is established.
+
+| Component | Timestamp            | `avg_delta` instrs | `avg_delta` mem (bytes) | `avg_delta` heap (bytes) |
+| --------- | -------------------- | ------------------ | ----------------------- | ------------------------ |
+| huffman   | 2026-05-20T10:06:04Z | —                  | —                       | —                        |
+| gzip      | 2026-05-20T09:17:56Z | —                  | —                       | —                        |
+| deflate   | —                    | —                  | —                       | —                        |
+| lzss      | —                    | —                  | —                       | —                        |
+
+<!-- Fill in per_method deltas from scripts/output/ JSON reports -->
+
+---
+
+## Completed optimizations log
+
+| Date | Component | File | Change | Δ instrs | Δ mem | Δ heap | Commit |
+| ---- | --------- | ---- | ------ | -------- | ----- | ------ | ------ |
+| —    | —         | —    | —      | —        | —     | —      | —      |

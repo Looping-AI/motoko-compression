@@ -16,22 +16,33 @@
 import { PocketIc, PocketIcServer } from "@dfinity/pic";
 import { readFileSync } from "node:fs";
 
-const [component, wasmFile] = process.argv.slice(2);
+const [component, wasmFile, payloadBytesArg] = process.argv.slice(2);
 
 if (!component || !wasmFile) {
-  console.error("Usage: _perf_run.ts <component> <wasm-file-path>");
+  console.error(
+    "Usage: _perf_run.ts <component> <wasm-file-path> [payload-bytes]",
+  );
   process.exit(1);
 }
 
-// Minimal IDL — only the two methods needed for the workload.
+// Workload size in bytes. Defaults to 1 MiB; perf.ts overrides this per
+// component (e.g. low-level primitives need a much smaller payload to keep
+// the per-call mark volume tractable).
+const payloadBytes = payloadBytesArg
+  ? BigInt(payloadBytesArg)
+  : BigInt(1024 * 1024);
+
+// Minimal IDL — only the methods needed for the workload.
 const idlFactory = ({ IDL }: { IDL: any }) =>
   IDL.Service({
     generateData: IDL.Func([IDL.Nat], [], []),
+    generateBytes: IDL.Func([IDL.Nat], [], []),
     compressData: IDL.Func([], [], []),
   });
 
 interface PerfService {
   generateData: (size_mb: bigint) => Promise<void>;
+  generateBytes: (n_bytes: bigint) => Promise<void>;
   compressData: () => Promise<void>;
 }
 
@@ -46,7 +57,7 @@ try {
   const fixture = await pic.setupCanister<PerfService>({ idlFactory, wasm });
   const actor = fixture.actor;
 
-  await actor.generateData(1n);
+  await actor.generateBytes(payloadBytes);
 
   // compress_data() uses inter-canister self-calls.  PocketIC sometimes
   // exhausts its reply-polling window before the outer call officially
