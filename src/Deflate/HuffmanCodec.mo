@@ -19,9 +19,9 @@ import Prim "mo:⛔";
 import HuffmanEncoder "../Huffman/Encoder";
 import HuffmanDecoder "../Huffman/Decoder";
 import BitBuffer "../internal/BitBuffer";
-import BitReader "../BitReader";
+import BitReader "../internal/BitReader";
 import Symbol "Symbol";
-import Utils "../utils";
+import Utils "../internal/utils";
 
 module {
 

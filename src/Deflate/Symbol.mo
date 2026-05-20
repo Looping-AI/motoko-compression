@@ -11,7 +11,7 @@ import Runtime "mo:core/Runtime";
 import HuffmanEncoder "../Huffman/Encoder";
 import HuffmanDecoder "../Huffman/Decoder";
 import BitBuffer "../internal/BitBuffer";
-import BitReader "../BitReader";
+import BitReader "../internal/BitReader";
 
 module {
 

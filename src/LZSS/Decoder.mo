@@ -18,7 +18,7 @@ import Iter "mo:core/Iter";
 import List "mo:core/List";
 import Runtime "mo:core/Runtime";
 import Common "Common";
-import Utils "../utils";
+import Utils "../internal/utils";
 
 module {
 

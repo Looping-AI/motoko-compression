@@ -10,7 +10,7 @@ import Common "../src/Huffman/Common";
 import Encoder "../src/Huffman/Encoder";
 import Decoder "../src/Huffman/Decoder";
 import BitBuffer "../src/internal/BitBuffer";
-import BitReader "../src/BitReader";
+import BitReader "../src/internal/BitReader";
 
 // ── Common ────────────────────────────────────────────────────────────────
 

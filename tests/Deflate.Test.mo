@@ -4,7 +4,7 @@ import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
 import Nat16 "mo:core/Nat16";
 import Runtime "mo:core/Runtime";
-import BitReader "../src/BitReader";
+import BitReader "../src/internal/BitReader";
 import DeflateDecoder "../src/Deflate/Decoder";
 import Symbol "../src/Deflate/Symbol";
 import Deflate "../src/Deflate/lib";

@@ -5,7 +5,7 @@
 ///
 /// Intended for use from tests/BitReaderTraps.Test.mo (replica test).
 
-import BitReader "../../src/BitReader";
+import BitReader "../../src/internal/BitReader";
 import Deflate "../../src/Deflate/lib";
 import List "mo:core/List";
 import LZSS "../../src/LZSS/lib";

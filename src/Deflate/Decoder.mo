@@ -12,10 +12,10 @@ import Array "mo:core/Array";
 import List "mo:core/List";
 import Option "mo:core/Option";
 import Result "mo:core/Result";
-import BitReader "../BitReader";
+import BitReader "../internal/BitReader";
 import HuffmanCodec "HuffmanCodec";
 import LzssDecoder "../LZSS/Decoder";
-import Utils "../utils";
+import Utils "../internal/utils";
 
 module {
 

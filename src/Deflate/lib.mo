@@ -6,7 +6,7 @@
 
 import List "mo:core/List";
 import BitBufferMod "../internal/BitBuffer";
-import BitReader "../BitReader";
+import BitReader "../internal/BitReader";
 import Common "../LZSS/Common";
 import DeflateEncoder "Encoder";
 import DeflateDecoder "Decoder";

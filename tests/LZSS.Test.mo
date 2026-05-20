@@ -4,7 +4,7 @@ import Iter "mo:core/Iter";
 import List "mo:core/List";
 import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
-import Utils "../src/utils";
+import Utils "../src/internal/utils";
 
 import Common "../src/LZSS/Common";
 import PrefixTable "../src/LZSS/Encoder/PrefixTable/lib";

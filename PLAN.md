@@ -91,12 +91,16 @@ Forward-only bit reader wrapping a `[Nat8]`. Used by every decoder.
 
 Fixed-capacity O(1) ring buffer for the LZSS sliding window (32 KiB).
 
-- [ ] **Baseline measured**
-- [ ] `push` — ensure single modular-index write, no branch
+- [x] **Baseline measured** — 2026-05-20T15:10:10Z (10 KiB workload, 61 477 marks)
+- [-] `push` — replace modulo wraparound with conditional branch; **−0.044% instrs (negligible)**
+- [x] `clear` — O(1) reset (only `head := 0; count := 0`) vs. sweep all slots; **−19.3% avg_delta, −3.47M instrs max_delta (accepted)**
 - [ ] `get` — profile index computation vs. linear scan alternatives
 - [ ] Evaluate whether Prim.Array_init inlining is necessary
 
 **Notes:**
+Tested Candidate 1 (modulo→branch wrap on push/get/popFront): −60 to −120 instrs avg per call, cumulative −0.047%. **Decision: too small, skip.**
+Tested Candidate 3 (clear() O(1)): Reduces avg_delta from 9,061,462 to 7,310,982 instrs (−1.75M), min from 63,661 to 36,158 (−27K), max from 18,059,263 to 14,585,806 (−3.47M). **Decision: accept; committed 2026-05-20.**
+Candidate 2 (unchecked access paths) not tested; deferred pending use-site refactoring in LZSS encoder.
 
 ---
 

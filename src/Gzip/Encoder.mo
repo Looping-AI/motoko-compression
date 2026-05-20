@@ -19,7 +19,7 @@ import BitBuffer "../internal/BitBuffer";
 import CRC32 "../internal/CRC32";
 import DeflateEncoder "../Deflate/Encoder";
 import Header "Header";
-import Utils "../utils";
+import Utils "../internal/utils";
 import Common "../LZSS/Common";
 
 module {

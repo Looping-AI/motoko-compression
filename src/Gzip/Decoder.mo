@@ -11,11 +11,11 @@ import List "mo:core/List";
 import Nat32 "mo:core/Nat32";
 import Result "mo:core/Result";
 
-import BitReader "../BitReader";
+import BitReader "../internal/BitReader";
 import CRC32 "../internal/CRC32";
 import DeflateDecoder "../Deflate/Decoder";
 import Header "Header";
-import Utils "../utils";
+import Utils "../internal/utils";
 
 module {
 

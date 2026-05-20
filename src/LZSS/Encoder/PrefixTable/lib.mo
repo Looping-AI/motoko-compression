@@ -15,7 +15,7 @@ import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
 import Runtime "mo:core/Runtime";
 import Prim "mo:⛔";
-import Utils "../../../utils";
+import Utils "../../../internal/utils";
 
 module {
 

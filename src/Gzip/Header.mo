@@ -19,10 +19,10 @@ import Text "mo:core/Text";
 import Time "mo:core/Time";
 
 import BitBuffer "../internal/BitBuffer";
-import BitReader "../BitReader";
+import BitReader "../internal/BitReader";
 import CRC32 "../internal/CRC32";
 import Common "../LZSS/Common";
-import Utils "../utils";
+import Utils "../internal/utils";
 
 module {
 
@@ -255,10 +255,9 @@ module {
       let pos = reader.getPosition();
       let nbytes_so_far = pos / 8;
       // Re-read the header bytes from position 0 (reader is still open)
-      let saved_pos = reader.getPosition();
       reader.setPosition(0);
       let header_bytes = reader.readBytes(nbytes_so_far);
-      reader.setPosition(saved_pos);
+      reader.setPosition(pos);
 
       let calculated_crc16 = Nat32.toNat(CRC32.checksum(header_bytes) & 0xffff);
       let stored_crc16 = Utils.leBytesToNat(reader.readBytes(2));

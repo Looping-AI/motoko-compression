@@ -1,6 +1,6 @@
 import { test; suite; expect } "mo:test";
 import Nat8 "mo:core/Nat8";
-import BitReader "../src/BitReader";
+import BitReader "../src/internal/BitReader";
 
 // ── Test data ────────────────────────────────────────────────────────────────
 // 0xA5 = 0b10100101  — bits LSB-first: 1,0,1,0,0,1,0,1

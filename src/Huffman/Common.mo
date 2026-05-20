@@ -4,7 +4,7 @@ import List "mo:core/List";
 import Order "mo:core/Order";
 import Result "mo:core/Result";
 
-import Utils "../utils";
+import Utils "../internal/utils";
 
 module {
   type Result<A, B> = Result.Result<A, B>;

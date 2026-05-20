@@ -1,7 +1,7 @@
 import { test; suite; expect } "mo:test";
 import Iter "mo:core/Iter";
 import Nat8 "mo:core/Nat8";
-import Utils "../../src/utils";
+import Utils "../../src/internal/utils";
 import CircularBuffer "../../src/internal/CircularBuffer";
 
 // ── helpers ───────────────────────────────────────────────────────────────

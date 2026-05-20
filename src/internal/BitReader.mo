@@ -8,7 +8,7 @@
 
 import Nat "mo:core/Nat";
 import Runtime "mo:core/Runtime";
-import BitBuffer "internal/BitBuffer";
+import BitBuffer "BitBuffer";
 
 module {
 
@@ -104,9 +104,6 @@ module {
         0;
       };
     };
-
-    /// Number of complete bytes available to read.
-    public func byteSizeExact() : Nat { bitSize() / 8 };
 
     /// Ceiling of available bits / 8 (rounds up for a partial trailing byte).
     public func byteSize() : Nat { (bitSize() + 7) / 8 };

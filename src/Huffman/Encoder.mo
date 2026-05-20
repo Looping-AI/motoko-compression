@@ -10,9 +10,9 @@ import Runtime "mo:core/Runtime";
 import Prim "mo:⛔";
 
 import BitBuffer "../internal/BitBuffer";
-import BitReader "../BitReader";
+import BitReader "../internal/BitReader";
 import Common "Common";
-import Utils "../utils";
+import Utils "../internal/utils";
 
 module {
   type Result<A, B> = Result.Result<A, B>;

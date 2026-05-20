@@ -19,7 +19,7 @@ import Runtime "mo:core/Runtime";
 import CircularBuffer "../../internal/CircularBuffer";
 import Common "../Common";
 import PrefixTable "PrefixTable/lib";
-import Utils "../../utils";
+import Utils "../../internal/utils";
 
 module {
 
@@ -81,8 +81,6 @@ module {
 
     // ── Queries ────────────────────────────────────────────────────────────
 
-    public func compressionLevel() : Common.CompressionLevel = level;
-    public func size() : Nat = input_size;
     public func windowSize() : Nat = window_size;
 
     // ── Internals ──────────────────────────────────────────────────────────
@@ -221,12 +219,6 @@ module {
           sink.add(#literal(byte));
         };
       };
-    };
-
-    /// Flush remaining bytes then reset the encoder to its initial state.
-    public func finish(sink : Sink) {
-      flush(sink);
-      clear();
     };
 
     /// Reset the encoder to its initial state without emitting anything.

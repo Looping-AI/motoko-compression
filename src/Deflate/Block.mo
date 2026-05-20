@@ -13,7 +13,7 @@ import LzssCommon "../LZSS/Common";
 import LzssEncoder "../LZSS/Encoder/lib";
 import Symbol "Symbol";
 import HuffmanCodec "HuffmanCodec";
-import Utils "../utils";
+import Utils "../internal/utils";
 
 module {
 
@@ -43,7 +43,6 @@ module {
 
   public type BlockInterface = {
     size : () -> Nat;
-    append : ([Nat8]) -> ();
     add : (Nat8) -> ();
     /// Emit the block payload. `is_final` indicates whether this is the
     /// last block of the stream — only then is the underlying LZSS
@@ -77,10 +76,6 @@ module {
     public func add(byte : Nat8) {
       input_size += 1;
       Queue.pushBack(queue, byte);
-    };
-
-    public func append(bytes : [Nat8]) {
-      for (b in bytes.vals()) add(b);
     };
 
     public func flush(bitbuffer : BitBuffer, _is_final : Bool) {
@@ -129,11 +124,6 @@ module {
     public func add(byte : Nat8) {
       input_size += 1;
       lzss.encodeByte(byte, sink);
-    };
-
-    public func append(bytes : [Nat8]) {
-      input_size += bytes.size();
-      lzss.encode(bytes, sink);
     };
 
     public func flush(bitbuffer : BitBuffer, is_final : Bool) {

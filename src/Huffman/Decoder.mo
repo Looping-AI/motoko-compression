@@ -6,9 +6,9 @@ import Result "mo:core/Result";
 import Prim "mo:⛔";
 
 import Common "Common";
-import BitReader "../BitReader";
+import BitReader "../internal/BitReader";
 import BitBuffer "../internal/BitBuffer";
-import Utils "../utils";
+import Utils "../internal/utils";
 
 module {
   type Result<A, B> = Result.Result<A, B>;
