@@ -38,12 +38,14 @@ const idlFactory = ({ IDL }: { IDL: any }) =>
     generateData: IDL.Func([IDL.Nat], [], []),
     generateBytes: IDL.Func([IDL.Nat], [], []),
     compressData: IDL.Func([], [], []),
+    decompressData: IDL.Func([], [], []),
   });
 
 interface PerfService {
   generateData: (size_mb: bigint) => Promise<void>;
   generateBytes: (n_bytes: bigint) => Promise<void>;
   compressData: () => Promise<void>;
+  decompressData: () => Promise<void>;
 }
 
 let server: PocketIcServer | undefined;
@@ -59,16 +61,21 @@ try {
 
   await actor.generateBytes(payloadBytes);
 
-  // compress_data() uses inter-canister self-calls.  PocketIC sometimes
-  // exhausts its reply-polling window before the outer call officially
-  // settles, even though all Perf.mark() calls have already fired.
-  try {
-    await actor.compressData();
-  } catch (err) {
-    const isPollingTimeout =
-      err instanceof Error && err.constructor.name === "RetryableError";
-    if (!isPollingTimeout) throw err;
-  }
+  // compress_data() / decompress_data() use inter-canister self-calls.
+  // PocketIC sometimes exhausts its reply-polling window before the outer
+  // call officially settles, even though all Perf.mark() calls have fired.
+  const toleratePollingTimeout = async (fn: () => Promise<void>) => {
+    try {
+      await fn();
+    } catch (err) {
+      const isPollingTimeout =
+        err instanceof Error && err.constructor.name === "RetryableError";
+      if (!isPollingTimeout) throw err;
+    }
+  };
+
+  await toleratePollingTimeout(() => actor.compressData());
+  await toleratePollingTimeout(() => actor.decompressData());
 } finally {
   await pic?.tearDown().catch(() => {});
   await server?.stop().catch(() => {});
