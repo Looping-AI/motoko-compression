@@ -25,6 +25,7 @@ switch (statusCode) {
   case (404) { "Not Found" };
   case _ { "Unknown" };
 };
+
 ```
 
 ## For Loops
@@ -45,6 +46,7 @@ for (score in scores.values()) {
   total += score;
 };
 // Most of the time you can use .foldLeft() or .map() instead.
+
 ```
 
 ## Break and Continue
@@ -57,6 +59,7 @@ for (x in items.vals()) {
   if (x > 100) break;
   process(x);
 };
+
 ```
 
 Use labeled loops when you need to exit an outer loop from an inner one:
@@ -68,6 +71,7 @@ label outer for (x in items.vals()) {
     if (x == y) break outer;
   };
 };
+
 ```
 
 Labeled blocks also work for early exit in non-loop contexts:
@@ -81,4 +85,5 @@ label search {
     };
   };
 };
+
 ```

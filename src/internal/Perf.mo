@@ -14,23 +14,23 @@
 /// Collect logs via pic.fetchCanisterLogs() in PocketIC scripts.
 /// This module must NOT be imported in src/ at rest.
 
-import IC    "mo:core/InternetComputer";
+import IC "mo:core/InternetComputer";
 import Debug "mo:core/Debug";
-import Prim  "mo:⛔";
+import Prim "mo:⛔";
 
 module {
 
   /// Emit a single profiling snapshot tagged with `tag`.
   public func mark(tag : Text) {
     let instrs = IC.performanceCounter(1);
-    let mem    = Prim.rts_memory_size();
-    let heap   = Prim.rts_heap_size();
+    let mem = Prim.rts_memory_size();
+    let heap = Prim.rts_heap_size();
     Debug.print(
       "[perf] " # tag #
       " instrs=" # debug_show instrs #
-      " mem="    # debug_show mem    #
-      " heap="   # debug_show heap
+      " mem=" # debug_show mem #
+      " heap=" # debug_show heap
     );
   };
 
-}
+};

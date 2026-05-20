@@ -8,6 +8,7 @@ Reference for Motoko numerical type conversions.
 let natValue = 42;
 let intValue = natValue.toInt();
 let backToNat = Int.abs(intValue); // only if non-negative
+
 ```
 
 ## Nat Size Conversions
@@ -18,6 +19,7 @@ let nat16 = nat8.toNat16();
 let nat32 = nat16.toNat32();
 let nat64 = nat32.toNat64();
 let backToNat8 = Nat8.fromNat64(nat64); // reverse
+
 ```
 
 Conversion chain: `Nat8 → Nat16 → Nat32 → Nat64` (widen) or reverse with `fromNatXX` (narrow).
@@ -30,6 +32,7 @@ let int16 = int8.toInt16();
 let int32 = int16.toInt32();
 let int64 = int32.toInt64();
 let backToInt8 = Int8.fromInt64(int64); // reverse
+
 ```
 
 Conversion chain: `Int8 → Int16 → Int32 → Int64` (widen) or reverse with `fromIntXX` (narrow).
@@ -56,4 +59,5 @@ let f = myInt.toFloat();
 // Time is Int — use Int conversions
 let timestamp = Time.now(); // Int (nanoseconds)
 let milliseconds = timestamp / 1_000_000;
+
 ```

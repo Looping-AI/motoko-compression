@@ -12,7 +12,7 @@
 ///   ignore dec.decode(resp.chunks[0]);
 ///   let result = dec.finish();        // Result<DecodedResponse, Text>
 
-import Header_  "Header";
+import Header_ "Header";
 import Encoder_ "Encoder";
 import Decoder_ "Decoder";
 
@@ -20,13 +20,13 @@ module {
 
   // ── Header ───────────────────────────────────────────────────────────────
 
-  public type ExtraField    = Header_.ExtraField;
-  public type Os            = Header_.Os;
-  public type Header        = Header_.Header;
+  public type ExtraField = Header_.ExtraField;
+  public type Os = Header_.Os;
+  public type Header = Header_.Header;
 
-  public let defaultHeader  = Header_.defaultHeader;
-  public let osToByte       = Header_.osToByte;
-  public let byteToOs       = Header_.byteToOs;
+  public let defaultHeader = Header_.defaultHeader;
+  public let osToByte = Header_.osToByte;
+  public let byteToOs = Header_.byteToOs;
 
   // ── Encoder ──────────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ module {
 
   /// Fluent builder for Gzip.Encoder.
   public type EncoderBuilder = Encoder_.EncoderBuilder;
-  public let  EncoderBuilder = Encoder_.EncoderBuilder;
+  public let EncoderBuilder = Encoder_.EncoderBuilder;
 
   // ── Decoder ──────────────────────────────────────────────────────────────
 
@@ -43,4 +43,4 @@ module {
   /// Gzip decoder.  Feed chunks with `decode()`, retrieve result with `finish()`.
   public let Decoder = Decoder_.Decoder;
 
-}
+};

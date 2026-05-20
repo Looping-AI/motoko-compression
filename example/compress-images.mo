@@ -11,13 +11,13 @@
 ///   - `store_image("logo.png", bytes)` — compress and store.
 ///   - `get_image("logo.png")`          — decompress and return.
 ///   - `is_exact_image("logo.png", bytes)` — verify stored contents match.
-import Array     "mo:core/Array";
-import Map       "mo:core/Map";
-import Nat       "mo:core/Nat";
+import Array "mo:core/Array";
+import Map "mo:core/Map";
+import Nat "mo:core/Nat";
 import Principal "mo:core/Principal";
-import Runtime   "mo:core/Runtime";
-import Text      "mo:core/Text";
-import Gzip      "../src/Gzip/lib";
+import Runtime "mo:core/Runtime";
+import Text "mo:core/Text";
+import Gzip "../src/Gzip/lib";
 
 shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
@@ -35,11 +35,14 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     let n = data.size();
     if (n == 0 or size == 0) return [data];
     let count = n / size + (if (n % size != 0) 1 else 0);
-    Array.tabulate<[Nat8]>(count, func(i) {
-      let lo = i * size;
-      let hi = Nat.min(lo + size, n);
-      Array.tabulate<Nat8>(hi - lo, func(j) { data[lo + j] })
-    })
+    Array.tabulate<[Nat8]>(
+      count,
+      func(i) {
+        let lo = i * size;
+        let hi = Nat.min(lo + size, n);
+        Array.tabulate<Nat8>(hi - lo, func(j) { data[lo + j] });
+      },
+    );
   };
 
   func canister_id() : Principal { Principal.fromActor(self) };
@@ -57,7 +60,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     assert caller == canister_id();
     switch (gzip_decoder.decode(chunk)) {
       case (#err(msg)) Runtime.trap("_decode_chunk: " # msg);
-      case (#ok(_))    {};
+      case (#ok(_)) {};
     };
   };
 
@@ -67,7 +70,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     for (chunk in chunks(data, gzip_encoder.block_size()).vals()) {
       await _compress_chunk(chunk);
     };
-    gzip_encoder.finish()
+    gzip_encoder.finish();
   };
 
   func decode_image(compressed : Gzip.EncodedResponse) : async* [Nat8] {
@@ -75,9 +78,9 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
       await _decode_chunk(chunk);
     };
     switch (gzip_decoder.finish()) {
-      case (#err(msg))   Runtime.trap("decode_image: " # msg);
+      case (#err(msg)) Runtime.trap("decode_image: " # msg);
       case (#ok(result)) result.bytes;
-    }
+    };
   };
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -92,17 +95,17 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   /// Returns null if no image is stored under that name.
   public func get_image(name : Text) : async ?[Nat8] {
     switch (Map.get(images, Text.compare, name)) {
-      case null      null;
+      case null null;
       case (?stored) ?(await* decode_image(stored));
-    }
+    };
   };
 
   /// Return true if the bytes stored under `name` match `new_image` exactly.
   public func is_exact_image(name : Text, new_image : [Nat8]) : async Bool {
     switch (await get_image(name)) {
-      case null            false;
+      case null false;
       case (?stored_image) stored_image == new_image;
-    }
+    };
   };
 
-}
+};

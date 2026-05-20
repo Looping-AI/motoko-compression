@@ -40,6 +40,7 @@ module {
     published : Bool;
   };
 };
+
 ```
 
 ### lib/User.mo
@@ -66,9 +67,15 @@ module {
   };
 
   public func toPublic(self : User) : Types.UserPublic {
-    { id = self.id; username = self.username; bio = self.bio; isActive = self.isActive };
+    {
+      id = self.id;
+      username = self.username;
+      bio = self.bio;
+      isActive = self.isActive;
+    };
   };
 };
+
 ```
 
 ### lib/Post.mo
@@ -91,6 +98,7 @@ module {
     self.content := content;
   };
 };
+
 ```
 
 ### mixins/Auth.mo
@@ -130,6 +138,7 @@ mixin (users : List.List<Types.User>) {
     };
   };
 };
+
 ```
 
 ### mixins/Blog.mo
@@ -168,10 +177,19 @@ mixin (
 
   public query func getAllPosts() : async [Types.PostPublic] {
     posts.map<Types.Post, Types.PostPublic>(
-      func(p) { { id = p.id; authorId = p.author.id; title = p.title; content = p.content; published = p.published } }
+      func(p) {
+        {
+          id = p.id;
+          authorId = p.author.id;
+          title = p.title;
+          content = p.content;
+          published = p.published;
+        };
+      }
     ).toArray();
   };
 };
+
 ```
 
 ### main.mo
@@ -189,6 +207,7 @@ actor {
   include AuthMixin(users);
   include BlogMixin(users, posts);
 };
+
 ```
 
 ## Iterator Chaining
@@ -226,6 +245,7 @@ actor {
     output;
   };
 };
+
 ```
 
 ## Map with Custom Key Types
@@ -257,6 +277,7 @@ actor {
     pointMap.get({ x; y });
   };
 };
+
 ```
 
 ## Shared Type Boundary
@@ -299,7 +320,8 @@ actor {
   public shared ({ caller }) func upload(url : Text) : async Nat {
     let id = photos.size();
     photos.add({
-      id; url;
+      id;
+      url;
       uploadedBy = caller;
       likedBy = Set.empty<Principal>();
       createdAt = Time.now();
@@ -311,6 +333,7 @@ actor {
     photos.map<PhotoInternal, Photo>(func(p) { toPublic(p) }).toArray();
   };
 };
+
 ```
 
 ## In-Place Mutation Patterns
@@ -346,12 +369,17 @@ actor {
 
   public func completeTodo(targetId : Nat) : async Bool {
     var found = false;
-    todos.mapInPlace(func(t) {
-      if (t.id == targetId) { found := true; { t with completed = true } } else { t }
-    });
+    todos.mapInPlace(
+      func(t) {
+        if (t.id == targetId) { found := true; { t with completed = true } } else {
+          t;
+        };
+      }
+    );
     found;
   };
 };
+
 ```
 
 ## Timer with Periodic Cleanup
@@ -365,7 +393,7 @@ import List "mo:core/List";
 
 actor {
   let logs = List.empty<(Int, Text)>();
-  transient var timerId : Nat = 0;  // resets on upgrade — timer must be restarted
+  transient var timerId : Nat = 0; // resets on upgrade — timer must be restarted
 
   public func startCleanup() : async () {
     timerId := Timer.recurringTimer<system>(
@@ -387,6 +415,7 @@ actor {
     logs.toArray();
   };
 };
+
 ```
 
 ## Type Conversions
@@ -414,14 +443,15 @@ let int64 = int32.toInt64();
 let backToInt8 = Int8.fromInt64(int64);
 
 // To/from Text
-let text = n.toText();               // "42"
-let maybeNat = Nat.fromText("42");   // : ?Nat
-let maybeInt = Int.fromText("-5");   // : ?Int
+let text = n.toText(); // "42"
+let maybeNat = Nat.fromText("42"); // : ?Nat
+let maybeInt = Int.fromText("-5"); // : ?Int
 
 // To Float
 let f = n.toFloat();
 
 // Time is Int (nanoseconds)
-let timestamp = Time.now();          // requires import Time "mo:core/Time"
+let timestamp = Time.now(); // requires import Time "mo:core/Time"
 let milliseconds = timestamp / 1_000_000;
+
 ```

@@ -20,7 +20,7 @@ module {
 
     let cap : Nat = initCapacity;
     let buf : [var Nat8] = Prim.Array_init<Nat8>(cap, (0 : Nat8));
-    var head  : Nat = 0; // physical index of the oldest element
+    var head : Nat = 0; // physical index of the oldest element
     var count : Nat = 0; // number of elements currently stored
 
     // ── Queries ───────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ module {
     public func clear() {
       var i = 0;
       while (i < cap) { buf[i] := 0; i += 1 };
-      head  := 0;
+      head := 0;
       count := 0;
     };
 
@@ -61,16 +61,16 @@ module {
     /// Return the element at logical index `i` (0 = oldest), or null if i >= size.
     public func get(i : Nat) : ?Nat8 {
       if (i >= count) return null;
-      ?(buf[(head + i) % cap])
+      ?(buf[(head + i) % cap]);
     };
 
     /// Remove and return the oldest element (head), or null if empty.
     public func popFront() : ?Nat8 {
       if (count == 0) return null;
       let v = buf[head];
-      head  := (head + 1) % cap;
+      head := (head + 1) % cap;
       count -= 1;
-      ?v
+      ?v;
     };
 
     /// Iterate over all elements from oldest to newest.
@@ -81,11 +81,11 @@ module {
           if (i >= count) return null;
           let v = buf[(head + i) % cap];
           i += 1;
-          ?v
-        }
-      }
+          ?v;
+        };
+      };
     };
 
   }; // end class CircularBuffer
 
-}
+};

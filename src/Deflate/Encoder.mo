@@ -3,11 +3,11 @@
 /// Wraps a BitBuffer and a block implementation. Calling `finish` flushes
 /// the final (BFINAL=1) block and returns the filled BitBuffer.
 
-import Runtime     "mo:core/Runtime";
-import BitBuffer    "../internal/BitBuffer";
-import Block        "Block";
-import LzssEncoder  "../LZSS/Encoder/lib";
-import Common       "../LZSS/Common";
+import Runtime "mo:core/Runtime";
+import BitBuffer "../internal/BitBuffer";
+import Block "Block";
+import LzssEncoder "../LZSS/Encoder/lib";
+import Common "../LZSS/Common";
 
 module {
 
@@ -17,11 +17,11 @@ module {
 
   public type DeflateOptions = {
     /// Maximum number of uncompressed bytes per block.
-    block_size      : Nat;
+    block_size : Nat;
     /// Use dynamic Huffman tables (true) or fixed tables (false).
     dynamic_huffman : Bool;
     /// LZSS compression level, or `null` for raw (non-compressed) blocks.
-    lzss            : ?Common.CompressionLevel;
+    lzss : ?Common.CompressionLevel;
   };
 
   // ── Encoder class ──────────────────────────────────────────────────────
@@ -41,9 +41,15 @@ module {
       };
       case (?level) {
         if (options.dynamic_huffman) {
-          #Dynamic({ lzss = LzssEncoder.Encoder(level); block_limit = options.block_size });
+          #Dynamic({
+            lzss = LzssEncoder.Encoder(level);
+            block_limit = options.block_size;
+          });
         } else {
-          #Fixed({   lzss = LzssEncoder.Encoder(level); block_limit = options.block_size });
+          #Fixed({
+            lzss = LzssEncoder.Encoder(level);
+            block_limit = options.block_size;
+          });
         };
       };
     };
@@ -74,7 +80,7 @@ module {
 
     /// Flush the current block.
     public func flush(is_final : Bool) {
-      bitbuffer.addBit(is_final);                         // BFINAL
+      bitbuffer.addBit(is_final); // BFINAL
       bitbuffer.addBits(2, Block.blockToNat(block_type)); // BTYPE
       block.flush(bitbuffer, is_final);
       switch (on_block_flushed) {
@@ -95,4 +101,4 @@ module {
     };
   };
 
-}
+};

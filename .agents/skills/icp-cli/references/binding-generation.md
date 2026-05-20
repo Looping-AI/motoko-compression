@@ -5,6 +5,7 @@ icp-cli does not have a built-in `dfx generate` command. Use `@icp-sdk/bindgen` 
 ## Vite plugin (recommended)
 
 For Vite-based frontend projects:
+
 ```js
 // vite.config.js
 import { icpBindgen } from "@icp-sdk/bindgen/plugins/vite";
@@ -45,7 +46,7 @@ const agentOptions = {
 // CORRECT: pass { agentOptions }, not { agent }
 export const backend = createActor(
   canisterEnv?.["PUBLIC_CANISTER_ID:backend"],
-  { agentOptions }
+  { agentOptions },
 );
 // Repeat for each canister: createOther(canisterEnv?.["PUBLIC_CANISTER_ID:other"], { agentOptions })
 ```
@@ -53,6 +54,7 @@ export const backend = createActor(
 ## Non-Vite frontends
 
 Use the `@icp-sdk/bindgen` CLI to generate bindings manually:
+
 ```bash
 npx @icp-sdk/bindgen --did ../backend/backend.did --out ./src/bindings
 ```
@@ -64,16 +66,21 @@ npx @icp-sdk/bindgen --did ../backend/backend.did --out ./src/bindings
 ```ts
 // Wrong — raw Candid style (only applies if using declarations directly)
 const result = await backend.getNickname();
-if (result.length > 0) { name = result[0]; }
+if (result.length > 0) {
+  name = result[0];
+}
 
 // Correct — wrapper returns T | null
 const result = await backend.getNickname();
-if (result !== null) { name = result; }
+if (result !== null) {
+  name = result;
+}
 ```
 
 ## Requirements
 
 Install both packages in the frontend project (note the minimum versions):
+
 ```bash
 npm install @icp-sdk/core@^5.0.0
 npm install -D @icp-sdk/bindgen@^0.3.0

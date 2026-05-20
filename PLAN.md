@@ -200,6 +200,7 @@ Work through phases in order. Each phase ends with `mops test` passing before th
 - [x] `src/Deflate/lib.mo` — public facade (`buildEncoder`, `DeflateOptions`)
 
 **Test file:** `tests/Deflate.Test.mo` — passing
+
 - Symbol encoding/decoding (literals, lengths, distances, EOB)
 - Raw block round-trip
 - Fixed Huffman round-trip

@@ -7,15 +7,15 @@
 /// `decode()` only accumulates bytes; all decompression work happens in
 /// `finish()`.  This avoids partial-block reads that would trap in BitReader.
 
-import List   "mo:core/List";
-import Nat32  "mo:core/Nat32";
+import List "mo:core/List";
+import Nat32 "mo:core/Nat32";
 import Result "mo:core/Result";
 
-import BitReader      "../BitReader";
-import CRC32         "../internal/CRC32";
+import BitReader "../BitReader";
+import CRC32 "../internal/CRC32";
 import DeflateDecoder "../Deflate/Decoder";
-import Header        "Header";
-import Utils         "../utils";
+import Header "Header";
+import Utils "../utils";
 
 module {
 
@@ -26,7 +26,7 @@ module {
   /// Returned by `Decoder.finish()` on success.
   public type DecodedResponse = {
     header : Header.Header;
-    bytes  : [Nat8];
+    bytes : [Nat8];
   };
 
   // ── Decoder class ─────────────────────────────────────────────────────────
@@ -37,9 +37,9 @@ module {
   /// `finish()` performs the actual decompression and footer verification.
   public class Decoder() {
 
-    let reader         = BitReader.BitReader();
-    let buffer         = List.empty<Nat8>();
-    let deflate        = DeflateDecoder.Decoder(reader, ?buffer);
+    let reader = BitReader.BitReader();
+    let buffer = List.empty<Nat8>();
+    let deflate = DeflateDecoder.Decoder(reader, ?buffer);
 
     // ── Public API ──────────────────────────────────────────────────────────
 
@@ -48,7 +48,7 @@ module {
     /// Returns `#ok` always; errors are only surfaced by `finish()`.
     public func decode(bytes : [Nat8]) : Result<(), Text> {
       reader.addBytes(bytes);
-      #ok()
+      #ok();
     };
 
     /// Decompress all accumulated bytes and verify the Gzip footer.
@@ -58,7 +58,7 @@ module {
       // 1. Decode the Gzip header
       let header = switch (Header.decode(reader)) {
         case (#err(msg)) return #err(msg);
-        case (#ok(h))    h;
+        case (#ok(h)) h;
       };
 
       // Free the header bytes from the reader buffer
@@ -67,7 +67,7 @@ module {
       // 2. Deflate-decompress the payload
       switch (deflate.decode()) {
         case (#err(msg)) return #err(msg);
-        case (#ok(_))    {};
+        case (#ok(_)) {};
       };
 
       // 3. Byte-align to reach the Gzip footer
@@ -86,8 +86,8 @@ module {
       };
 
       // 5. Read and verify ISIZE (4 bytes, LE, mod 2^32)
-      let stored_isize  = Utils.le_bytes_to_nat(reader.readBytes(4));
-      let actual_isize  = List.size(buffer) % 4294967296;
+      let stored_isize = Utils.le_bytes_to_nat(reader.readBytes(4));
+      let actual_isize = List.size(buffer) % 4294967296;
       if (stored_isize != actual_isize) {
         return #err(
           "Gzip: ISIZE mismatch — stored "
@@ -103,7 +103,7 @@ module {
       };
 
       clear();
-      #ok(result)
+      #ok(result);
     };
 
     /// Reset the decoder state so it can be reused for a new stream.
@@ -113,4 +113,4 @@ module {
     };
   };
 
-}
+};

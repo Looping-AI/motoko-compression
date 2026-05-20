@@ -26,8 +26,7 @@ module {
 
     // Slot i holds a list of (third_byte, insertion_index) pairs for all
     // 3-byte prefixes whose first two bytes hash to i.
-    let table : [var ?List.List<(Nat8, Nat)>] =
-      Prim.Array_init<?List.List<(Nat8, Nat)>>(TABLE_SIZE, null);
+    let table : [var ?List.List<(Nat8, Nat)>] = Prim.Array_init<?List.List<(Nat8, Nat)>>(TABLE_SIZE, null);
 
     /// Insert a 3-byte prefix starting at `bytes[start]` into the table and
     /// record `index` as its latest position.
@@ -47,7 +46,7 @@ module {
         case null {
           let b = List.empty<(Nat8, Nat)>();
           table[table_index] := ?b;
-          b
+          b;
         };
       };
 
@@ -68,7 +67,7 @@ module {
 
       // No existing entry for this third byte: add a new one.
       List.add(bucket, (third_byte, index));
-      null
+      null;
     };
 
     /// Reset the table, discarding all recorded prefix positions.
@@ -80,4 +79,4 @@ module {
 
   };
 
-}
+};

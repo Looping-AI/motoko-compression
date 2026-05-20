@@ -6,7 +6,7 @@
 /// Intended for use from tests/BitReaderTraps.Test.mo (replica test).
 
 import BitReader "../../src/BitReader";
-import Deflate   "../../src/Deflate/lib";
+import Deflate "../../src/Deflate/lib";
 import List "mo:core/List";
 import LZSS "../../src/LZSS/lib";
 
@@ -19,7 +19,7 @@ persistent actor class TrapCanister() {
 
   public func readBitsOverflow() : async () {
     let r = BitReader.fromBytes([0xA5 : Nat8]); // 8 bits available
-    ignore r.readBits(9);                        // traps: only 8 bits available
+    ignore r.readBits(9); // traps: only 8 bits available
   };
 
   public func skipBitsOverflow() : async () {
@@ -41,9 +41,9 @@ persistent actor class TrapCanister() {
   /// Traps: block_size > NO_COMPRESSION_MAX_BLOCK_SIZE is illegal in raw mode.
   public func buildEncoderRawOversized() : async () {
     let opts : Deflate.DeflateOptions = {
-      block_size      = 100_000;
+      block_size = 100_000;
       dynamic_huffman = false;
-      lzss            = null;
+      lzss = null;
     };
     ignore Deflate.buildEncoder(opts);
   };

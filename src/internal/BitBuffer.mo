@@ -27,7 +27,7 @@ module {
     var buf : [var Nat8] = Prim.Array_init<Nat8>(cap, (0 : Nat8));
 
     var writeBit : Nat = 0; // total bits written
-    var readBit : Nat = 0;  // logical bits dropped from front
+    var readBit : Nat = 0; // logical bits dropped from front
 
     // ── Internal helpers ─────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ module {
     // Map logical bit index i (0 = first unread bit) to (byteIdx, bitInByte).
     func getPos(i : Nat) : (Nat, Nat) {
       let abs = i + readBit;
-      (abs / BYTE, abs % BYTE)
+      (abs / BYTE, abs % BYTE);
     };
 
     // ── Size queries ─────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ module {
     /// Append a single bit (true = 1, false = 0).
     public func addBit(bit : Bool) {
       let byteIdx = writeBit / BYTE;
-      let bitIdx  = writeBit % BYTE;
+      let bitIdx = writeBit % BYTE;
       ensureCapacity(byteIdx + 1);
       if (bit) buf[byteIdx] := Nat8.bitset(buf[byteIdx], bitIdx);
       writeBit += 1;
@@ -77,13 +77,13 @@ module {
       var v = value;
       while (remaining > 0) {
         let byteIdx = writeBit / BYTE;
-        let bitIdx  = writeBit % BYTE;
-        let take    = if (remaining < BYTE - bitIdx) remaining else BYTE - bitIdx;
+        let bitIdx = writeBit % BYTE;
+        let take = if (remaining < BYTE - bitIdx) remaining else BYTE - bitIdx;
         ensureCapacity(byteIdx + 1);
         let bits = Nat8.fromNat(v % (2 ** take));
         buf[byteIdx] := buf[byteIdx] | (bits << Nat8.fromNat(bitIdx));
-        v         := v / (2 ** take);
-        writeBit  += take;
+        v := v / (2 ** take);
+        writeBit += take;
         remaining -= take;
       };
     };
@@ -99,29 +99,29 @@ module {
     /// Read the bit at logical position `i` (0 = first unread bit).
     public func getBit(i : Nat) : Bool {
       let (byteIdx, bitIdx) = getPos(i);
-      Nat8.bittest(buf[byteIdx], bitIdx)
+      Nat8.bittest(buf[byteIdx], bitIdx);
     };
 
     /// Read `n` bits at logical bit position `i`, returned as a Nat (LSB first).
     public func getBits(i : Nat, n : Nat) : Nat {
-      var bits        = 0;
+      var bits = 0;
       var accumulated = 0;
       let (startByte, startBitInByte) = getPos(i);
       var byteIdx = startByte;
-      var bitIdx  = startBitInByte;
+      var bitIdx = startBitInByte;
       var remaining = n;
       while (remaining > 0) {
-        let take     = if (remaining < BYTE - bitIdx) remaining else BYTE - bitIdx;
-        let mask     = Nat8.fromNat(2 ** take - 1);
-        let shifted  = buf[byteIdx] >> Nat8.fromNat(bitIdx);
+        let take = if (remaining < BYTE - bitIdx) remaining else BYTE - bitIdx;
+        let mask = Nat8.fromNat(2 ** take - 1);
+        let shifted = buf[byteIdx] >> Nat8.fromNat(bitIdx);
         let extracted = Nat8.toNat(shifted & mask);
-        bits        += extracted * (2 ** accumulated);
+        bits += extracted * (2 ** accumulated);
         accumulated += take;
-        remaining   -= take;
-        byteIdx     += 1;
-        bitIdx      := 0;
+        remaining -= take;
+        byteIdx += 1;
+        bitIdx := 0;
       };
-      bits
+      bits;
     };
 
     /// Read up to 8 bits at bit position `i`, zero-padding if fewer bits remain.
@@ -130,14 +130,17 @@ module {
       let avail = bitSize();
       if (i >= avail) return 0;
       let n = if (avail - i < BYTE) avail - i else BYTE;
-      Nat8.fromNat(getBits(i, n))
+      Nat8.fromNat(getBits(i, n));
     };
 
     /// Read `nbytes` bytes starting at bit position `startBit`.
     public func getBytes(startBit : Nat, nbytes : Nat) : [Nat8] {
-      Array.tabulate<Nat8>(nbytes, func(i) {
-        getByte(startBit + i * BYTE)
-      })
+      Array.tabulate<Nat8>(
+        nbytes,
+        func(i) {
+          getByte(startBit + i * BYTE);
+        },
+      );
     };
 
     // ── Control operations ────────────────────────────────────────────────
@@ -162,7 +165,7 @@ module {
       var i = 0;
       while (i < live) { buf[i] := 0; i += 1 };
       writeBit := 0;
-      readBit  := 0;
+      readBit := 0;
     };
 
     // ── Iteration ─────────────────────────────────────────────────────────
@@ -173,19 +176,19 @@ module {
     /// or `byteAlign` the read side via their own accounting before iterating.
     public func bytes() : Iter.Iter<Nat8> {
       if (readBit % BYTE != 0) {
-        Runtime.trap("BitBuffer.bytes: readBit is not byte-aligned")
+        Runtime.trap("BitBuffer.bytes: readBit is not byte-aligned");
       };
-      let startByte = readBit  / BYTE;
-      let endByte   = (writeBit + BYTE - 1) / BYTE;
+      let startByte = readBit / BYTE;
+      let endByte = (writeBit + BYTE - 1) / BYTE;
       object {
         var pos = startByte;
         public func next() : ?Nat8 {
           if (pos >= endByte) return null;
           let b = buf[pos];
           pos += 1;
-          ?b
-        }
-      }
+          ?b;
+        };
+      };
     };
 
   }; // end class BitBuffer
@@ -195,4 +198,4 @@ module {
   /// Create an empty BitBuffer with default initial capacity.
   public func new() : BitBuffer { BitBuffer(0) };
 
-}
+};

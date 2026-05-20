@@ -24,7 +24,8 @@ const CANISTER_NAMES = ["backend", "other"];
 function getCanisterId(name) {
   // `-i` makes the command return only the identity of the canister
   return execSync(`icp canister status ${name} -e ${environment} -i`, {
-    encoding: "utf-8", stdio: "pipe",
+    encoding: "utf-8",
+    stdio: "pipe",
   }).trim();
 }
 
@@ -32,15 +33,15 @@ function getDevServerConfig() {
   const networkStatus = JSON.parse(
     execSync(`icp network status -e ${environment} --json`, {
       encoding: "utf-8",
-    })
+    }),
   );
-  const canisterParams = CANISTER_NAMES
-    .map((name) => `PUBLIC_CANISTER_ID:${name}=${getCanisterId(name)}`)
-    .join("&");
+  const canisterParams = CANISTER_NAMES.map(
+    (name) => `PUBLIC_CANISTER_ID:${name}=${getCanisterId(name)}`,
+  ).join("&");
   return {
     headers: {
       "Set-Cookie": `ic_env=${encodeURIComponent(
-        `${canisterParams}&ic_root_key=${networkStatus.root_key}`
+        `${canisterParams}&ic_root_key=${networkStatus.root_key}`,
       )}; SameSite=Lax;`,
     },
     proxy: {

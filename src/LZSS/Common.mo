@@ -25,4 +25,4 @@ module {
   /// Maximum match length in bytes.
   public let MATCH_MAX_SIZE : Nat = 258;
 
-}
+};

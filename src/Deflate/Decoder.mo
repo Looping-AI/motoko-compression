@@ -8,14 +8,14 @@
 ///   - Recursive decode() → iterative label/loop (no recursion in Motoko async)
 ///   - No `debug {}` wrapper (would swallow all logic in production)
 
-import Array        "mo:core/Array";
-import List         "mo:core/List";
-import Option       "mo:core/Option";
-import Result       "mo:core/Result";
-import BitReader    "../BitReader";
+import Array "mo:core/Array";
+import List "mo:core/List";
+import Option "mo:core/Option";
+import Result "mo:core/Result";
+import BitReader "../BitReader";
 import HuffmanCodec "HuffmanCodec";
-import LzssDecoder  "../LZSS/Decoder";
-import Utils        "../utils";
+import LzssDecoder "../LZSS/Decoder";
+import Utils "../utils";
 
 module {
 
@@ -27,8 +27,8 @@ module {
   public class Decoder(bitreader : BitReader, output_buffer : ?List.List<Nat8>) {
 
     var end_of_blocks : Bool = false;
-    let buffer       = Option.get(output_buffer, List.empty<Nat8>());
-    let lzss         = LzssDecoder.Decoder();
+    let buffer = Option.get(output_buffer, List.empty<Nat8>());
+    let lzss = LzssDecoder.Decoder();
 
     /// Process deflate blocks until the final block or the stream is empty.
     public func decode() : Result<(), Text> {
@@ -40,8 +40,8 @@ module {
           return #err("Deflate: stream ended before final block");
         };
 
-        end_of_blocks := bitreader.readBit();         // BFINAL
-        let block_type = bitreader.readBits(2);       // BTYPE
+        end_of_blocks := bitreader.readBit(); // BFINAL
+        let block_type = bitreader.readBits(2); // BTYPE
 
         let res : Result<(), Text> = if (block_type == 0) {
           decode_non_compressed();
@@ -64,12 +64,12 @@ module {
     /// Decode a non-compressed (raw) block.
     func decode_non_compressed() : Result<(), Text> {
       bitreader.byteAlign();
-      let size_bytes   = bitreader.readBytes(2);
-      let size         = Utils.le_bytes_to_nat(size_bytes);
-      let nlen         = Utils.le_bytes_to_nat(bitreader.readBytes(2));
+      let size_bytes = bitreader.readBytes(2);
+      let size = Utils.le_bytes_to_nat(size_bytes);
+      let nlen = Utils.le_bytes_to_nat(bitreader.readBytes(2));
       // Verify NLEN == one's complement of LEN
       let expected_nlen = Utils.le_bytes_to_nat(
-        Array.map<Nat8, Nat8>(size_bytes, func(b) { ^b }),
+        Array.map<Nat8, Nat8>(size_bytes, func(b) { ^b })
       );
       if (nlen != expected_nlen) {
         return #err("Deflate: LEN/NLEN mismatch in non-compressed block");
@@ -92,9 +92,9 @@ module {
           case (#err(msg)) return #err(msg);
         };
         switch sym {
-          case (#EndOfBlock)      break _loop;
-          case (#literal(lit))    lzss.decodeEntry(buffer, #literal(lit));
-          case (#pointer(back))   lzss.decodeEntry(buffer, #pointer(back));
+          case (#EndOfBlock) break _loop;
+          case (#literal(lit)) lzss.decodeEntry(buffer, #literal(lit));
+          case (#pointer(back)) lzss.decodeEntry(buffer, #pointer(back));
         };
       };
       #ok();
@@ -110,4 +110,4 @@ module {
     public func addBytes(bytes : [Nat8]) { bitreader.addBytes(bytes) };
   };
 
-}
+};

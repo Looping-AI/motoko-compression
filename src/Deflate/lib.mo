@@ -4,19 +4,19 @@
 /// constructors (`buildEncoder`, `buildDecoder`) that wire up the
 /// internal BitBuffer / BitReader automatically.
 
-import List           "mo:core/List";
-import BitBufferMod   "../internal/BitBuffer";
-import BitReader      "../BitReader";
-import Common         "../LZSS/Common";
+import List "mo:core/List";
+import BitBufferMod "../internal/BitBuffer";
+import BitReader "../BitReader";
+import Common "../LZSS/Common";
 import DeflateEncoder "Encoder";
 import DeflateDecoder "Decoder";
 
 module {
 
-  public type Encoder        = DeflateEncoder.Encoder;
-  public let  Encoder        = DeflateEncoder.Encoder;
-  public type Decoder        = DeflateDecoder.Decoder;
-  public let  Decoder        = DeflateDecoder.Decoder;
+  public type Encoder = DeflateEncoder.Encoder;
+  public let Encoder = DeflateEncoder.Encoder;
+  public type Decoder = DeflateDecoder.Decoder;
+  public let Decoder = DeflateDecoder.Decoder;
   public type DeflateOptions = DeflateEncoder.DeflateOptions;
   public type CompressionLevel = Common.CompressionLevel;
 
@@ -32,4 +32,4 @@ module {
     DeflateDecoder.Decoder(BitReader.BitReader(), buffer);
   };
 
-}
+};

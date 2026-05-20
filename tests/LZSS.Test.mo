@@ -17,7 +17,7 @@ import LZSS "../src/LZSS/lib";
 type LzssEntry = Common.LzssEntry;
 
 func listToArray<T>(l : List.List<T>) : [T] {
-  Iter.toArray(List.values(l))
+  Iter.toArray(List.values(l));
 };
 
 func entryEqual(a : LzssEntry, b : LzssEntry) : Bool {
@@ -25,256 +25,352 @@ func entryEqual(a : LzssEntry, b : LzssEntry) : Bool {
     case (#literal(x), #literal(y)) x == y;
     case (#pointer(ox, lx), #pointer(oy, ly)) ox == oy and lx == ly;
     case _ false;
-  }
+  };
 };
 
 // ── PrefixTable ───────────────────────────────────────────────────────────
 
-suite("PrefixTable", func() {
+suite(
+  "PrefixTable",
+  func() {
 
-  test("first insert returns null (new prefix)", func() {
-    let pt = PrefixTable.PrefixTable();
-    let result = pt.insert([0x41, 0x42, 0x43], 0, 3, 0);
-    expect.option(result, Nat.toText, Nat.equal).isNull();
-  });
+    test(
+      "first insert returns null (new prefix)",
+      func() {
+        let pt = PrefixTable.PrefixTable();
+        let result = pt.insert([0x41, 0x42, 0x43], 0, 3, 0);
+        expect.option(result, Nat.toText, Nat.equal).isNull();
+      },
+    );
 
-  test("second insert with same prefix returns prev index", func() {
-    let pt = PrefixTable.PrefixTable();
-    ignore pt.insert([0x41, 0x42, 0x43], 0, 3, 0);
-    let result = pt.insert([0x41, 0x42, 0x43], 0, 3, 10);
-    expect.option(result, Nat.toText, Nat.equal).equal(?0);
-  });
+    test(
+      "second insert with same prefix returns prev index",
+      func() {
+        let pt = PrefixTable.PrefixTable();
+        ignore pt.insert([0x41, 0x42, 0x43], 0, 3, 0);
+        let result = pt.insert([0x41, 0x42, 0x43], 0, 3, 10);
+        expect.option(result, Nat.toText, Nat.equal).equal(?0);
+      },
+    );
 
-  test("different third byte gives different slots", func() {
-    let pt = PrefixTable.PrefixTable();
-    ignore pt.insert([0x41, 0x42, 0x43], 0, 3, 0);
-    // Same first two bytes, different third byte → different slot
-    let result = pt.insert([0x41, 0x42, 0x44], 0, 3, 5);
-    expect.option(result, Nat.toText, Nat.equal).isNull();
-  });
+    test(
+      "different third byte gives different slots",
+      func() {
+        let pt = PrefixTable.PrefixTable();
+        ignore pt.insert([0x41, 0x42, 0x43], 0, 3, 0);
+        // Same first two bytes, different third byte → different slot
+        let result = pt.insert([0x41, 0x42, 0x44], 0, 3, 5);
+        expect.option(result, Nat.toText, Nat.equal).isNull();
+      },
+    );
 
-  test("clear resets all entries", func() {
-    let pt = PrefixTable.PrefixTable();
-    ignore pt.insert([0x41, 0x42, 0x43], 0, 3, 42);
-    pt.clear();
-    // After clear the prefix is unknown again → returns null
-    let result = pt.insert([0x41, 0x42, 0x43], 0, 3, 99);
-    expect.option(result, Nat.toText, Nat.equal).isNull();
-  });
+    test(
+      "clear resets all entries",
+      func() {
+        let pt = PrefixTable.PrefixTable();
+        ignore pt.insert([0x41, 0x42, 0x43], 0, 3, 42);
+        pt.clear();
+        // After clear the prefix is unknown again → returns null
+        let result = pt.insert([0x41, 0x42, 0x43], 0, 3, 99);
+        expect.option(result, Nat.toText, Nat.equal).isNull();
+      },
+    );
 
-  test("consecutive inserts track latest index", func() {
-    let pt = PrefixTable.PrefixTable();
-    ignore pt.insert([0x01, 0x02, 0x03], 0, 3, 0);
-    ignore pt.insert([0x01, 0x02, 0x03], 0, 3, 5);
-    // Third insert should return 5 (the second index)
-    let result = pt.insert([0x01, 0x02, 0x03], 0, 3, 10);
-    expect.option(result, Nat.toText, Nat.equal).equal(?5);
-  });
+    test(
+      "consecutive inserts track latest index",
+      func() {
+        let pt = PrefixTable.PrefixTable();
+        ignore pt.insert([0x01, 0x02, 0x03], 0, 3, 0);
+        ignore pt.insert([0x01, 0x02, 0x03], 0, 3, 5);
+        // Third insert should return 5 (the second index)
+        let result = pt.insert([0x01, 0x02, 0x03], 0, 3, 10);
+        expect.option(result, Nat.toText, Nat.equal).equal(?5);
+      },
+    );
 
-});
+  },
+);
 
 // ── Encoder ───────────────────────────────────────────────────────────────
 
-suite("Encoder", func() {
+suite(
+  "Encoder",
+  func() {
 
-  test("encode([]) returns empty list", func() {
-    let result = EncoderLib.encode([]);
-    expect.nat(List.size(result)).equal(0);
-  });
+    test(
+      "encode([]) returns empty list",
+      func() {
+        let result = EncoderLib.encode([]);
+        expect.nat(List.size(result)).equal(0);
+      },
+    );
 
-  test("encode single byte returns [#literal(byte)]", func() {
-    let result = EncoderLib.encode([0x42]);
-    expect.nat(List.size(result)).equal(1);
-    let entries = listToArray(result);
-    expect.bool(entryEqual(entries[0], #literal(0x42))).isTrue();
-  });
+    test(
+      "encode single byte returns [#literal(byte)]",
+      func() {
+        let result = EncoderLib.encode([0x42]);
+        expect.nat(List.size(result)).equal(1);
+        let entries = listToArray(result);
+        expect.bool(entryEqual(entries[0], #literal(0x42))).isTrue();
+      },
+    );
 
-  test("encode two bytes returns two literals", func() {
-    let result = EncoderLib.encode([0x41, 0x42]);
-    let entries = listToArray(result);
-    expect.nat(entries.size()).equal(2);
-    expect.bool(entryEqual(entries[0], #literal(0x41))).isTrue();
-    expect.bool(entryEqual(entries[1], #literal(0x42))).isTrue();
-  });
+    test(
+      "encode two bytes returns two literals",
+      func() {
+        let result = EncoderLib.encode([0x41, 0x42]);
+        let entries = listToArray(result);
+        expect.nat(entries.size()).equal(2);
+        expect.bool(entryEqual(entries[0], #literal(0x41))).isTrue();
+        expect.bool(entryEqual(entries[1], #literal(0x42))).isTrue();
+      },
+    );
 
-  test("encode 3 distinct bytes returns 3 literals", func() {
-    let result = EncoderLib.encode([0x41, 0x42, 0x43]);
-    let entries = listToArray(result);
-    expect.nat(entries.size()).equal(3);
-    expect.bool(entryEqual(entries[0], #literal(0x41))).isTrue();
-    expect.bool(entryEqual(entries[1], #literal(0x42))).isTrue();
-    expect.bool(entryEqual(entries[2], #literal(0x43))).isTrue();
-  });
+    test(
+      "encode 3 distinct bytes returns 3 literals",
+      func() {
+        let result = EncoderLib.encode([0x41, 0x42, 0x43]);
+        let entries = listToArray(result);
+        expect.nat(entries.size()).equal(3);
+        expect.bool(entryEqual(entries[0], #literal(0x41))).isTrue();
+        expect.bool(entryEqual(entries[1], #literal(0x42))).isTrue();
+        expect.bool(entryEqual(entries[2], #literal(0x43))).isTrue();
+      },
+    );
 
-  test("encode repeated bytes produces at least one #pointer entry", func() {
-    // 20 repeated bytes: after the first match the encoder should emit pointers.
-    let bytes = Array.tabulate<Nat8>(20, func(_) = 0x41);
-    let entries = listToArray(EncoderLib.encode(bytes));
-    var has_pointer = false;
-    for (e in entries.vals()) {
-      switch e {
-        case (#pointer(_, _)) has_pointer := true;
-        case (#literal(_)) {};
-      };
-    };
-    expect.bool(has_pointer).isTrue();
-  });
-
-  test("all #pointer entries have valid offset and length", func() {
-    let bytes = Array.tabulate<Nat8>(100, func(i) = Nat8.fromNat(i % 7));
-    let entries = listToArray(EncoderLib.encode(bytes));
-    for (e in entries.vals()) {
-      switch e {
-        case (#pointer(off, len)) {
-          expect.bool(off >= 1).isTrue();
-          expect.bool(off <= Common.MATCH_WINDOW_SIZE).isTrue();
-          expect.bool(len >= 3).isTrue();
-          expect.bool(len <= Common.MATCH_MAX_SIZE).isTrue();
+    test(
+      "encode repeated bytes produces at least one #pointer entry",
+      func() {
+        // 20 repeated bytes: after the first match the encoder should emit pointers.
+        let bytes = Array.tabulate<Nat8>(20, func(_) = 0x41);
+        let entries = listToArray(EncoderLib.encode(bytes));
+        var has_pointer = false;
+        for (e in entries.vals()) {
+          switch e {
+            case (#pointer(_, _)) has_pointer := true;
+            case (#literal(_)) {};
+          };
         };
-        case (#literal(_)) {};
-      };
-    };
-  });
+        expect.bool(has_pointer).isTrue();
+      },
+    );
 
-  test("stateful encode_byte + flush matches encode()", func() {
-    let bytes : [Nat8] = [0x41, 0x42, 0x43, 0x41, 0x42, 0x43, 0x41, 0x42, 0x43];
-    // encode via convenience function
-    let expected = listToArray(EncoderLib.encode(bytes));
-    // encode via stateful API
-    let enc = EncoderLib.Encoder(#best);
-    let buf = List.empty<LzssEntry>();
-    let sink : EncoderLib.Sink = { add = func(e) { List.add(buf, e) } };
-    enc.encode(bytes, sink);
-    enc.flush(sink);
-    let got = listToArray(buf);
-    // Both paths must produce identical entry sequences.
-    expect.bool(got.size() == expected.size()).isTrue();
-    for (i in Utils.range(0, got.size())) {
-      expect.bool(entryEqual(got[i], expected[i])).isTrue();
-    };
-  });
+    test(
+      "all #pointer entries have valid offset and length",
+      func() {
+        let bytes = Array.tabulate<Nat8>(100, func(i) = Nat8.fromNat(i % 7));
+        let entries = listToArray(EncoderLib.encode(bytes));
+        for (e in entries.vals()) {
+          switch e {
+            case (#pointer(off, len)) {
+              expect.bool(off >= 1).isTrue();
+              expect.bool(off <= Common.MATCH_WINDOW_SIZE).isTrue();
+              expect.bool(len >= 3).isTrue();
+              expect.bool(len <= Common.MATCH_MAX_SIZE).isTrue();
+            };
+            case (#literal(_)) {};
+          };
+        };
+      },
+    );
 
-});
+    test(
+      "stateful encode_byte + flush matches encode()",
+      func() {
+        let bytes : [Nat8] = [0x41, 0x42, 0x43, 0x41, 0x42, 0x43, 0x41, 0x42, 0x43];
+        // encode via convenience function
+        let expected = listToArray(EncoderLib.encode(bytes));
+        // encode via stateful API
+        let enc = EncoderLib.Encoder(#best);
+        let buf = List.empty<LzssEntry>();
+        let sink : EncoderLib.Sink = { add = func(e) { List.add(buf, e) } };
+        enc.encode(bytes, sink);
+        enc.flush(sink);
+        let got = listToArray(buf);
+        // Both paths must produce identical entry sequences.
+        expect.bool(got.size() == expected.size()).isTrue();
+        for (i in Utils.range(0, got.size())) {
+          expect.bool(entryEqual(got[i], expected[i])).isTrue();
+        };
+      },
+    );
+
+  },
+);
 
 // ── Compression levels ────────────────────────────────────────────────────
 
-suite("CompressionLevel", func() {
+suite(
+  "CompressionLevel",
+  func() {
 
-  test("all three levels produce correct round-trips", func() {
-    let bytes = Array.tabulate<Nat8>(200, func(i) = Nat8.fromNat(i % 13));
-    for (level in [#fast, #balance, #best].vals()) {
-      let enc = EncoderLib.Encoder(level);
-      let buf = List.empty<LzssEntry>();
-      let sink : EncoderLib.Sink = { add = func(e) { List.add(buf, e) } };
-      enc.encode(bytes, sink);
-      enc.flush(sink);
-      let decoded = listToArray(Decoder.decode(buf));
-      expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
-    };
-  });
+    test(
+      "all three levels produce correct round-trips",
+      func() {
+        let bytes = Array.tabulate<Nat8>(200, func(i) = Nat8.fromNat(i % 13));
+        for (level in [#fast, #balance, #best].vals()) {
+          let enc = EncoderLib.Encoder(level);
+          let buf = List.empty<LzssEntry>();
+          let sink : EncoderLib.Sink = { add = func(e) { List.add(buf, e) } };
+          enc.encode(bytes, sink);
+          enc.flush(sink);
+          let decoded = listToArray(Decoder.decode(buf));
+          expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
+        };
+      },
+    );
 
-  test("#best produces <= entries compared to #fast on repeated bytes", func() {
-    let bytes = Array.tabulate<Nat8>(300, func(_) = 0x41);
-    let encFast = EncoderLib.Encoder(#fast);
-    let encBest = EncoderLib.Encoder(#best);
-    let bufFast = List.empty<LzssEntry>();
-    let bufBest = List.empty<LzssEntry>();
-    let sinkFast : EncoderLib.Sink = { add = func(e) { List.add(bufFast, e) } };
-    let sinkBest : EncoderLib.Sink = { add = func(e) { List.add(bufBest, e) } };
-    encFast.encode(bytes, sinkFast); encFast.flush(sinkFast);
-    encBest.encode(bytes, sinkBest); encBest.flush(sinkBest);
-    expect.bool(List.size(bufBest) <= List.size(bufFast)).isTrue();
-  });
+    test(
+      "#best produces <= entries compared to #fast on repeated bytes",
+      func() {
+        let bytes = Array.tabulate<Nat8>(300, func(_) = 0x41);
+        let encFast = EncoderLib.Encoder(#fast);
+        let encBest = EncoderLib.Encoder(#best);
+        let bufFast = List.empty<LzssEntry>();
+        let bufBest = List.empty<LzssEntry>();
+        let sinkFast : EncoderLib.Sink = {
+          add = func(e) { List.add(bufFast, e) };
+        };
+        let sinkBest : EncoderLib.Sink = {
+          add = func(e) { List.add(bufBest, e) };
+        };
+        encFast.encode(bytes, sinkFast);
+        encFast.flush(sinkFast);
+        encBest.encode(bytes, sinkBest);
+        encBest.flush(sinkBest);
+        expect.bool(List.size(bufBest) <= List.size(bufFast)).isTrue();
+      },
+    );
 
-  test("windowSize() reflects the chosen level", func() {
-    expect.nat(EncoderLib.Encoder(#fast).windowSize()).equal(1_024);
-    expect.nat(EncoderLib.Encoder(#balance).windowSize()).equal(8_192);
-    expect.nat(EncoderLib.Encoder(#best).windowSize()).equal(32_768);
-  });
+    test(
+      "windowSize() reflects the chosen level",
+      func() {
+        expect.nat(EncoderLib.Encoder(#fast).windowSize()).equal(1_024);
+        expect.nat(EncoderLib.Encoder(#balance).windowSize()).equal(8_192);
+        expect.nat(EncoderLib.Encoder(#best).windowSize()).equal(32_768);
+      },
+    );
 
-});
+  },
+);
 
 // ── Decoder ───────────────────────────────────────────────────────────────
 
-suite("Decoder", func() {
+suite(
+  "Decoder",
+  func() {
 
-  test("#literal entries pass through unchanged", func() {
-    let entries = List.fromArray<LzssEntry>([#literal(0xAA), #literal(0xBB), #literal(0xCC)]);
-    let output = listToArray(Decoder.decode(entries));
-    expect.array(output, Nat8.toText, Nat8.equal).equal([0xAA, 0xBB, 0xCC]);
-  });
+    test(
+      "#literal entries pass through unchanged",
+      func() {
+        let entries = List.fromArray<LzssEntry>([#literal(0xAA), #literal(0xBB), #literal(0xCC)]);
+        let output = listToArray(Decoder.decode(entries));
+        expect.array(output, Nat8.toText, Nat8.equal).equal([0xAA, 0xBB, 0xCC]);
+      },
+    );
 
-  test("#pointer copies previous bytes", func() {
-    // Output so far: [A,B,C]; pointer (offset=3, len=3) copies [A,B,C]
-    let entries = List.fromArray<LzssEntry>([
-      #literal(0x41), #literal(0x42), #literal(0x43),
-      #pointer(3, 3),
-    ]);
-    let output = listToArray(Decoder.decode(entries));
-    expect.array(output, Nat8.toText, Nat8.equal)
-      .equal([0x41, 0x42, 0x43, 0x41, 0x42, 0x43]);
-  });
+    test(
+      "#pointer copies previous bytes",
+      func() {
+        // Output so far: [A,B,C]; pointer (offset=3, len=3) copies [A,B,C]
+        let entries = List.fromArray<LzssEntry>([
+          #literal(0x41),
+          #literal(0x42),
+          #literal(0x43),
+          #pointer(3, 3),
+        ]);
+        let output = listToArray(Decoder.decode(entries));
+        expect.array(output, Nat8.toText, Nat8.equal).equal([0x41, 0x42, 0x43, 0x41, 0x42, 0x43]);
+      },
+    );
 
-  test("#pointer with offset < len expands RLE correctly", func() {
-    // One literal A followed by pointer(1, 5): should give A A A A A A
-    let entries = List.fromArray<LzssEntry>([
-      #literal(0x41),
-      #pointer(1, 5),
-    ]);
-    let output = listToArray(Decoder.decode(entries));
-    expect.array(output, Nat8.toText, Nat8.equal)
-      .equal([0x41, 0x41, 0x41, 0x41, 0x41, 0x41]);
-  });
+    test(
+      "#pointer with offset < len expands RLE correctly",
+      func() {
+        // One literal A followed by pointer(1, 5): should give A A A A A A
+        let entries = List.fromArray<LzssEntry>([
+          #literal(0x41),
+          #pointer(1, 5),
+        ]);
+        let output = listToArray(Decoder.decode(entries));
+        expect.array(output, Nat8.toText, Nat8.equal).equal([0x41, 0x41, 0x41, 0x41, 0x41, 0x41]);
+      },
+    );
 
-  test("decodeIter matches decode", func() {
-    let entries = List.fromArray<LzssEntry>([#literal(0x01), #literal(0x02)]);
-    let via_decode = listToArray(Decoder.decode(entries));
-    let d = Decoder.Decoder();
-    let output = List.empty<Nat8>();
-    d.decodeIter(output, List.values(entries));
-    expect.array(listToArray(output), Nat8.toText, Nat8.equal).equal(via_decode);
-  });
+    test(
+      "decodeIter matches decode",
+      func() {
+        let entries = List.fromArray<LzssEntry>([#literal(0x01), #literal(0x02)]);
+        let via_decode = listToArray(Decoder.decode(entries));
+        let d = Decoder.Decoder();
+        let output = List.empty<Nat8>();
+        d.decodeIter(output, List.values(entries));
+        expect.array(listToArray(output), Nat8.toText, Nat8.equal).equal(via_decode);
+      },
+    );
 
-});
+  },
+);
 
 // ── Round-trip ────────────────────────────────────────────────────────────
 
-suite("LZSS round-trip", func() {
+suite(
+  "LZSS round-trip",
+  func() {
 
-  test("empty bytes round-trip", func() {
-    let decoded = listToArray(LZSS.decode(LZSS.encode([])));
-    expect.array(decoded, Nat8.toText, Nat8.equal).equal([]);
-  });
+    test(
+      "empty bytes round-trip",
+      func() {
+        let decoded = listToArray(LZSS.decode(LZSS.encode([])));
+        expect.array(decoded, Nat8.toText, Nat8.equal).equal([]);
+      },
+    );
 
-  test("single byte round-trip", func() {
-    let bytes : [Nat8] = [0x42];
-    let decoded = listToArray(LZSS.decode(LZSS.encode(bytes)));
-    expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
-  });
+    test(
+      "single byte round-trip",
+      func() {
+        let bytes : [Nat8] = [0x42];
+        let decoded = listToArray(LZSS.decode(LZSS.encode(bytes)));
+        expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
+      },
+    );
 
-  test("short text round-trip", func() {
-    // "Hello, World!" as bytes
-    let bytes : [Nat8] = [0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x57, 0x6F, 0x72, 0x6C, 0x64, 0x21];
-    let decoded = listToArray(LZSS.decode(LZSS.encode(bytes)));
-    expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
-  });
+    test(
+      "short text round-trip",
+      func() {
+        // "Hello, World!" as bytes
+        let bytes : [Nat8] = [0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x2C, 0x20, 0x57, 0x6F, 0x72, 0x6C, 0x64, 0x21];
+        let decoded = listToArray(LZSS.decode(LZSS.encode(bytes)));
+        expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
+      },
+    );
 
-  test("100 repeated bytes round-trip", func() {
-    let bytes = Array.tabulate<Nat8>(100, func(_) = 0x41);
-    let decoded = listToArray(LZSS.decode(LZSS.encode(bytes)));
-    expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
-  });
+    test(
+      "100 repeated bytes round-trip",
+      func() {
+        let bytes = Array.tabulate<Nat8>(100, func(_) = 0x41);
+        let decoded = listToArray(LZSS.decode(LZSS.encode(bytes)));
+        expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
+      },
+    );
 
-  test("alternating pattern round-trip", func() {
-    let bytes = Array.tabulate<Nat8>(64, func(i) = if (i % 2 == 0) 0xAA else 0xBB);
-    let decoded = listToArray(LZSS.decode(LZSS.encode(bytes)));
-    expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
-  });
+    test(
+      "alternating pattern round-trip",
+      func() {
+        let bytes = Array.tabulate<Nat8>(64, func(i) = if (i % 2 == 0) 0xAA else 0xBB);
+        let decoded = listToArray(LZSS.decode(LZSS.encode(bytes)));
+        expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
+      },
+    );
 
-  test("random-ish bytes round-trip (pseudo-random via prime step)", func() {
-    let bytes = Array.tabulate<Nat8>(256, func(i) = Nat8.fromNat((i * 137) % 256));
-    let decoded = listToArray(LZSS.decode(LZSS.encode(bytes)));
-    expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
-  });
+    test(
+      "random-ish bytes round-trip (pseudo-random via prime step)",
+      func() {
+        let bytes = Array.tabulate<Nat8>(256, func(i) = Nat8.fromNat((i * 137) % 256));
+        let decoded = listToArray(LZSS.decode(LZSS.encode(bytes)));
+        expect.array(decoded, Nat8.toText, Nat8.equal).equal(bytes);
+      },
+    );
 
-});
+  },
+);

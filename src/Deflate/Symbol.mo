@@ -4,7 +4,7 @@
 /// special EndOfBlock marker (code 256).  The length/distance coding tables
 /// follow RFC 1951.
 
-import Nat8  "mo:core/Nat8";
+import Nat8 "mo:core/Nat8";
 import Nat16 "mo:core/Nat16";
 import Result "mo:core/Result";
 import Runtime "mo:core/Runtime";
@@ -21,24 +21,47 @@ module {
 
   /// A deflate symbol: literal byte, back-reference, or end-of-block.
   public type Symbol = {
-    #literal  : Nat8;
-    #pointer  : (Nat, Nat);   // (backward_offset, length)
+    #literal : Nat8;
+    #pointer : (Nat, Nat); // (backward_offset, length)
     #EndOfBlock;
   };
 
   // ── Fixed Huffman code tables (RFC 1951 §3.2.6) ────────────────────────
 
   /// Fixed literal/length code ranges with their base code values.
-  public let FIXED_LENGTH_CODES : [{ bitwidth : Nat; symbol_start : Nat; symbol_end : Nat; base_code : Nat16 }] = [
-    { bitwidth = 8; symbol_start =   0; symbol_end = 143; base_code = 0x30  },
+  public let FIXED_LENGTH_CODES : [{
+    bitwidth : Nat;
+    symbol_start : Nat;
+    symbol_end : Nat;
+    base_code : Nat16;
+  }] = [
+    { bitwidth = 8; symbol_start = 0; symbol_end = 143; base_code = 0x30 },
     { bitwidth = 9; symbol_start = 144; symbol_end = 255; base_code = 0x190 },
-    { bitwidth = 7; symbol_start = 256; symbol_end = 279; base_code = 0x00  },
-    { bitwidth = 8; symbol_start = 280; symbol_end = 287; base_code = 0xc0  },
+    { bitwidth = 7; symbol_start = 256; symbol_end = 279; base_code = 0x00 },
+    { bitwidth = 8; symbol_start = 280; symbol_end = 287; base_code = 0xc0 },
   ];
 
   /// Order in which bitwidth code lengths are stored (RFC 1951 §3.2.7).
   public let BITWIDTH_CODE_ORDER : [Nat] = [
-    16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
+    16,
+    17,
+    18,
+    0,
+    8,
+    7,
+    9,
+    6,
+    10,
+    5,
+    11,
+    4,
+    12,
+    3,
+    13,
+    2,
+    14,
+    1,
+    15,
   ];
 
   public let MAX_DISTANCE : Nat = 32_768;
@@ -55,21 +78,15 @@ module {
           Runtime.trap("Deflate: length " # debug_show length # " out of range [3,258]");
         };
         let len = Nat16.fromNat(length);
-        if (len <= 10) {
-          (257 + (len - 3), 0, 0)
-        } else if (len <= 18) {
-          (265 + ((len - 11) / 2), 1, (len - 11) % 2)
-        } else if (len <= 34) {
-          (269 + ((len - 19) / 4), 2, (len - 19) % 4)
-        } else if (len <= 66) {
-          (273 + ((len - 35) / 8), 3, (len - 35) % 8)
-        } else if (len <= 130) {
-          (277 + ((len - 67) / 16), 4, (len - 67) % 16)
-        } else if (len <= 257) {
-          (281 + ((len - 131) / 32), 5, (len - 131) % 32)
+        if (len <= 10) { (257 + (len - 3), 0, 0) } else if (len <= 18) {
+          (265 + ((len - 11) / 2), 1, (len - 11) % 2);
+        } else if (len <= 34) { (269 + ((len - 19) / 4), 2, (len - 19) % 4) } else if (len <= 66) {
+          (273 + ((len - 35) / 8), 3, (len - 35) % 8);
+        } else if (len <= 130) { (277 + ((len - 67) / 16), 4, (len - 67) % 16) } else if (len <= 257) {
+          (281 + ((len - 131) / 32), 5, (len - 131) % 32);
         } else {
           // length == 258
-          (285, 0, 0)
+          (285, 0, 0);
         };
       };
     };
@@ -85,7 +102,7 @@ module {
           Runtime.trap("Deflate: distance " # debug_show distance # " out of range");
         };
         if (distance <= 4) {
-          ?(distance - 1, 0, 0)
+          ?(distance - 1, 0, 0);
         } else {
           var extra_bits = 1;
           var base = 4;
@@ -97,14 +114,14 @@ module {
             base *= 2;
           };
           // base < distance <= 2*base
-          let half  = base / 2;
-          let delta = distance - base - 1;   // always >= 0 (base < distance)
+          let half = base / 2;
+          let delta = distance - base - 1; // always >= 0 (base < distance)
           let offset = Nat16.fromNat(delta % half);
           if (distance <= base + half) {
-            ?(marker, extra_bits, offset)
+            ?(marker, extra_bits, offset);
           } else {
-            ?(marker + 1, extra_bits, offset)
-          }
+            ?(marker + 1, extra_bits, offset);
+          };
         };
       };
       case (_) null;
@@ -114,10 +131,10 @@ module {
   // ── Encoder class ──────────────────────────────────────────────────────
 
   public class Encoder(
-    literal_encoder  : HuffmanEncoder.Encoder,
+    literal_encoder : HuffmanEncoder.Encoder,
     distance_encoder : HuffmanEncoder.Encoder,
   ) {
-    public let literal  = literal_encoder;
+    public let literal = literal_encoder;
     public let distance = distance_encoder;
 
     /// Encode one symbol into `bitbuffer`.
@@ -141,24 +158,75 @@ module {
 
   /// (base_length, extra_bits) indexed by length_code - 257.
   let LENGTH_TABLE : [(Nat, Nat)] = [
-    (3,0),(4,0),(5,0),(6,0),(7,0),(8,0),(9,0),(10,0),
-    (11,1),(13,1),(15,1),(17,1),(19,2),(23,2),(27,2),(31,2),
-    (35,3),(43,3),(51,3),(59,3),(67,4),(83,4),(99,4),(115,4),
-    (131,5),(163,5),(195,5),(227,5),(258,0),
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (6, 0),
+    (7, 0),
+    (8, 0),
+    (9, 0),
+    (10, 0),
+    (11, 1),
+    (13, 1),
+    (15, 1),
+    (17, 1),
+    (19, 2),
+    (23, 2),
+    (27, 2),
+    (31, 2),
+    (35, 3),
+    (43, 3),
+    (51, 3),
+    (59, 3),
+    (67, 4),
+    (83, 4),
+    (99, 4),
+    (115, 4),
+    (131, 5),
+    (163, 5),
+    (195, 5),
+    (227, 5),
+    (258, 0),
   ];
 
   /// (base_distance, extra_bits) indexed by distance_code.
   let DISTANCE_TABLE : [(Nat, Nat)] = [
-    (1,0),(2,0),(3,0),(4,0),(5,1),(7,1),(9,2),(13,2),(17,3),(25,3),
-    (33,4),(49,4),(65,5),(97,5),(129,6),(193,6),(257,7),(385,7),
-    (513,8),(769,8),(1025,9),(1537,9),(2049,10),(3073,10),(4097,11),
-    (6145,11),(8193,12),(12_289,12),(16_385,13),(24_577,13),
+    (1, 0),
+    (2, 0),
+    (3, 0),
+    (4, 0),
+    (5, 1),
+    (7, 1),
+    (9, 2),
+    (13, 2),
+    (17, 3),
+    (25, 3),
+    (33, 4),
+    (49, 4),
+    (65, 5),
+    (97, 5),
+    (129, 6),
+    (193, 6),
+    (257, 7),
+    (385, 7),
+    (513, 8),
+    (769, 8),
+    (1025, 9),
+    (1537, 9),
+    (2049, 10),
+    (3073, 10),
+    (4097, 11),
+    (6145, 11),
+    (8193, 12),
+    (12_289, 12),
+    (16_385, 13),
+    (24_577, 13),
   ];
 
   // ── Decoder class ──────────────────────────────────────────────────────
 
   public class Decoder(
-    literal_decoder  : HuffmanDecoder.Decoder,
+    literal_decoder : HuffmanDecoder.Decoder,
     distance_decoder : HuffmanDecoder.Decoder,
   ) {
     /// Decode one symbol from `reader`.
@@ -183,15 +251,15 @@ module {
         case (#err(msg)) return #err(msg);
       };
       if (val <= 255) {
-        #ok(#literal(Nat8.fromNat(val)))
+        #ok(#literal(Nat8.fromNat(val)));
       } else if (val == 256) {
-        #ok(#EndOfBlock)
+        #ok(#EndOfBlock);
       } else if (val >= 286) {
-        #err("Invalid deflate literal/length code " # debug_show val)
+        #err("Invalid deflate literal/length code " # debug_show val);
       } else {
         // val in [257, 285]
         let (base, extra_bits) = LENGTH_TABLE[val - 257];
-        #ok(#pointer(0, base + reader.readBits(extra_bits)))
+        #ok(#pointer(0, base + reader.readBits(extra_bits)));
       };
     };
 
@@ -208,4 +276,4 @@ module {
     };
   };
 
-}
+};

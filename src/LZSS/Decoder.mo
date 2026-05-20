@@ -31,7 +31,7 @@ module {
     let output = List.empty<Nat8>();
     let d = Decoder();
     d.decode(output, lzss_entries);
-    output
+    output;
   };
 
   // ── Decoder class ───────────────────────────────────────────────────────
@@ -78,4 +78,4 @@ module {
 
   }; // end class Decoder
 
-}
+};

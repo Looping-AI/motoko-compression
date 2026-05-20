@@ -124,7 +124,9 @@ module {
     public func calc_max_bitwidth(frequencies : [Nat]) : Nat {
       let cmp = tuple_compare(Nat.compare, Nat.compare);
       // Invert compare for min-heap: PriorityQueue is max-first
-      let minCmp = func(a : (Nat, Nat), b : (Nat, Nat)) : Order.Order { cmp(b, a) };
+      let minCmp = func(a : (Nat, Nat), b : (Nat, Nat)) : Order.Order {
+        cmp(b, a);
+      };
       let heap = PriorityQueue.empty<(Nat, Nat)>();
 
       for (freq in frequencies.vals()) {

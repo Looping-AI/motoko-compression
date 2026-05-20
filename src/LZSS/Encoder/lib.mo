@@ -34,10 +34,10 @@ module {
 
   func levelToWindowSize(level : Common.CompressionLevel) : Nat {
     switch level {
-      case (#fast)    1_024;
+      case (#fast) 1_024;
       case (#balance) 8_192;
-      case (#best)    Common.MATCH_WINDOW_SIZE; // 32_768
-    }
+      case (#best) Common.MATCH_WINDOW_SIZE; // 32_768
+    };
   };
 
   // ── Public API ──────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ module {
     let sink : Sink = { add = func(e) { List.add(buffer, e) } };
     lzss.encode(bytes, sink);
     lzss.flush(sink);
-    buffer
+    buffer;
   };
 
   // ── Encoder class ───────────────────────────────────────────────────────
@@ -77,13 +77,13 @@ module {
     let cache_buffer = CircularBuffer.CircularBuffer(2);
 
     var match_index : ?Nat = null;
-    var input_size  : Nat  = 0;
+    var input_size : Nat = 0;
 
     // ── Queries ────────────────────────────────────────────────────────────
 
     public func compressionLevel() : Common.CompressionLevel = level;
-    public func size()             : Nat = input_size;
-    public func windowSize()       : Nat = window_size;
+    public func size() : Nat = input_size;
+    public func windowSize() : Nat = window_size;
 
     // ── Internals ──────────────────────────────────────────────────────────
 
@@ -92,7 +92,7 @@ module {
       switch (buf.get(i)) {
         case (?v) v;
         case null Runtime.unreachable();
-      }
+      };
     };
 
     /// Emit `n` bytes from the front of byte_buffer as literals.
@@ -117,13 +117,17 @@ module {
       if (cache_buffer.size() == 2) {
         ignore prefix_table.insert(
           [getUnsafe(cache_buffer, 0), getUnsafe(cache_buffer, 1), getUnsafe(byte_buffer, 0)],
-          0, 3, input_size - 2,
+          0,
+          3,
+          input_size - 2,
         );
         ignore cache_buffer.popFront();
       } else if (cache_buffer.size() == 1 and byte_buffer.size() >= 2) {
         ignore prefix_table.insert(
           [getUnsafe(cache_buffer, 0), getUnsafe(byte_buffer, 0), getUnsafe(byte_buffer, 1)],
-          0, 3, input_size - 1,
+          0,
+          3,
+          input_size - 1,
         );
         ignore cache_buffer.popFront();
       };
@@ -134,7 +138,9 @@ module {
         // Try to start a new match at the current lookahead position.
         let opt_prefix_index = prefix_table.insert(
           [getUnsafe(byte_buffer, 0), getUnsafe(byte_buffer, 1), getUnsafe(byte_buffer, 2)],
-          0, 3, input_size,
+          0,
+          3,
+          input_size,
         );
         switch (opt_prefix_index) {
           case (null) {
@@ -155,12 +161,11 @@ module {
       } else {
         // byte_buffer.size() > 3: we are extending an existing match.
         let ?prefix_index = match_index else Runtime.unreachable();
-        let backward_offset  = (input_size - prefix_index) : Nat;
-        let start_index      = (search_buffer.size() - backward_offset) : Nat;
+        let backward_offset = (input_size - prefix_index) : Nat;
+        let start_index = (search_buffer.size() - backward_offset) : Nat;
         let future_byte_index = start_index + (byte_buffer.size() - 1) : Nat;
 
-        let mismatch = future_byte_index >= search_buffer.size()
-          or future_byte != getUnsafe(search_buffer, future_byte_index);
+        let mismatch = future_byte_index >= search_buffer.size() or future_byte != getUnsafe(search_buffer, future_byte_index);
         let too_long = byte_buffer.size() >= Common.MATCH_MAX_SIZE;
 
         if (mismatch or too_long) {
@@ -172,7 +177,9 @@ module {
             if (byte_buffer.size() >= 3) {
               ignore prefix_table.insert(
                 [getUnsafe(byte_buffer, 0), getUnsafe(byte_buffer, 1), getUnsafe(byte_buffer, 2)],
-                0, 3, i + input_size,
+                0,
+                3,
+                i + input_size,
               );
             };
             let ?byte = byte_buffer.popFront() else Runtime.unreachable();
@@ -228,10 +235,10 @@ module {
       prefix_table.clear();
       byte_buffer.clear();
       cache_buffer.clear();
-      input_size  := 0;
+      input_size := 0;
       match_index := null;
     };
 
   }; // end class Encoder
 
-}
+};

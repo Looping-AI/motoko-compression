@@ -69,6 +69,7 @@ Scatter `Debug.print` calls in the code under test, using `debug_show` to serial
 import Debug "mo:core/Debug";
 
 Debug.print("myVar=" # debug_show myVar);
+
 ```
 
 Then run `mops test <Stem>` to see the trace. This is the fastest way to understand what values flow through a function without needing an interactive debugger.

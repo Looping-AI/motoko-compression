@@ -89,7 +89,7 @@ module CRC32 {
       crc := CRC_INIT_VALUE;
     };
 
-    public func finish() : Nat32 {      
+    public func finish() : Nat32 {
       let res = if (payload_count == 0) { ^crc } else {
         simpleUpdate(crc);
       };
@@ -2171,6 +2171,5 @@ module CRC32 {
       ],
     ];
   };
-
 
 };

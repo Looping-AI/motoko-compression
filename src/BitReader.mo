@@ -13,13 +13,13 @@ import BitBuffer "internal/BitBuffer";
 module {
 
   public class BitReader() {
-    var offset   = 0;
+    var offset = 0;
     let bitbuffer = BitBuffer.new();
-    var tailBits  = 0;
+    var tailBits = 0;
 
     /// Returns true when `n` bits are available to read.
     func is_valid(n : Nat) : Bool {
-      n <= (bitbuffer.bitSize() - offset - tailBits : Nat)
+      n <= (bitbuffer.bitSize() - offset - tailBits : Nat);
     };
 
     // ── Bit-level reads ───────────────────────────────────────────────────
@@ -29,14 +29,14 @@ module {
       if (not is_valid(1)) {
         Runtime.trap("BitReader.peekBit: out of bounds or empty");
       };
-      bitbuffer.getBit(offset)
+      bitbuffer.getBit(offset);
     };
 
     /// Consume and return the next bit.
     public func readBit() : Bool {
       let bit = peekBit();
       offset += 1;
-      bit
+      bit;
     };
 
     /// Return the next `n` bits as a Nat (LSB-first) without advancing.
@@ -44,14 +44,14 @@ module {
       if (not is_valid(n)) {
         Runtime.trap("BitReader.peekBits: out of bounds at offset");
       };
-      bitbuffer.getBits(offset, n)
+      bitbuffer.getBits(offset, n);
     };
 
     /// Consume and return the next `n` bits as a Nat (LSB-first).
     public func readBits(n : Nat) : Nat {
       let bits = peekBits(n);
       offset += n;
-      bits
+      bits;
     };
 
     /// Advance the read position by `n` bits without returning a value.
@@ -59,7 +59,7 @@ module {
       if (not is_valid(n)) {
         Runtime.trap("BitReader.skipBits: out of bounds");
       };
-      offset += n
+      offset += n;
     };
 
     // ── Byte-level reads ──────────────────────────────────────────────────
@@ -70,20 +70,20 @@ module {
         Runtime.trap("BitReader.peekByte: out of bounds");
       };
       // Dead branch removed: after is_valid(8), bitSize() >= 8 is guaranteed.
-      bitbuffer.getByte(offset)
+      bitbuffer.getByte(offset);
     };
 
     /// Consume and return the next byte.
     public func readByte() : Nat8 {
       let byte = peekByte();
       offset += 8;
-      byte
+      byte;
     };
 
     /// Return the next `nbytes` bytes without advancing the read position.
     /// Uses BitBuffer.getBytes directly — no side-effectful tabulate.
     public func peekBytes(nbytes : Nat) : [Nat8] {
-      bitbuffer.getBytes(offset, nbytes)
+      bitbuffer.getBytes(offset, nbytes);
     };
 
     /// Consume up to `nbytes` bytes (clamped to available `byteSize()`).
@@ -91,7 +91,7 @@ module {
       let min_bytes = Nat.min(nbytes, byteSize());
       let result = bitbuffer.getBytes(offset, min_bytes);
       offset += min_bytes * 8;
-      result
+      result;
     };
 
     // ── Size queries ──────────────────────────────────────────────────────
@@ -99,10 +99,10 @@ module {
     /// Number of readable bits (excludes already-consumed and hidden tail bits).
     public func bitSize() : Nat {
       if (tailBits + offset < (bitbuffer.bitSize() : Nat)) {
-        (bitbuffer.bitSize() - offset - tailBits : Nat)
+        (bitbuffer.bitSize() - offset - tailBits : Nat);
       } else {
-        0
-      }
+        0;
+      };
     };
 
     /// Number of complete bytes available to read.
@@ -118,8 +118,8 @@ module {
     public func byteAlign() {
       let size = bitSize();
       if (size % 8 != 0) {
-        offset += (size % 8)
-      }
+        offset += (size % 8);
+      };
     };
 
     // ── Position ──────────────────────────────────────────────────────────
@@ -139,14 +139,14 @@ module {
     /// reset the read position. Reduces memory usage on long streams.
     public func clearRead() {
       bitbuffer.dropBits(offset);
-      offset := 0
+      offset := 0;
     };
 
     /// Reset to a fully empty state (clears buffer, offset, and tail mask).
     public func clear() {
-      offset   := 0;
+      offset := 0;
       tailBits := 0;
-      bitbuffer.clear()
+      bitbuffer.clear();
     };
 
     // ── Write ─────────────────────────────────────────────────────────────
@@ -170,7 +170,7 @@ module {
   public func fromBytes(bytes : [Nat8]) : BitReader {
     let reader = BitReader();
     reader.addBytes(bytes);
-    reader
+    reader;
   };
 
 };

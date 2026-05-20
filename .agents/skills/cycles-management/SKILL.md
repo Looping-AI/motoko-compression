@@ -11,6 +11,7 @@ metadata:
 # Cycles & Canister Management
 
 ## What This Is
+
 Cycles are the computation fuel for canisters on Internet Computer. Every canister operation (execution, storage, messaging) burns cycles. When a canister runs out of cycles, it freezes and eventually gets deleted. 1 trillion cycles (1T) costs approximately 1 USD equivalent in ICP (the exact rate is set by the NNS and fluctuates with ICP price via the CMC).
 
 **Note:** icp-cli uses the **cycles ledger** (`um5iw-rqaaa-aaaaq-qaaba-cai`) by default. The cycles ledger is a single canister that tracks cycle balances for all principals, similar to a token ledger. Commands like `icp cycles balance`, `icp cycles mint`, and `icp canister top-up` go through the cycles ledger. There is no legacy wallet concept in icp-cli. The programmatic patterns below (accepting cycles, creating canisters via management canister) remain the same regardless of which funding mechanism is used.
@@ -22,11 +23,11 @@ Cycles are the computation fuel for canisters on Internet Computer. Every canist
 
 ## Canister IDs
 
-| Service | Canister ID | Purpose |
-|---------|------------|---------|
-| Cycles Minting Canister (CMC) | `rkp4c-7iaaa-aaaaa-aaaca-cai` | Converts ICP to cycles, creates canisters |
-| Cycles Ledger | `um5iw-rqaaa-aaaaq-qaaba-cai` | Tracks cycle balances for all principals |
-| Management Canister | `aaaaa-aa` | Canister lifecycle (create, install, stop, delete, status) |
+| Service                       | Canister ID                   | Purpose                                                    |
+| ----------------------------- | ----------------------------- | ---------------------------------------------------------- |
+| Cycles Minting Canister (CMC) | `rkp4c-7iaaa-aaaaa-aaaca-cai` | Converts ICP to cycles, creates canisters                  |
+| Cycles Ledger                 | `um5iw-rqaaa-aaaaq-qaaba-cai` | Tracks cycle balances for all principals                   |
+| Management Canister           | `aaaaa-aa`                    | Canister lifecycle (create, install, stop, delete, status) |
 
 The Management Canister (`aaaaa-aa`) is a virtual canister -- it does not exist on a specific subnet but is handled by every subnet's execution layer.
 
@@ -59,17 +60,17 @@ persistent actor {
 
   // Check this canister's cycle balance
   public query func getBalance() : async Nat {
-    Cycles.balance()
+    Cycles.balance();
   };
 
   // Accept cycles sent with a call (for "tip jar" or payment patterns)
   public func deposit() : async Nat {
     let available = Cycles.available();
     if (available == 0) {
-      Runtime.trap("No cycles sent with this call")
+      Runtime.trap("No cycles sent with this call");
     };
     let accepted = Cycles.accept<system>(available);
-    accepted
+    accepted;
   };
 
   // Send cycles to another canister via inter-canister call
@@ -80,7 +81,8 @@ persistent actor {
     // Attach 1T cycles to the call
     await (with cycles = 1_000_000_000_000) targetActor.deposit_cycles();
   };
-}
+};
+
 ```
 
 #### Creating a Canister Programmatically
@@ -101,16 +103,14 @@ persistent actor Self {
 
   // Management canister interface
   let ic = actor ("aaaaa-aa") : actor {
-    create_canister : shared { settings : ?CreateCanisterSettings } ->
-      async CanisterId;
-    canister_status : shared { canister_id : Principal } ->
-      async {
-        status : { #running; #stopping; #stopped };
-        memory_size : Nat;
-        cycles : Nat;
-        settings : CreateCanisterSettings;
-        module_hash : ?Blob;
-      };
+    create_canister : shared { settings : ?CreateCanisterSettings } -> async CanisterId;
+    canister_status : shared { canister_id : Principal } -> async {
+      status : { #running; #stopping; #stopped };
+      memory_size : Nat;
+      cycles : Nat;
+      settings : CreateCanisterSettings;
+      module_hash : ?Blob;
+    };
     deposit_cycles : shared { canister_id : Principal } -> async ();
     stop_canister : shared { canister_id : Principal } -> async ();
     delete_canister : shared { canister_id : Principal } -> async ();
@@ -126,20 +126,21 @@ persistent actor Self {
         freezing_threshold = ?2_592_000; // 30 days in seconds
       };
     });
-    result.canister_id
+    result.canister_id;
   };
 
   // Check a canister's status and cycle balance
   public func checkStatus(canisterId : Principal) : async Nat {
     let status = await ic.canister_status({ canister_id = canisterId });
-    status.cycles
+    status.cycles;
   };
 
   // Top up another canister
   public func topUp(canisterId : Principal, amount : Nat) : async () {
     await (with cycles = amount) ic.deposit_cycles({ canister_id = canisterId });
   };
-}
+};
+
 ```
 
 ### Rust

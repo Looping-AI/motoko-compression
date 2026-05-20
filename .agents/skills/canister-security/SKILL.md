@@ -29,6 +29,7 @@ Security patterns for IC canisters in Motoko and Rust. The async messaging model
 4. **Trapping in `pre_upgrade`.** If `pre_upgrade` traps (e.g., serializing too much data exceeds the instruction limit), the canister becomes permanently non-upgradeable. Avoid storing large data structures in the heap that must be serialized during upgrade. In Rust, use `ic-stable-structures` for direct stable memory access. In Motoko, the `persistent actor` declaration stores all `let` and `var` variables automatically in stable memory — no manual serialization needed.
 
 5. **Not monitoring cycles balance.** Every canister has a default `freezing_threshold` of 2,592,000 seconds (~30 days). When cycles drop below the threshold reserve, the canister freezes (rejects all update calls). When cycles reach zero, the canister is uninstalled — its code and memory are removed, though the canister ID and controllers survive. The real pitfall is not actively monitoring and topping up cycles. For production canisters holding valuable state, increase the freezing threshold and set up automated monitoring.
+
    ```bash
    # Check current settings (mainnet)
    icp canister settings show backend -e ic
@@ -37,9 +38,11 @@ Security patterns for IC canisters in Motoko and Rust. The async messaging model
    ```
 
 6. **Single controller with no backup.** If you lose the controller identity's private key, the canister becomes unupgradeable forever. There is no recovery mechanism. Always add a backup controller or governance canister:
+
    ```bash
    icp canister settings update backend --add-controller <backup-principal> -e ic
    ```
+
    When deploying, ask the developer if they have a backup controller principal to add.
 
 7. **Calling `fetchRootKey()` in production.** `fetchRootKey()` fetches the root public key from the replica and trusts whatever it returns. On mainnet, the root key is hardcoded into the agent — calling `fetchRootKey()` there allows a man-in-the-middle to substitute a different key, breaking all verification. Only call `fetchRootKey()` in local development, guarded by an environment check. For frontends served by asset canisters, the root key is provided automatically.
@@ -76,7 +79,7 @@ import Principal "mo:core/Principal";
 import Set "mo:core/pure/Set";
 import Runtime "mo:core/Runtime";
 
-shared(msg) persistent actor class MyCanister() {
+shared (msg) persistent actor class MyCanister() {
 
   // --- Authorization state ---
   // transient: recomputed on each install/upgrade from msg.caller (the controller)
@@ -129,6 +132,7 @@ shared(msg) persistent actor class MyCanister() {
     // ... protected logic
   };
 };
+
 ```
 
 #### Reentrancy prevention (CallerGuard pattern)
@@ -144,40 +148,41 @@ import Result "mo:core/Result";
 // Inside the persistent actor class { ... }
 // otherCanister is application-specific — replace with your canister reference.
 
-  let pendingRequests = Map.empty<Principal, Bool>();
+let pendingRequests = Map.empty<Principal, Bool>();
 
-  func acquireGuard(principal : Principal) : Result.Result<(), Text> {
-    if (Map.get(pendingRequests, Principal.compare, principal) != null) {
-      return #err("already processing a request for this caller");
-    };
-    Map.add(pendingRequests, Principal.compare, principal, true);
-    #ok;
+func acquireGuard(principal : Principal) : Result.Result<(), Text> {
+  if (Map.get(pendingRequests, Principal.compare, principal) != null) {
+    return #err("already processing a request for this caller");
+  };
+  Map.add(pendingRequests, Principal.compare, principal, true);
+  #ok;
+};
+
+func releaseGuard(principal : Principal) {
+  ignore Map.delete(pendingRequests, Principal.compare, principal);
+};
+
+public shared ({ caller }) func doSomethingAsync() : async Result.Result<Text, Text> {
+  requireAuthenticated(caller);
+
+  // 1. Acquire per-caller lock — rejects concurrent calls from same principal
+  switch (acquireGuard(caller)) {
+    case (#err(msg)) { return #err(msg) };
+    case (#ok) {};
   };
 
-  func releaseGuard(principal : Principal) {
-    ignore Map.delete(pendingRequests, Principal.compare, principal);
+  // 2. Make inter-canister call
+  try {
+    let result = await otherCanister.someMethod();
+    #ok(result);
+  } catch (e) {
+    #err("call failed: " # Error.message(e));
+  } finally {
+    // Runs in cleanup context even if the callback traps — changes here persist.
+    releaseGuard(caller);
   };
+};
 
-  public shared ({ caller }) func doSomethingAsync() : async Result.Result<Text, Text> {
-    requireAuthenticated(caller);
-
-    // 1. Acquire per-caller lock — rejects concurrent calls from same principal
-    switch (acquireGuard(caller)) {
-      case (#err(msg)) { return #err(msg) };
-      case (#ok) {};
-    };
-
-    // 2. Make inter-canister call
-    try {
-      let result = await otherCanister.someMethod();
-      #ok(result)
-    } catch (e) {
-      #err("call failed: " # Error.message(e))
-    } finally {
-      // Runs in cleanup context even if the callback traps — changes here persist.
-      releaseGuard(caller);
-    };
-  };
 ```
 
 #### inspect_message (cycle optimization only)
@@ -186,18 +191,16 @@ import Result "mo:core/Result";
 // Inside persistent actor { ... }
 // Method variants must match your public methods
 
-system func inspect(
-  {
-    caller : Principal;
-    msg : {
-      #adminAction : () -> ();
-      #addAdmin : () -> Principal;
-      #removeAdmin : () -> Principal;
-      #publicAction : () -> ();
-      #doSomethingAsync : () -> ();
-    }
-  }
-) : Bool {
+system func inspect({
+  caller : Principal;
+  msg : {
+    #adminAction : () -> ();
+    #addAdmin : () -> Principal;
+    #removeAdmin : () -> Principal;
+    #publicAction : () -> ();
+    #doSomethingAsync : () -> ();
+  };
+}) : Bool {
   switch (msg) {
     // Admin methods: reject anonymous to save cycles on Candid decoding
     case (#adminAction _) { not Principal.isAnonymous(caller) };
@@ -208,6 +211,7 @@ system func inspect(
     case (_) { true };
   };
 };
+
 ```
 
 ### Rust

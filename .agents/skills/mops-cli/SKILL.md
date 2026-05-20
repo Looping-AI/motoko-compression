@@ -181,7 +181,7 @@ For a new project with no prior deployment, create a trivial `.most` file:
 ```most
 // Version: 1.0.0
 actor {
-  
+
 };
 ```
 

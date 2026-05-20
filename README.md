@@ -25,6 +25,7 @@ mops add compression
 
 ```motoko
 import Gzip "mo:compression/Gzip";
+
 ```
 
 ### Compress and decompress small data (≤ 1 MB)
@@ -45,11 +46,12 @@ let compressed = encoder.finish(); // resets encoder
 
 // Decompress
 for (chunk in compressed.chunks.vals()) {
-    decoder.decode(chunk);
+  decoder.decode(chunk);
 };
 let decompressed = decoder.finish(); // resets decoder
 
 assert decompressed.bytes == data;
+
 ```
 
 ### Compress and decompress large data (> 1 MB)
@@ -61,41 +63,42 @@ import Gzip "mo:compression/Gzip";
 
 shared actor class MyCanister() = self {
 
-    let encoder = Gzip.EncoderBuilder().build();
-    let decoder = Gzip.Decoder();
+  let encoder = Gzip.EncoderBuilder().build();
+  let decoder = Gzip.Decoder();
 
-    // Feed one chunk per call
-    public shared ({ caller }) func encodeChunk(chunk : [Nat8]) : async () {
-        assert caller == Principal.fromActor(self);
-        encoder.encode(chunk);
-    };
+  // Feed one chunk per call
+  public shared ({ caller }) func encodeChunk(chunk : [Nat8]) : async () {
+    assert caller == Principal.fromActor(self);
+    encoder.encode(chunk);
+  };
 
-    public shared ({ caller }) func decodeChunk(chunk : [Nat8]) : async () {
-        assert caller == Principal.fromActor(self);
-        decoder.decode(chunk);
-    };
+  public shared ({ caller }) func decodeChunk(chunk : [Nat8]) : async () {
+    assert caller == Principal.fromActor(self);
+    decoder.decode(chunk);
+  };
 
-    // Compress an arbitrary-length payload
-    public func compress(data : [Nat8]) : async Gzip.EncodedResponse {
-        let blockSize = encoder.block_size();
-        var i = 0;
-        while (i < data.size()) {
-            let end = Nat.min(i + blockSize, data.size());
-            await encodeChunk(Array.tabulate(end - i, func(j) = data[i + j]));
-            i += blockSize;
-        };
-        encoder.finish()
+  // Compress an arbitrary-length payload
+  public func compress(data : [Nat8]) : async Gzip.EncodedResponse {
+    let blockSize = encoder.block_size();
+    var i = 0;
+    while (i < data.size()) {
+      let end = Nat.min(i + blockSize, data.size());
+      await encodeChunk(Array.tabulate(end - i, func(j) = data[i + j]));
+      i += blockSize;
     };
+    encoder.finish();
+  };
 
-    // Decompress a previously compressed response
-    public func decompress(compressed : Gzip.EncodedResponse) : async [Nat8] {
-        for (chunk in compressed.chunks.vals()) {
-            await decodeChunk(chunk);
-        };
-        let response = decoder.finish();
-        response.bytes
+  // Decompress a previously compressed response
+  public func decompress(compressed : Gzip.EncodedResponse) : async [Nat8] {
+    for (chunk in compressed.chunks.vals()) {
+      await decodeChunk(chunk);
     };
+    let response = decoder.finish();
+    response.bytes;
+  };
 };
+
 ```
 
 ### Using raw DEFLATE
@@ -104,13 +107,14 @@ shared actor class MyCanister() = self {
 import Deflate "mo:compression/Deflate";
 
 let options : Deflate.DeflateOptions = {
-    block_size = 32_768;
-    dynamic_huffman = true;
-    lzss = null; // use default LZSS encoder
+  block_size = 32_768;
+  dynamic_huffman = true;
+  lzss = null; // use default LZSS encoder
 };
 
 let encoder = Deflate.buildEncoder(options);
 let decoder = Deflate.buildDecoder(null);
+
 ```
 
 ### Using LZSS directly
@@ -118,8 +122,9 @@ let decoder = Deflate.buildDecoder(null);
 ```motoko
 import LZSS "mo:compression/LZSS";
 
-let entries = LZSS.encode(bytes);   // [Nat8] -> Buffer<LzssEntry>
+let entries = LZSS.encode(bytes); // [Nat8] -> Buffer<LzssEntry>
 let decoded = LZSS.decode(entries); // Buffer<LzssEntry> -> [Nat8]
+
 ```
 
 ## API Reference

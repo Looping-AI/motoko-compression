@@ -3,17 +3,17 @@
 /// Migrated from edjcase/motoko_compression.
 /// Buffer<Nat8> queue → mo:core/Queue; Buffer<Symbol> → mo:core/List.
 
-import Array        "mo:core/Array";
-import List         "mo:core/List";
-import Nat          "mo:core/Nat";
-import Queue        "mo:core/Queue";
-import Runtime      "mo:core/Runtime";
-import BitBuffer    "../internal/BitBuffer";
-import LzssCommon   "../LZSS/Common";
-import LzssEncoder  "../LZSS/Encoder/lib";
-import Symbol       "Symbol";
+import Array "mo:core/Array";
+import List "mo:core/List";
+import Nat "mo:core/Nat";
+import Queue "mo:core/Queue";
+import Runtime "mo:core/Runtime";
+import BitBuffer "../internal/BitBuffer";
+import LzssCommon "../LZSS/Common";
+import LzssEncoder "../LZSS/Encoder/lib";
+import Symbol "Symbol";
 import HuffmanCodec "HuffmanCodec";
-import Utils        "../utils";
+import Utils "../utils";
 
 module {
 
@@ -26,15 +26,15 @@ module {
 
   public type BlockType = {
     #Raw;
-    #Fixed   : { lzss : LzssEncoder.Encoder; block_limit : Nat };
+    #Fixed : { lzss : LzssEncoder.Encoder; block_limit : Nat };
     #Dynamic : { lzss : LzssEncoder.Encoder; block_limit : Nat };
   };
 
   /// BTYPE value for each block kind (RFC 1951 §3.2.3).
   public func blockToNat(bt : BlockType) : Nat {
     switch bt {
-      case (#Raw)        0;
-      case (#Fixed(_))   1;
+      case (#Raw) 0;
+      case (#Fixed(_)) 1;
       case (#Dynamic(_)) 2;
     };
   };
@@ -42,15 +42,15 @@ module {
   // ── Block interface ────────────────────────────────────────────────────
 
   public type BlockInterface = {
-    size   : () -> Nat;
+    size : () -> Nat;
     append : ([Nat8]) -> ();
-    add    : (Nat8) -> ();
+    add : (Nat8) -> ();
     /// Emit the block payload. `is_final` indicates whether this is the
     /// last block of the stream — only then is the underlying LZSS
     /// encoder allowed to drain its lookahead buffer. Calling LZSS flush
     /// between non-final blocks would corrupt cross-block matches.
-    flush  : (BitBuffer, Bool) -> ();
-    clear  : () -> ();
+    flush : (BitBuffer, Bool) -> ();
+    clear : () -> ();
   };
 
   /// Construct a block of the given type.
@@ -88,7 +88,7 @@ module {
       // buffer, so there is nothing extra to drain on the final block.
       // The Bool exists only to satisfy the shared BlockInterface.
       bitbuffer.byteAlign();
-      let sz       = Nat.min(NO_COMPRESSION_MAX_BLOCK_SIZE, input_size);
+      let sz = Nat.min(NO_COMPRESSION_MAX_BLOCK_SIZE, input_size);
       let sz_bytes = Utils.nat_to_le_bytes(sz, 2);
       // LEN then NLEN (one's complement of LEN)
       bitbuffer.addBytes(sz_bytes);
@@ -111,9 +111,9 @@ module {
   // ── Compressed block ───────────────────────────────────────────────────
 
   public class Compress(
-    lzss    : LzssEncoder.Encoder,
+    lzss : LzssEncoder.Encoder,
     huffman : HuffmanCodec.HuffmanCodec,
-    _       : Nat,                       // block_limit (unused here; enforced by Encoder)
+    _ : Nat, // block_limit (unused here; enforced by Encoder)
   ) {
     var input_size : Nat = 0;
     let compressed = List.empty<Symbol.Symbol>();
@@ -174,4 +174,4 @@ module {
     };
   };
 
-}
+};

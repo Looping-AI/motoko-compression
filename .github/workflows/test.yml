@@ -44,6 +44,10 @@ jobs:
       - name: Install Bun dependencies
         run: bun install
 
+      # ── Format ───────────────────────────────────────────────────────────────
+      - name: Check formatting
+        run: bun run format:check
+
       # ── Build + Test ─────────────────────────────────────────────────────────
       - name: Run unit tests
         run: mops test

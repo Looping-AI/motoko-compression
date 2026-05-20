@@ -9,33 +9,33 @@
 ///   - `decode` returns `Result<Header, Text>` instead of trapping.
 ///   - `mo:base@0` + `mo:bitbuffer@1` → `mo:core` + our BitBuffer / BitReader.
 
-import Blob     "mo:core/Blob";
-import Int      "mo:core/Int";
-import List     "mo:core/List";
-import Nat32    "mo:core/Nat32";
-import Option   "mo:core/Option";
-import Result   "mo:core/Result";
-import Text     "mo:core/Text";
-import Time     "mo:core/Time";
+import Blob "mo:core/Blob";
+import Int "mo:core/Int";
+import List "mo:core/List";
+import Nat32 "mo:core/Nat32";
+import Option "mo:core/Option";
+import Result "mo:core/Result";
+import Text "mo:core/Text";
+import Time "mo:core/Time";
 
 import BitBuffer "../internal/BitBuffer";
 import BitReader "../BitReader";
-import CRC32    "../internal/CRC32";
-import Common   "../LZSS/Common";
-import Utils    "../utils";
+import CRC32 "../internal/CRC32";
+import Common "../LZSS/Common";
+import Utils "../utils";
 
 module {
 
-  type BitBuffer       = BitBuffer.BitBuffer;
-  type BitReader       = BitReader.BitReader;
+  type BitBuffer = BitBuffer.BitBuffer;
+  type BitReader = BitReader.BitReader;
   type CompressionLevel = Common.CompressionLevel;
-  type Result<A, B>   = Result.Result<A, B>;
+  type Result<A, B> = Result.Result<A, B>;
 
   // ── Public types ────────────────────────────────────────────────────────
 
   /// An RFC 1952 "extra field" (FEXTRA section).
   public type ExtraField = {
-    ids  : (Nat8, Nat8);
+    ids : (Nat8, Nat8);
     data : [Nat8];
   };
 
@@ -60,30 +60,30 @@ module {
 
   /// Decoded Gzip header.
   public type Header = {
-    is_text      : Bool;
+    is_text : Bool;
     /// Header CRC16 check was present and valid during decode.
-    is_verified  : Bool;
+    is_verified : Bool;
     extra_fields : [ExtraField];
-    filename     : ?Text;
-    comment      : ?Text;
+    filename : ?Text;
+    comment : ?Text;
     /// Unix epoch seconds (0 = not set).
     modification_time : Int;
     /// Raw XFL byte (0x02 = max compression, 0x04 = fast, 0x00 = unknown).
-    xfl          : Nat8;
-    os           : Os;
+    xfl : Nat8;
+    os : Os;
   };
 
   // ── Default header ───────────────────────────────────────────────────────
 
   public func defaultHeader() : Header = {
-    is_text           = false;
-    is_verified       = false;
-    extra_fields      = [];
-    filename          = null;
-    comment           = null;
+    is_text = false;
+    is_verified = false;
+    extra_fields = [];
+    filename = null;
+    comment = null;
     modification_time = Int.abs(Time.now()) / 1_000_000_000;
-    xfl               = 0x00;
-    os                = #Unix;
+    xfl = 0x00;
+    os = #Unix;
   };
 
   // ── Encode ───────────────────────────────────────────────────────────────
@@ -92,8 +92,8 @@ module {
   /// `lzss` is used to derive the XFL byte; pass `null` for no compression.
   public func encode(
     bitbuffer : BitBuffer,
-    header    : Header,
-    lzss      : ?CompressionLevel,
+    header : Header,
+    lzss : ?CompressionLevel,
   ) {
     // Magic bytes
     bitbuffer.addByte(0x1f);
@@ -103,9 +103,9 @@ module {
     bitbuffer.addByte(8);
 
     // Flags byte (FLG)
-    let has_extra    = header.extra_fields.size() > 0;
+    let has_extra = header.extra_fields.size() > 0;
     let has_filename = Option.isSome(header.filename);
-    let has_comment  = Option.isSome(header.comment);
+    let has_comment = Option.isSome(header.comment);
     // FLG: bit0=FTEXT, bit1=FHCRC, bit2=FEXTRA, bit3=FNAME, bit4=FCOMMENT
     bitbuffer.addBit(header.is_text);
     bitbuffer.addBit(header.is_verified);
@@ -124,9 +124,9 @@ module {
 
     // XFL — derived from LZSS level (overrides whatever header.xfl says)
     let xfl : Nat8 = switch lzss {
-      case (?#best)    0x02;
-      case (?#fast)    0x04;
-      case _           0x00;
+      case (?#best) 0x02;
+      case (?#fast) 0x04;
+      case _ 0x00;
     };
     bitbuffer.addByte(xfl);
 
@@ -169,8 +169,8 @@ module {
     // FHCRC — CRC16 of the header bytes written so far
     if (header.is_verified) {
       let header_bytes = bitbuffer.getBytes(0, bitbuffer.byteSize());
-      let crc32        = CRC32.checksum(header_bytes);
-      let crc16        = Nat32.toNat(crc32 & 0xffff);
+      let crc32 = CRC32.checksum(header_bytes);
+      let crc16 = Nat32.toNat(crc32 & 0xffff);
       bitbuffer.addBytes(Utils.nat_to_le_bytes(crc16, 2));
     };
   };
@@ -192,12 +192,12 @@ module {
     };
 
     // Flags
-    let is_text       = reader.readBit();
-    let is_verified   = reader.readBit();
-    let has_extra     = reader.readBit();
-    let has_filename  = reader.readBit();
-    let has_comment   = reader.readBit();
-    ignore reader.readBits(3);  // reserved
+    let is_text = reader.readBit();
+    let is_verified = reader.readBit();
+    let has_extra = reader.readBit();
+    let has_filename = reader.readBit();
+    let has_comment = reader.readBit();
+    ignore reader.readBits(3); // reserved
 
     // Modification time (4 bytes LE, Unix seconds)
     let mtime = Utils.le_bytes_to_nat(reader.readBytes(4));
@@ -211,20 +211,18 @@ module {
     // FEXTRA
     let extra_fields : [ExtraField] = if (has_extra) {
       let extra_size = Utils.le_bytes_to_nat(reader.readBytes(2));
-      let fields     = List.empty<ExtraField>();
-      var remaining  = extra_size;
+      let fields = List.empty<ExtraField>();
+      var remaining = extra_size;
       while (remaining > 0) {
-        let id1  = reader.readByte();
-        let id2  = reader.readByte();
+        let id1 = reader.readByte();
+        let id2 = reader.readByte();
         let size = Utils.le_bytes_to_nat(reader.readBytes(2));
         let data = reader.readBytes(size);
         List.add(fields, { ids = (id1, id2); data });
         remaining -= 4 + size;
       };
-      List.toArray(fields)
-    } else {
-      []
-    };
+      List.toArray(fields);
+    } else { [] };
 
     // FNAME — read until null terminator
     let filename : ?Text = if (has_filename) {
@@ -234,9 +232,9 @@ module {
         List.add(bytes, b);
         b := reader.readByte();
       };
-      Text.decodeUtf8(Blob.fromArray(List.toArray(bytes)))
+      Text.decodeUtf8(Blob.fromArray(List.toArray(bytes)));
     } else {
-      null
+      null;
     };
 
     // FCOMMENT — read until null terminator
@@ -247,23 +245,23 @@ module {
         List.add(bytes, b);
         b := reader.readByte();
       };
-      Text.decodeUtf8(Blob.fromArray(List.toArray(bytes)))
+      Text.decodeUtf8(Blob.fromArray(List.toArray(bytes)));
     } else {
-      null
+      null;
     };
 
     // FHCRC — verify CRC16 over the header bytes consumed so far
     if (is_verified) {
-      let pos            = reader.getPosition();
-      let nbytes_so_far  = pos / 8;
+      let pos = reader.getPosition();
+      let nbytes_so_far = pos / 8;
       // Re-read the header bytes from position 0 (reader is still open)
-      let saved_pos      = reader.getPosition();
+      let saved_pos = reader.getPosition();
       reader.setPosition(0);
-      let header_bytes   = reader.readBytes(nbytes_so_far);
+      let header_bytes = reader.readBytes(nbytes_so_far);
       reader.setPosition(saved_pos);
 
       let calculated_crc16 = Nat32.toNat(CRC32.checksum(header_bytes) & 0xffff);
-      let stored_crc16     = Utils.le_bytes_to_nat(reader.readBytes(2));
+      let stored_crc16 = Utils.le_bytes_to_nat(reader.readBytes(2));
       if (stored_crc16 != calculated_crc16) {
         return #err("Gzip: FHCRC header checksum mismatch");
       };
@@ -284,21 +282,21 @@ module {
   // ── OS helpers ─────────────────────────────────────────────────────────
 
   public func osToByte(os : Os) : Nat8 = switch os {
-    case (#FatFs)      0x00;
-    case (#Amiga)      0x01;
-    case (#Vms)        0x02;
-    case (#Unix)       0x03;
-    case (#VmCms)      0x04;
-    case (#AtariTos)   0x05;
-    case (#Hpfs)       0x06;
-    case (#Macintosh)  0x07;
-    case (#ZSystem)    0x08;
-    case (#CpM)        0x09;
-    case (#Tops20)     0x0a;
-    case (#Ntfs)       0x0b;
-    case (#Qdos)       0x0c;
+    case (#FatFs) 0x00;
+    case (#Amiga) 0x01;
+    case (#Vms) 0x02;
+    case (#Unix) 0x03;
+    case (#VmCms) 0x04;
+    case (#AtariTos) 0x05;
+    case (#Hpfs) 0x06;
+    case (#Macintosh) 0x07;
+    case (#ZSystem) 0x08;
+    case (#CpM) 0x09;
+    case (#Tops20) 0x0a;
+    case (#Ntfs) 0x0b;
+    case (#Qdos) 0x0c;
     case (#AcornRiscos) 0x0d;
-    case (#Unknown)    0xff;
+    case (#Unknown) 0xff;
   };
 
   public func byteToOs(byte : Nat8) : Os = switch byte {
@@ -316,7 +314,7 @@ module {
     case 0x0b #Ntfs;
     case 0x0c #Qdos;
     case 0x0d #AcornRiscos;
-    case _    #Unknown;
+    case _ #Unknown;
   };
 
-}
+};
