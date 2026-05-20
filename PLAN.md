@@ -60,13 +60,17 @@ Helper math and byte-conversion functions called throughout the library.
 Bit-level LSB-first read/write buffer. Central to every encode/decode path.
 Most hot operations: `addBits`, `readBits`, `byteAt`, `ensureCapacity`.
 
-- [ ] **Baseline measured**
-- [ ] Reduce `ensureCapacity` copy overhead (copy only live bytes, consider doubling strategy)
-- [ ] `addBits` — eliminate branch for common single-byte case
-- [ ] `readBits` — profile vs. raw bit-shift; avoid boxing intermediate Nat values
+- [x] **Baseline measured** — 2026-05-20T13:16:25Z (10 KiB workload, 62 473 marks)
+- [x] `getPos` — inlined at `getBit` and `getBits` call sites; **−32% instrs and −32% heap per read call; −37 MB final heap for 10 KiB input**
+- [ ] `ensureCapacity` — hoist out of `addBits` loop (called ~2× per `addBits`; ~19 719 calls vs ~10 259 `addBits` calls)
+- [ ] `getByte` / `getBits` — byte-aligned fast path (direct array read when offset is byte-aligned)
+- [ ] `addBits` — replace `2**take` / `%` / `/=` bignum ops with `Nat8` bit ops in inner loop
 - [ ] Evaluate replacing `[var Nat8]` backing store with a tighter representation
 
-**Notes:**
+**Notes:** Baseline perf run: `scripts/output/perf-bitbuffer-2026-05-20T13-16-25-550Z.json`.
+Post-fix #1 run: `scripts/output/perf-bitbuffer-2026-05-20T13-22-43-922Z.json`.
+Surprise: `getPos` was called 10 825× per 10 KiB — same frequency as `getByte`/`getBits` (one allocation per call).
+Surprise: `ensureCapacity` fires ~1.9× per `addBits` call (inside the per-byte-boundary loop).
 
 ---
 
@@ -309,6 +313,6 @@ Update these numbers each time a new baseline is established.
 
 ## Completed optimizations log
 
-| Date | Component | File | Change | Δ instrs | Δ mem | Δ heap | Commit |
-| ---- | --------- | ---- | ------ | -------- | ----- | ------ | ------ |
-| —    | —         | —    | —      | —        | —     | —      | —      |
+| Date       | Component | File                        | Change                          | Δ instrs/call                         | Δ heap/call     | Δ total heap (10 KiB) | Commit |
+| ---------- | --------- | --------------------------- | ------------------------------- | ------------------------------------- | --------------- | --------------------- | ------ |
+| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo` | Inline `getPos` at 2 call sites | −58 034 (−32%) on `getByte`/`getBits` | −3 464 B (−32%) | −37 MB                | —      |

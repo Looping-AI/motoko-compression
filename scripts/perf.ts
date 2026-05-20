@@ -56,7 +56,6 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       // heap allocations; `ensureCapacity` exposes reallocation churn.
       funcs: [
         "ensureCapacity",
-        "getPos",
         "bitSize",
         "byteSize",
         "addBit",

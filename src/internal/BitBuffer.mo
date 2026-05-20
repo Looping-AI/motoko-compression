@@ -43,12 +43,6 @@ module {
       buf := newBuf;
     };
 
-    // Map logical bit index i (0 = first unread bit) to (byteIdx, bitInByte).
-    func getPos(i : Nat) : (Nat, Nat) {
-      let abs = i + readBit;
-      (abs / BYTE, abs % BYTE);
-    };
-
     // ── Size queries ─────────────────────────────────────────────────────
 
     /// Number of unread bits currently stored.
@@ -98,7 +92,9 @@ module {
 
     /// Read the bit at logical position `i` (0 = first unread bit).
     public func getBit(i : Nat) : Bool {
-      let (byteIdx, bitIdx) = getPos(i);
+      let abs = i + readBit;
+      let byteIdx = abs / BYTE;
+      let bitIdx = abs % BYTE;
       Nat8.bittest(buf[byteIdx], bitIdx);
     };
 
@@ -106,9 +102,9 @@ module {
     public func getBits(i : Nat, n : Nat) : Nat {
       var bits = 0;
       var accumulated = 0;
-      let (startByte, startBitInByte) = getPos(i);
-      var byteIdx = startByte;
-      var bitIdx = startBitInByte;
+      let abs = i + readBit;
+      var byteIdx = abs / BYTE;
+      var bitIdx = abs % BYTE;
       var remaining = n;
       while (remaining > 0) {
         let take = if (remaining < BYTE - bitIdx) remaining else BYTE - bitIdx;
