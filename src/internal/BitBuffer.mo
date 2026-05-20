@@ -13,12 +13,18 @@
 import Prim "mo:⛔";
 import Runtime "mo:core/Runtime";
 import Nat8 "mo:core/Nat8";
+import Nat32 "mo:core/Nat32";
 import Iter "mo:core/Iter";
 import Array "mo:core/Array";
 
 module {
 
   let BYTE : Nat = 8;
+
+  // Precomputed bit masks — MASKS8[k] / MASKS32[k] = 2^k − 1 for k in 0..8.
+  // Used to avoid bignum `2 ** k` exponentiation in the inner read/write loops.
+  let MASKS8 : [Nat8] = [0, 1, 3, 7, 15, 31, 63, 127, 255];
+  let MASKS32 : [Nat32] = [0, 1, 3, 7, 15, 31, 63, 127, 255];
 
   public class BitBuffer(initCapacity : Nat) {
 
@@ -70,14 +76,16 @@ module {
       // Pre-grow once for the entire write instead of once per byte-boundary.
       ensureCapacity((writeBit + n - 1) / BYTE + 1);
       var remaining = n;
-      var v = value;
+      // Nat32 avoids bignum `2**take`, `v % 2**take`, `v /= 2**take` on every
+      // iteration. Safe for all practical n (max DEFLATE symbol ≤ 29 bits).
+      var v : Nat32 = Nat32.fromNat(value);
       while (remaining > 0) {
         let byteIdx = writeBit / BYTE;
         let bitIdx = writeBit % BYTE;
         let take = if (remaining < BYTE - bitIdx) remaining else BYTE - bitIdx;
-        let bits = Nat8.fromNat(v % (2 ** take));
+        let bits = Nat32.toNat8(v & MASKS32[take]);
         buf[byteIdx] := buf[byteIdx] | (bits << Nat8.fromNat(bitIdx));
-        v /= (2 ** take);
+        v := Nat32.bitshiftRight(v, Nat32.fromNat(take));
         writeBit += take;
         remaining -= take;
       };
@@ -126,24 +134,23 @@ module {
 
     /// Read `n` bits at logical bit position `i`, returned as a Nat (LSB first).
     public func getBits(i : Nat, n : Nat) : Nat {
-      var bits = 0;
-      var accumulated = 0;
+      var bits : Nat32 = 0;
+      var accumulated : Nat32 = 0;
       let abs = i + readBit;
       var byteIdx = abs / BYTE;
       var bitIdx = abs % BYTE;
       var remaining = n;
       while (remaining > 0) {
         let take = if (remaining < BYTE - bitIdx) remaining else BYTE - bitIdx;
-        let mask = Nat8.fromNat(2 ** take - 1);
         let shifted = buf[byteIdx] >> Nat8.fromNat(bitIdx);
-        let extracted = Nat8.toNat(shifted & mask);
-        bits += extracted * (2 ** accumulated);
-        accumulated += take;
+        let extracted = shifted & MASKS8[take];
+        bits := bits | (Nat32.fromNat8(extracted) << accumulated);
+        accumulated += Nat32.fromNat(take);
         remaining -= take;
         byteIdx += 1;
         bitIdx := 0;
       };
-      bits;
+      Nat32.toNat(bits);
     };
 
     /// Read up to 8 bits at bit position `i`, zero-padding if fewer bits remain.
