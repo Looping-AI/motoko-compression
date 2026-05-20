@@ -79,6 +79,56 @@ Remove all `Debug.print` calls and their `import Debug` lines before committing.
 
 ---
 
+## Performance Tracing
+
+The project includes a scripted performance measurement system that instruments Motoko source files transiently, runs a real workload on PocketIC, captures IC instruction/memory counts, and produces structured reports — all without touching committed source.
+
+### Components
+
+| File                   | Role                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `src/internal/Perf.mo` | Motoko probe — emits `[perf] <tag> instrs=N mem=N heap=N` via `Debug.print` using `IC.performanceCounter(1)` (cumulative) |
+| `scripts/perf.ts`      | Orchestrator — patches sources, builds WASM, spawns workload, parses marks, writes reports, reverts sources               |
+| `scripts/_perf_run.ts` | PocketIC workload runner — installs instrumented WASM, calls `generate_data` + `compress_data`, tears down                |
+| `example/compress.mo`  | Canister entry point compiled for perf runs                                                                               |
+| `scripts/output/`      | Report output directory (git-ignored)                                                                                     |
+
+### Usage
+
+```bash
+bun run perf component=<name>
+```
+
+Available components: `huffman`, `deflate`, `gzip`, `lzss`
+
+The script:
+
+1. Validates that every registered function exists in its source file.
+2. Injects `Perf.mark("component:func")` as the first line of each function body and adds the matching `import Perf` — both tagged `// [PERF]` / `// [PERF_IMPORT]` for clean revert.
+3. Builds a gzip-compressed WASM from `example/compress.mo`.
+4. Spawns `scripts/_perf_run.ts` as a subprocess; captures both stdout and stderr line-by-line.
+5. Parses every `[perf]` line emitted by the canister.
+6. Prints a summary table to stdout.
+7. Writes two output files, then reverts all source changes (even on error or Ctrl+C).
+
+### Output files
+
+Both files share the same base name `scripts/output/perf-<component>-<ISO-timestamp>`:
+
+- **`.jsonl`** — raw marks, one compact JSON object per line. Append-safe and diff-friendly.
+- **`.json`** — computed report:
+  - `total_marks` — total mark count for the run
+  - `timeline` — 11 samples at 0%, 10%, …, 100% of marks by index (always includes first and last)
+  - `per_method` — per-tag statistics over consecutive-call deltas: `avg_delta`, `min_delta`, `max_delta` for `instrs`, `mem`, and `heap`; `null` when a method fires only once
+
+### Important constraints
+
+- **Never commit `Perf.mo` imports in `src/`**. The module is for transient instrumentation only. After a run, verify with `rg "[PERF]|PERF_IMPORT" src` — expect no matches.
+- `scripts/builds/` and `scripts/output/` are git-ignored. Do not add report files to source control.
+- Instruction counts use `IC.performanceCounter(1)` (monotonically cumulative across the entire execution). Delta values between consecutive same-method marks represent the cost of one call.
+
+---
+
 ## Motoko Conventions
 
 - Model function parameter order: place the state/collection parameter first, aligning with `mo:core` idioms (e.g. `Map.get(map, compare, key)`).

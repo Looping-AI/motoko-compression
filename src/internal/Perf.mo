@@ -22,7 +22,7 @@ module {
 
   /// Emit a single profiling snapshot tagged with `tag`.
   public func mark(tag : Text) {
-    let instrs = IC.performanceCounter(0);
+    let instrs = IC.performanceCounter(1);
     let mem    = Prim.rts_memory_size();
     let heap   = Prim.rts_heap_size();
     Debug.print(

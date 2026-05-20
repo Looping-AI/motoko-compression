@@ -1,4 +1,4 @@
-name: Integration Tests
+name: Tests
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  integration-tests:
+  test:
     runs-on: ubuntu-latest
 
     steps:
@@ -45,8 +45,11 @@ jobs:
         run: bun install
 
       # ── Build + Test ─────────────────────────────────────────────────────────
+      - name: Run unit tests
+        run: mops test
+
       - name: Build canisters
-        run: bun run build:canisters
+        run: bun run test:build
 
       - name: Run integration tests
         run: bun test tests/integration/

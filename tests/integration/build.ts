@@ -3,7 +3,7 @@
  * Build script: compile Motoko canisters to WASM and generate Candid JS/TS
  * bindings. Output goes to tests/integration/builds/ (gitignored).
  *
- * Usage:  bun run build:canisters
+ * Usage:  bun run test:build
  * Requires: mops, didc on PATH
  */
 import { $ } from "bun";

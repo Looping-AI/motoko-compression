@@ -153,6 +153,47 @@ let decoded = LZSS.decode(entries); // Buffer<LzssEntry> -> [Nat8]
 | `LzssEntry`                 | `#literal : Nat8` or `#pointer : (Nat, Nat)` |
 | `CompressionLevel`          | `#none`, `#fast`, `#balance`, `#best`        |
 
+## Development
+
+### Running tests
+
+Motoko unit tests:
+
+```bash
+mops test
+```
+
+Integration tests run against real canister WASM on PocketIC. Build the canisters first, then run:
+
+```bash
+bun run test:build   # compile Motoko → WASM (required before first run and after source changes)
+bun run test              # run all integration tests
+```
+
+Individual suites:
+
+```bash
+bun run test:correctness   # gzip round-trip correctness
+bun run test:interop       # gzip interoperability with native implementations
+```
+
+### Performance tracing
+
+The repo ships a scripted perf harness that instruments Motoko sources transiently, runs a PocketIC workload, and produces structured reports — without touching committed source.
+
+```bash
+bun run perf component=<name>   # huffman | deflate | gzip | lzss
+```
+
+Two files are written to `scripts/output/` (git-ignored) after each run:
+
+| File                          | Contents                                                                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `perf-<component>-<ts>.jsonl` | Raw marks — one `{ tag, instrs, mem, heap }` JSON object per line                                                                |
+| `perf-<component>-<ts>.json`  | Computed report — 11-point timeline (0%–100% by mark index) + per-method avg/min/max delta stats for `instrs`, `mem`, and `heap` |
+
+Instruction counts use `IC.performanceCounter(1)` (cumulative monotonic counter). Delta values between consecutive same-method marks represent the cost of one call.
+
 ## Resources
 
 - [DEFLATE RFC 1951](https://www.rfc-editor.org/rfc/rfc1951)

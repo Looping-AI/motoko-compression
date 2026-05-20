@@ -2,7 +2,7 @@
  * Shared PocketIC helpers for integration tests.
  *
  * IDL types and factories are imported from the generated builds/ directory.
- * Run `bun run build:canisters` before running tests.
+ * Run `bun run test:build` before running tests.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
