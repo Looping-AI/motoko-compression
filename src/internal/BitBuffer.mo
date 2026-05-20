@@ -67,13 +67,14 @@ module {
     /// High bits of `value` above bit `n-1` are ignored.
     public func addBits(n : Nat, value : Nat) {
       if (n == 0) return;
+      // Pre-grow once for the entire write instead of once per byte-boundary.
+      ensureCapacity((writeBit + n - 1) / BYTE + 1);
       var remaining = n;
       var v = value;
       while (remaining > 0) {
         let byteIdx = writeBit / BYTE;
         let bitIdx = writeBit % BYTE;
         let take = if (remaining < BYTE - bitIdx) remaining else BYTE - bitIdx;
-        ensureCapacity(byteIdx + 1);
         let bits = Nat8.fromNat(v % (2 ** take));
         buf[byteIdx] := buf[byteIdx] | (bits << Nat8.fromNat(bitIdx));
         v /= (2 ** take);
@@ -86,7 +87,32 @@ module {
     public func addByte(b : Nat8) { addBits(BYTE, Nat8.toNat(b)) };
 
     /// Append an array of bytes.
-    public func addBytes(bs : [Nat8]) { for (b in bs.vals()) addByte(b) };
+    ///
+    /// Fast path: when the write position is byte-aligned (the common case —
+    /// buffer is fresh, or after `byteAlign()`), bytes are copied directly into
+    /// `buf` with a single `ensureCapacity` call and no bit-packing arithmetic.
+    ///
+    /// Slow path: unaligned write position — pre-sizes once so that all inner
+    /// `ensureCapacity` calls inside the per-byte loop are no-ops.
+    public func addBytes(bs : [Nat8]) {
+      let n = bs.size();
+      if (n == 0) return;
+      if (writeBit % BYTE == 0) {
+        let startByte = writeBit / BYTE;
+        ensureCapacity(startByte + n);
+        var i = 0;
+        while (i < n) { buf[startByte + i] := bs[i]; i += 1 };
+        writeBit += n * BYTE;
+      } else {
+        ensureCapacity(writeBit / BYTE + n + 1);
+        for (b in bs.vals()) addByte(b);
+      };
+    };
+
+    /// Pre-grow the backing store to hold at least `bytes` bytes without
+    /// changing any logical state.  Callers that know the eventual write size
+    /// upfront can call this once to eliminate all doubling reallocations.
+    public func reserve(bytes : Nat) { ensureCapacity(bytes) };
 
     // ── Read operations ───────────────────────────────────────────────────
 

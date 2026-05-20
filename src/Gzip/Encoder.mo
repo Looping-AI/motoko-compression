@@ -126,6 +126,12 @@ module {
     /// Compress `bytes` and accumulate them in the internal buffer.
     public func encode(bytes : [Nat8]) {
       if (bytes.size() == 0) return;
+
+      // Pre-grow the output buffer to the worst-case DEFLATE stored-block size
+      // so the backing array never doubles during compression of this chunk.
+      // Worst case: raw (stored) blocks — 5 bytes header per 65535-byte block.
+      // Add 25 bytes for gzip header (10) + footer (8) + slack (7).
+      bitbuffer.reserve(bitbuffer.byteSize() + bytes.size() + bytes.size() / 65535 * 5 + 25);
       input_size += bytes.size();
       crc32.update(bytes);
       if (not header_written) {

@@ -62,6 +62,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
         "addBits",
         "addByte",
         "addBytes",
+        "reserve",
         "getBit",
         "getBits",
         "getByte",
