@@ -158,6 +158,12 @@ module {
     public func getByte(i : Nat) : Nat8 {
       let avail = bitSize();
       if (i >= avail) return 0;
+
+      // Fast path: byte-aligned and a full byte is available — single array read,
+      // skipping the getBits loop and all Nat32↔Nat conversions.
+      let abs = i + readBit;
+      if (abs % BYTE == 0 and avail - i >= BYTE) return buf[abs / BYTE];
+
       let n = if (avail - i < BYTE) avail - i else BYTE;
       Nat8.fromNat(getBits(i, n));
     };
