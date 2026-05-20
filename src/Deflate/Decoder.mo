@@ -44,11 +44,11 @@ module {
         let block_type = bitreader.readBits(2); // BTYPE
 
         let res : Result<(), Text> = if (block_type == 0) {
-          decode_non_compressed();
+          decodeNonCompressed();
         } else if (block_type == 1) {
-          decode_compressed(HuffmanCodec.FixedHuffmanCodec());
+          decodeCompressed(HuffmanCodec.FixedHuffmanCodec());
         } else if (block_type == 2) {
-          decode_compressed(HuffmanCodec.DynamicHuffmanCodec());
+          decodeCompressed(HuffmanCodec.DynamicHuffmanCodec());
         } else {
           #err("Deflate: invalid block type " # debug_show block_type);
         };
@@ -62,13 +62,13 @@ module {
     };
 
     /// Decode a non-compressed (raw) block.
-    func decode_non_compressed() : Result<(), Text> {
+    func decodeNonCompressed() : Result<(), Text> {
       bitreader.byteAlign();
       let size_bytes = bitreader.readBytes(2);
-      let size = Utils.le_bytes_to_nat(size_bytes);
-      let nlen = Utils.le_bytes_to_nat(bitreader.readBytes(2));
+      let size = Utils.leBytesToNat(size_bytes);
+      let nlen = Utils.leBytesToNat(bitreader.readBytes(2));
       // Verify NLEN == one's complement of LEN
-      let expected_nlen = Utils.le_bytes_to_nat(
+      let expected_nlen = Utils.leBytesToNat(
         Array.map<Nat8, Nat8>(size_bytes, func(b) { ^b })
       );
       if (nlen != expected_nlen) {
@@ -81,7 +81,7 @@ module {
     };
 
     /// Decode a Huffman-compressed block (fixed or dynamic).
-    func decode_compressed(huffman : HuffmanCodec.HuffmanCodec) : Result<(), Text> {
+    func decodeCompressed(huffman : HuffmanCodec.HuffmanCodec) : Result<(), Text> {
       let sym_dec = switch (huffman.load(bitreader)) {
         case (#ok(d)) d;
         case (#err(msg)) return #err(msg);

@@ -74,7 +74,7 @@ module {
       reader.byteAlign();
 
       // 4. Read and verify CRC32 (4 bytes, LE)
-      let stored_crc32 = Nat32.fromNat(Utils.le_bytes_to_nat(reader.readBytes(4)));
+      let stored_crc32 = Nat32.fromNat(Utils.leBytesToNat(reader.readBytes(4)));
       let actual_crc32 = CRC32.checksum(List.toArray(buffer));
       if (stored_crc32 != actual_crc32) {
         return #err(
@@ -86,7 +86,7 @@ module {
       };
 
       // 5. Read and verify ISIZE (4 bytes, LE, mod 2^32)
-      let stored_isize = Utils.le_bytes_to_nat(reader.readBytes(4));
+      let stored_isize = Utils.leBytesToNat(reader.readBytes(4));
       let actual_isize = List.size(buffer) % 4294967296;
       if (stored_isize != actual_isize) {
         return #err(

@@ -54,7 +54,7 @@ module {
       };
     };
 
-    let block = Block.Block(block_type);
+    let block = Block.block(block_type);
 
     /// Optional callback: called with the bitbuffer's byte size after each
     /// block is flushed. Used by the Gzip encoder to track block boundaries.
@@ -65,7 +65,7 @@ module {
     };
 
     /// Encode a single byte, flushing a non-final block if needed.
-    public func encode_byte(byte : Nat8) {
+    public func encodeByte(byte : Nat8) {
       if (block.size() >= options.block_size) flush(false);
       block.add(byte);
     };

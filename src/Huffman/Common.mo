@@ -40,7 +40,7 @@ module {
 
   /// Restores canonical Huffman codes from an array of per-symbol bitwidths.
   /// Returns `#err` if the bitwidth array is empty or a mapping conflict occurs.
-  public func restore_huffman_codes<A>(
+  public func restoreHuffmanCodes<A>(
     builder : BuilderInterface<A>,
     bitwidth_arr : [Nat],
   ) : Result<A, Text> {
@@ -69,7 +69,7 @@ module {
     var prev_width = 0 : Nat;
 
     for ((symbol, bitwidth) in List.values(bitwidth_buffer)) {
-      bits := bits * (2 ** (bitwidth - prev_width));
+      bits *= (2 ** (bitwidth - prev_width));
 
       let code : Code = { bitwidth; bits = Nat16.fromNat(bits) };
 

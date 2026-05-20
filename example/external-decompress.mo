@@ -38,7 +38,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
 
   /// Return up to PAGE_SIZE bytes at index `page` (2 MiB pages, 0-indexed).
   /// Returns [] when `page` is past the end of `data`.
-  func page_of(data : [Nat8], page : Nat) : [Nat8] {
+  func pageOf(data : [Nat8], page : Nat) : [Nat8] {
     let lo = page * PAGE_SIZE;
     let n = data.size();
     if (lo >= n) return [];
@@ -50,7 +50,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
 
   /// Append one chunk of externally-compressed gzip bytes.
   /// Call repeatedly to upload large payloads in ≤1 MB pieces.
-  public func append_external_compressed(chunk : [Nat8]) : async () {
+  public func appendExternalCompressed(chunk : [Nat8]) : async () {
     _chunks := Array.concat<[Nat8]>(_chunks, [chunk]);
   };
 
@@ -62,7 +62,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
   };
 
   /// Return the number of bytes accumulated so far (query — no state change).
-  public query func compressed_size() : async Nat {
+  public query func compressedSize() : async Nat {
     var total = 0;
     for (chunk in _chunks.vals()) { total += chunk.size() };
     total;
@@ -84,9 +84,9 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
 
   /// Return a 2 MiB page of the decompressed bytes (0-indexed).
   /// Returns [] when `page` is past the end or decompress() has not been called.
-  public query func get_decompressed_data(page : Nat) : async [Nat8] {
+  public query func getDecompressedData(page : Nat) : async [Nat8] {
     let ?d = _decompressed else return [];
-    page_of(d, page);
+    pageOf(d, page);
   };
 
 };

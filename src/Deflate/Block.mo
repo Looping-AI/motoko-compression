@@ -54,7 +54,7 @@ module {
   };
 
   /// Construct a block of the given type.
-  public func Block(bt : BlockType) : BlockInterface {
+  public func block(bt : BlockType) : BlockInterface {
     switch bt {
       case (#Raw) Raw();
       case (#Fixed({ lzss; block_limit })) {
@@ -89,7 +89,7 @@ module {
       // The Bool exists only to satisfy the shared BlockInterface.
       bitbuffer.byteAlign();
       let sz = Nat.min(NO_COMPRESSION_MAX_BLOCK_SIZE, input_size);
-      let sz_bytes = Utils.nat_to_le_bytes(sz, 2);
+      let sz_bytes = Utils.natToLeBytes(sz, 2);
       // LEN then NLEN (one's complement of LEN)
       bitbuffer.addBytes(sz_bytes);
       bitbuffer.addBytes(Array.map<Nat8, Nat8>(sz_bytes, func(x) { ^x }));
@@ -128,7 +128,7 @@ module {
 
     public func add(byte : Nat8) {
       input_size += 1;
-      lzss.encode_byte(byte, sink);
+      lzss.encodeByte(byte, sink);
     };
 
     public func append(bytes : [Nat8]) {

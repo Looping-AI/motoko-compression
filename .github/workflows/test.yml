@@ -48,6 +48,14 @@ jobs:
       - name: Check formatting
         run: bun run format:check
 
+      # ── Mops ─────────────────────────────────────────────────────────────────
+      - name: Check Motoko
+        run: mops check
+
+      # ── Lintoko ─────────────────────────────────────────────────────────────────
+      - name: Lint Motoko
+        run: bun run lint
+
       # ── Build + Test ─────────────────────────────────────────────────────────
       - name: Run unit tests
         run: mops test

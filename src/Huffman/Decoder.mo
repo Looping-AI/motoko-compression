@@ -18,7 +18,7 @@ module {
   type Code = Common.Code;
   type BuilderInterface<A> = Common.BuilderInterface<A>;
 
-  let { MAX_BITWIDTH; reverseCodeBits; restore_huffman_codes } = Common;
+  let { MAX_BITWIDTH; reverseCodeBits; restoreHuffmanCodes } = Common;
 
   public type DecoderOptions = {
     max_bitwidth : Nat;
@@ -72,7 +72,7 @@ module {
     let max_bitwidth = Array.foldRight<Nat, Nat>(bitwidths, 0, func(a, b) = Nat.max(a, b));
     let builder = Builder(max_bitwidth);
 
-    restore_huffman_codes(builder, bitwidths);
+    restoreHuffmanCodes(builder, bitwidths);
   };
 
   public class Decoder(table : [var Nat], max_bitwidth : Nat) {

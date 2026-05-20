@@ -26,13 +26,13 @@ if (!component || !wasmFile) {
 // Minimal IDL — only the two methods needed for the workload.
 const idlFactory = ({ IDL }: { IDL: any }) =>
   IDL.Service({
-    generate_data: IDL.Func([IDL.Nat], [], []),
-    compress_data: IDL.Func([], [], []),
+    generateData: IDL.Func([IDL.Nat], [], []),
+    compressData: IDL.Func([], [], []),
   });
 
 interface PerfService {
-  generate_data: (size_mb: bigint) => Promise<void>;
-  compress_data: () => Promise<void>;
+  generateData: (size_mb: bigint) => Promise<void>;
+  compressData: () => Promise<void>;
 }
 
 let server: PocketIcServer | undefined;
@@ -46,13 +46,13 @@ try {
   const fixture = await pic.setupCanister<PerfService>({ idlFactory, wasm });
   const actor = fixture.actor;
 
-  await actor.generate_data(1n);
+  await actor.generateData(1n);
 
   // compress_data() uses inter-canister self-calls.  PocketIC sometimes
   // exhausts its reply-polling window before the outer call officially
   // settles, even though all Perf.mark() calls have already fired.
   try {
-    await actor.compress_data();
+    await actor.compressData();
   } catch (err) {
     const isPollingTimeout =
       err instanceof Error && err.constructor.name === "RetryableError";

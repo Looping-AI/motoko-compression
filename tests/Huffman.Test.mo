@@ -96,7 +96,7 @@ suite(
       "empty bitwidth array → #err",
       func() {
         let builder = Encoder.Builder(1);
-        let result = Common.restore_huffman_codes<Encoder.Encoder>(builder, []);
+        let result = Common.restoreHuffmanCodes<Encoder.Encoder>(builder, []);
         expect.bool(Result.isErr(result)).isTrue();
       },
     );
@@ -106,7 +106,7 @@ suite(
       func() {
         // all zeros means no symbol has a code; builder with 1 slot
         let builder = Encoder.Builder(1);
-        let result = Common.restore_huffman_codes<Encoder.Encoder>(builder, [0, 0, 0]);
+        let result = Common.restoreHuffmanCodes<Encoder.Encoder>(builder, [0, 0, 0]);
         // no mappings set, should succeed (no error from builder)
         expect.bool(Result.isOk(result)).isTrue();
       },
@@ -116,7 +116,7 @@ suite(
       "single symbol bitwidth=1 → code 0 assigned",
       func() {
         let builder = Encoder.Builder(2);
-        let result = Common.restore_huffman_codes<Encoder.Encoder>(builder, [1]);
+        let result = Common.restoreHuffmanCodes<Encoder.Encoder>(builder, [1]);
         switch (result) {
           case (#ok(enc)) {
             let code = enc.lookup(0);
@@ -133,7 +133,7 @@ suite(
         // symbol 0 → bitwidth 1, symbol 1 → bitwidth 1
         // canonical: symbol0 gets bits=0, symbol1 gets bits=1
         let builder = Encoder.Builder(2);
-        let result = Common.restore_huffman_codes<Encoder.Encoder>(builder, [1, 1]);
+        let result = Common.restoreHuffmanCodes<Encoder.Encoder>(builder, [1, 1]);
         switch (result) {
           case (#ok(enc)) {
             let c0 = enc.lookup(0);
@@ -153,7 +153,7 @@ suite(
       func() {
         // symbol 2 has bitwidth 1 (shortest), symbols 0 and 1 have bitwidth 2
         let builder = Encoder.Builder(3);
-        let result = Common.restore_huffman_codes<Encoder.Encoder>(builder, [2, 2, 1]);
+        let result = Common.restoreHuffmanCodes<Encoder.Encoder>(builder, [2, 2, 1]);
         switch (result) {
           case (#ok(enc)) {
             let c0 = enc.lookup(0);
@@ -213,13 +213,13 @@ suite(
     );
 
     test(
-      "max_symbol returns correct last assigned symbol",
+      "maxSymbol returns correct last assigned symbol",
       func() {
         // symbols 0,1,2 with bitwidths 3,3,2 — last non-zero is symbol 2
         let result = Encoder.fromBitwidths([3, 3, 2]);
         switch (result) {
           case (#ok(enc)) {
-            expect.nat(enc.max_symbol()).equal(2);
+            expect.nat(enc.maxSymbol()).equal(2);
           };
           case (#err(msg)) Runtime.trap("Expected #ok: " # msg);
         };
@@ -233,7 +233,7 @@ suite(
         let result = Encoder.fromBitwidths([1, 1, 0, 0]);
         switch (result) {
           case (#ok(enc)) {
-            expect.nat(enc.max_symbol()).equal(1);
+            expect.nat(enc.maxSymbol()).equal(1);
           };
           case (#err(msg)) Runtime.trap("Expected #ok: " # msg);
         };

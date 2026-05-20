@@ -82,7 +82,7 @@ module {
         ensureCapacity(byteIdx + 1);
         let bits = Nat8.fromNat(v % (2 ** take));
         buf[byteIdx] := buf[byteIdx] | (bits << Nat8.fromNat(bitIdx));
-        v := v / (2 ** take);
+        v /= (2 ** take);
         writeBit += take;
         remaining -= take;
       };

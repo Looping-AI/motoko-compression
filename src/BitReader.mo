@@ -18,7 +18,7 @@ module {
     var tailBits = 0;
 
     /// Returns true when `n` bits are available to read.
-    func is_valid(n : Nat) : Bool {
+    func isValid(n : Nat) : Bool {
       n <= (bitbuffer.bitSize() - offset - tailBits : Nat);
     };
 
@@ -26,7 +26,7 @@ module {
 
     /// Return the next bit without advancing the read position.
     public func peekBit() : Bool {
-      if (not is_valid(1)) {
+      if (not isValid(1)) {
         Runtime.trap("BitReader.peekBit: out of bounds or empty");
       };
       bitbuffer.getBit(offset);
@@ -41,7 +41,7 @@ module {
 
     /// Return the next `n` bits as a Nat (LSB-first) without advancing.
     public func peekBits(n : Nat) : Nat {
-      if (not is_valid(n)) {
+      if (not isValid(n)) {
         Runtime.trap("BitReader.peekBits: out of bounds at offset");
       };
       bitbuffer.getBits(offset, n);
@@ -56,7 +56,7 @@ module {
 
     /// Advance the read position by `n` bits without returning a value.
     public func skipBits(n : Nat) {
-      if (not is_valid(n)) {
+      if (not isValid(n)) {
         Runtime.trap("BitReader.skipBits: out of bounds");
       };
       offset += n;
@@ -66,7 +66,7 @@ module {
 
     /// Return the next byte without advancing the read position.
     public func peekByte() : Nat8 {
-      if (not is_valid(8)) {
+      if (not isValid(8)) {
         Runtime.trap("BitReader.peekByte: out of bounds");
       };
       // Dead branch removed: after is_valid(8), bitSize() >= 8 is guaranteed.

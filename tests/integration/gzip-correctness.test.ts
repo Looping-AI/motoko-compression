@@ -48,23 +48,23 @@ describe("Gzip Correctness", () => {
 
   it("round-trips 1 MiB through gzip and compressed size is within ±20% of node:zlib", async () => {
     // 1. Generate 1 MiB of pseudo-random data (seeded, deterministic).
-    await actor.generate_data(1n);
+    await actor.generateData(1n);
 
     // 2. Compress.
-    await actor.compress_data();
+    await actor.compressData();
 
     // 3. Collect compressed bytes.
     const compressedBytes = await readAllPages((p) =>
-      actor.get_compressed_data(p),
+      actor.getCompressedData(p),
     );
 
     // 4. Decompress.
-    await actor.decompress_data();
+    await actor.decompressData();
 
     // 5. Collect decompressed and original bytes.
     const [decompressedBytes, originalBytes] = await Promise.all([
-      readAllPages((p) => actor.get_decompressed_data(p)),
-      readAllPages((p) => actor.get_generated_data(p)),
+      readAllPages((p) => actor.getDecompressedData(p)),
+      readAllPages((p) => actor.getGeneratedData(p)),
     ]);
 
     // Round-trip correctness: decompressed must exactly equal original.

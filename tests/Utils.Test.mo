@@ -263,35 +263,35 @@ suite(
     test(
       "10 / 3 = ceil 4",
       func() {
-        expect.nat(Utils.div_ceil(10, 3)).equal(4);
+        expect.nat(Utils.divCeil(10, 3)).equal(4);
       },
     );
 
     test(
       "exact division returns quotient",
       func() {
-        expect.nat(Utils.div_ceil(9, 3)).equal(3);
+        expect.nat(Utils.divCeil(9, 3)).equal(3);
       },
     );
 
     test(
       "divisor larger than num returns 1",
       func() {
-        expect.nat(Utils.div_ceil(1, 5)).equal(1);
+        expect.nat(Utils.divCeil(1, 5)).equal(1);
       },
     );
 
     test(
       "0 / any returns 0",
       func() {
-        expect.nat(Utils.div_ceil(0, 7)).equal(0);
+        expect.nat(Utils.divCeil(0, 7)).equal(0);
       },
     );
 
     test(
       "div_ceil(n, 1) = n",
       func() {
-        expect.nat(Utils.div_ceil(100, 1)).equal(100);
+        expect.nat(Utils.divCeil(100, 1)).equal(100);
       },
     );
 
@@ -307,7 +307,7 @@ suite(
     test(
       "zero fills with zeros",
       func() {
-        let result = Utils.nat_to_le_bytes(0, 4);
+        let result = Utils.natToLeBytes(0, 4);
         expect.array(result, Nat8.toText, Nat8.equal).equal([0, 0, 0, 0]);
       },
     );
@@ -315,7 +315,7 @@ suite(
     test(
       "single byte value",
       func() {
-        let result = Utils.nat_to_le_bytes(42, 1);
+        let result = Utils.natToLeBytes(42, 1);
         expect.array(result, Nat8.toText, Nat8.equal).equal([42]);
       },
     );
@@ -324,7 +324,7 @@ suite(
       "little-endian ordering: LSB first",
       func() {
         // 0x0102 = 258 → LE bytes [0x02, 0x01]
-        let result = Utils.nat_to_le_bytes(258, 2);
+        let result = Utils.natToLeBytes(258, 2);
         expect.array(result, Nat8.toText, Nat8.equal).equal([2, 1]);
       },
     );
@@ -333,7 +333,7 @@ suite(
       "four-byte encoding",
       func() {
         // 0x01020304 = 16909060
-        let result = Utils.nat_to_le_bytes(16909060, 4);
+        let result = Utils.natToLeBytes(16909060, 4);
         expect.array(result, Nat8.toText, Nat8.equal).equal([4, 3, 2, 1]);
       },
     );
@@ -341,7 +341,7 @@ suite(
     test(
       "extra bytes are zero-padded",
       func() {
-        let result = Utils.nat_to_le_bytes(1, 4);
+        let result = Utils.natToLeBytes(1, 4);
         expect.array(result, Nat8.toText, Nat8.equal).equal([1, 0, 0, 0]);
       },
     );
@@ -358,14 +358,14 @@ suite(
     test(
       "empty array returns 0",
       func() {
-        expect.nat(Utils.bytes_to_nat([])).equal(0);
+        expect.nat(Utils.bytesToNat([])).equal(0);
       },
     );
 
     test(
       "single byte",
       func() {
-        expect.nat(Utils.bytes_to_nat([42])).equal(42);
+        expect.nat(Utils.bytesToNat([42])).equal(42);
       },
     );
 
@@ -373,7 +373,7 @@ suite(
       "two bytes big-endian",
       func() {
         // [0x01, 0x02] = 258
-        expect.nat(Utils.bytes_to_nat([1, 2])).equal(258);
+        expect.nat(Utils.bytesToNat([1, 2])).equal(258);
       },
     );
 
@@ -381,7 +381,7 @@ suite(
       "four bytes big-endian",
       func() {
         // [0x01, 0x02, 0x03, 0x04] = 16909060
-        expect.nat(Utils.bytes_to_nat([1, 2, 3, 4])).equal(16909060);
+        expect.nat(Utils.bytesToNat([1, 2, 3, 4])).equal(16909060);
       },
     );
 
@@ -397,14 +397,14 @@ suite(
     test(
       "empty array returns 0",
       func() {
-        expect.nat(Utils.le_bytes_to_nat([])).equal(0);
+        expect.nat(Utils.leBytesToNat([])).equal(0);
       },
     );
 
     test(
       "single byte",
       func() {
-        expect.nat(Utils.le_bytes_to_nat([42])).equal(42);
+        expect.nat(Utils.leBytesToNat([42])).equal(42);
       },
     );
 
@@ -412,7 +412,7 @@ suite(
       "two bytes little-endian",
       func() {
         // [0x02, 0x01] = 258
-        expect.nat(Utils.le_bytes_to_nat([2, 1])).equal(258);
+        expect.nat(Utils.leBytesToNat([2, 1])).equal(258);
       },
     );
 
@@ -420,7 +420,7 @@ suite(
       "four bytes little-endian",
       func() {
         // [0x04, 0x03, 0x02, 0x01] = 16909060
-        expect.nat(Utils.le_bytes_to_nat([4, 3, 2, 1])).equal(16909060);
+        expect.nat(Utils.leBytesToNat([4, 3, 2, 1])).equal(16909060);
       },
     );
 
@@ -428,16 +428,16 @@ suite(
       "roundtrip with nat_to_le_bytes",
       func() {
         let n = 123456789;
-        let encoded = Utils.nat_to_le_bytes(n, 4);
-        expect.nat(Utils.le_bytes_to_nat(encoded)).equal(n);
+        let encoded = Utils.natToLeBytes(n, 4);
+        expect.nat(Utils.leBytesToNat(encoded)).equal(n);
       },
     );
 
     test(
       "roundtrip preserves zero",
       func() {
-        let encoded = Utils.nat_to_le_bytes(0, 4);
-        expect.nat(Utils.le_bytes_to_nat(encoded)).equal(0);
+        let encoded = Utils.natToLeBytes(0, 4);
+        expect.nat(Utils.leBytesToNat(encoded)).equal(0);
       },
     );
 
@@ -450,7 +450,7 @@ suite(
   "Utils.array_equal",
   func() {
 
-    let natEq = Utils.array_equal<Nat>(Nat.equal);
+    let natEq = Utils.arrayEqual<Nat>(Nat.equal);
 
     test(
       "two empty arrays are equal",
@@ -483,7 +483,7 @@ suite(
     test(
       "uses provided equality function",
       func() {
-        let alwaysEq = Utils.array_equal<Nat>(func(_, _) = true);
+        let alwaysEq = Utils.arrayEqual<Nat>(func(_, _) = true);
         expect.bool(alwaysEq([1, 2], [9, 9])).isTrue();
       },
     );

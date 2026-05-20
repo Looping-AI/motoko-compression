@@ -8,13 +8,13 @@ module {
   public let INSTRUCTION_LIMIT : Nat = 1_048_576;
 
   /// Returns the ceiling of `num / divisor`.
-  public func div_ceil(num : Nat, divisor : Nat) : Nat {
+  public func divCeil(num : Nat, divisor : Nat) : Nat {
     (num + (divisor - 1)) / divisor;
   };
 
   /// Encodes `num` as a little-endian byte array of exactly `nbytes` bytes.
   /// Truncates high bytes silently if `num` overflows `nbytes`.
-  public func nat_to_le_bytes(num : Nat, nbytes : Nat) : [Nat8] {
+  public func natToLeBytes(num : Nat, nbytes : Nat) : [Nat8] {
     var n = num;
     Array.tabulate<Nat8>(
       nbytes,
@@ -28,18 +28,18 @@ module {
 
   /// Decodes a big-endian byte array to a `Nat`.
   /// Empty array returns 0.
-  public func bytes_to_nat(bytes : [Nat8]) : Nat {
+  public func bytesToNat(bytes : [Nat8]) : Nat {
     Array.foldLeft<Nat8, Nat>(bytes, 0, func(acc, b) = acc * 256 + Nat8.toNat(b));
   };
 
   /// Decodes a little-endian byte array to a `Nat`.
   /// Empty array returns 0.
-  public func le_bytes_to_nat(bytes : [Nat8]) : Nat {
+  public func leBytesToNat(bytes : [Nat8]) : Nat {
     Array.foldRight<Nat8, Nat>(bytes, 0, func(b, acc) = acc * 256 + Nat8.toNat(b));
   };
 
   /// Returns an equality function for `[A]` given an element equality function.
-  public func array_equal<A>(eq : (A, A) -> Bool) : ([A], [A]) -> Bool {
+  public func arrayEqual<A>(eq : (A, A) -> Bool) : ([A], [A]) -> Bool {
     func(a, b) = Array.equal(a, b, eq);
   };
 

@@ -231,12 +231,12 @@ module {
   ) {
     /// Decode one symbol from `reader`.
     public func decode(reader : BitReader) : Result<Symbol, Text> {
-      let sym_res = decode_literal(reader);
+      let sym_res = decodeLiteral(reader);
       let #ok(sym) = sym_res else return sym_res;
       // If it's a pointer, the distance is still 0 — we need to decode it.
       switch sym {
         case (#pointer(_, length)) {
-          switch (decode_distance(reader)) {
+          switch (decodeDistance(reader)) {
             case (#ok(dist)) #ok(#pointer(dist, length));
             case (#err(msg)) #err(msg);
           };
@@ -245,7 +245,7 @@ module {
       };
     };
 
-    func decode_literal(reader : BitReader) : Result<Symbol, Text> {
+    func decodeLiteral(reader : BitReader) : Result<Symbol, Text> {
       let val = switch (literal_decoder.decode(reader)) {
         case (#ok(v)) v;
         case (#err(msg)) return #err(msg);
@@ -263,7 +263,7 @@ module {
       };
     };
 
-    func decode_distance(reader : BitReader) : Result<Nat, Text> {
+    func decodeDistance(reader : BitReader) : Result<Nat, Text> {
       let val = switch (distance_decoder.decode(reader)) {
         case (#ok(v)) v;
         case (#err(msg)) return #err(msg);

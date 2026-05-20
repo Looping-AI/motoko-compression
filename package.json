@@ -4,6 +4,7 @@
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "lint": "$(mops toolchain bin lintoko) -r .lintoko",
     "postinstall": "husky",
     "test:build": "bun run tests/integration/build.ts",
     "test": "bun test tests/integration/",

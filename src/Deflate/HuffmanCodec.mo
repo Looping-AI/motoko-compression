@@ -140,10 +140,10 @@ module {
     };
 
     public func save(bitbuffer : BitBuffer, codec : Symbol.Encoder) : Result<(), Text> {
-      let lcc = Nat.max(257, codec.literal.max_symbol() + 1);
-      let dcc = Nat.max(1, codec.distance.max_symbol() + 1);
+      let lcc = Nat.max(257, codec.literal.maxSymbol() + 1);
+      let dcc = Nat.max(1, codec.distance.maxSymbol() + 1);
 
-      let codes = build_bitwidth_codes(codec, lcc, dcc);
+      let codes = buildBitwidthCodes(codec, lcc, dcc);
 
       // Count how often each bitwidth-meta symbol appears
       let sym_freq = Prim.Array_init<Nat>(19, 0);
@@ -192,7 +192,7 @@ module {
     type BitwidthCode = { symbol : Nat; count : Nat; bitwidth : Nat };
     let ZERO_CODE : BitwidthCode = { symbol = 0; count = 0; bitwidth = 0 };
 
-    func build_bitwidth_codes(codec : Symbol.Encoder, lcc : Nat, dcc : Nat) : List.List<BitwidthCode> {
+    func buildBitwidthCodes(codec : Symbol.Encoder, lcc : Nat, dcc : Nat) : List.List<BitwidthCode> {
       type Run = { value : Nat; var count : Nat };
 
       // Collect run-length encoding of bitwidths

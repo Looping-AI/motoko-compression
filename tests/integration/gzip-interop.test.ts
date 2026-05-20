@@ -51,7 +51,7 @@ describe("Gzip Interop", () => {
       const chunk = Array.from(
         compressed.subarray(offset, offset + UPLOAD_CHUNK),
       );
-      await actor.append_external_compressed(chunk);
+      await actor.appendExternalCompressed(chunk);
     }
 
     // 4. Decompress on the canister.
@@ -60,7 +60,7 @@ describe("Gzip Interop", () => {
     // 5. Read back decompressed bytes (paginated).
     const pages: Buffer[] = [];
     for (let page = 0n; ; page++) {
-      const chunk = await actor.get_decompressed_data(page);
+      const chunk = await actor.getDecompressedData(page);
       if (chunk.length === 0) break;
       pages.push(Buffer.from(chunk as number[]));
     }

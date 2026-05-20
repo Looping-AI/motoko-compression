@@ -121,7 +121,7 @@ module {
     );
 
     /// Returns the configured Deflate block size.
-    public func block_size() : Nat { deflate_options.block_size };
+    public func blockSize() : Nat { deflate_options.block_size };
 
     /// Compress `bytes` and accumulate them in the internal buffer.
     public func encode(bytes : [Nat8]) {
@@ -168,8 +168,8 @@ module {
 
       // Footer: CRC32 (4 bytes LE) + ISIZE (4 bytes LE, mod 2^32)
       let crc32_val = crc32.finish();
-      bitbuffer.addBytes(Utils.nat_to_le_bytes(Nat32.toNat(crc32_val), 4));
-      bitbuffer.addBytes(Utils.nat_to_le_bytes(input_size % 4294967296, 4));
+      bitbuffer.addBytes(Utils.natToLeBytes(Nat32.toNat(crc32_val), 4));
+      bitbuffer.addBytes(Utils.natToLeBytes(input_size % 4294967296, 4));
 
       let total = bitbuffer.byteSize();
       let all = bitbuffer.getBytes(0, total);

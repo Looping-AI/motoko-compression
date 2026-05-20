@@ -33,7 +33,7 @@ module {
 
     let builder = Builder(symbol_count + 1);
 
-    Common.restore_huffman_codes<Encoder>(builder, bitwidths);
+    Common.restoreHuffmanCodes<Encoder>(builder, bitwidths);
   };
 
   public func fromFrequencies(
@@ -42,10 +42,10 @@ module {
   ) : Result<Encoder, Text> {
     let max_bitwidth = Nat.min(
       bitwidth,
-      HuffmanCodes.calc_max_bitwidth(frequencies),
+      HuffmanCodes.calcMaxBitwidth(frequencies),
     );
 
-    let bitwidths : [Nat] = HuffmanCodes.calc_bitwidths(max_bitwidth, frequencies);
+    let bitwidths : [Nat] = HuffmanCodes.calcBitwidths(max_bitwidth, frequencies);
 
     fromBitwidths(bitwidths);
   };
@@ -85,7 +85,7 @@ module {
       table[symbol];
     };
 
-    public func max_symbol() : Nat {
+    public func maxSymbol() : Nat {
       var max_index = 0;
 
       label for_loop for (i in Utils.revRange(table.size(), 0)) {
@@ -103,7 +103,7 @@ module {
 
   type CompareFn<A> = (A, A) -> Order.Order;
 
-  func tuple_compare<A, B>(
+  func tupleCompare<A, B>(
     cmp1 : CompareFn<A>,
     cmp2 : CompareFn<B>,
   ) : CompareFn<Tuple<A, B>> {
@@ -121,8 +121,8 @@ module {
   };
 
   module HuffmanCodes {
-    public func calc_max_bitwidth(frequencies : [Nat]) : Nat {
-      let cmp = tuple_compare(Nat.compare, Nat.compare);
+    public func calcMaxBitwidth(frequencies : [Nat]) : Nat {
+      let cmp = tupleCompare(Nat.compare, Nat.compare);
       // Invert compare for min-heap: PriorityQueue is max-first
       let minCmp = func(a : (Nat, Nat), b : (Nat, Nat)) : Order.Order {
         cmp(b, a);
@@ -154,8 +154,8 @@ module {
       Nat.max(max_bitwidth, 1);
     };
 
-    public func calc_bitwidths(max_bitwidth : Nat, frequencies : [Nat]) : [Nat] {
-      LengthLimited.calc_bitwidths(max_bitwidth, frequencies);
+    public func calcBitwidths(max_bitwidth : Nat, frequencies : [Nat]) : [Nat] {
+      LengthLimited.calcBitwidths(max_bitwidth, frequencies);
     };
 
     public module LengthLimited {
@@ -172,10 +172,10 @@ module {
         };
       };
 
-      public func calc_bitwidths(max_bitwidth : Nat, frequencies : [Nat]) : [Nat] {
+      public func calcBitwidths(max_bitwidth : Nat, frequencies : [Nat]) : [Nat] {
         let nodes = List.empty<Node>();
 
-        func deep_copy(src : List.List<Node>) : List.List<Node> {
+        func deepCopy(src : List.List<Node>) : List.List<Node> {
           let new_nodes = List.empty<Node>();
           for (node in List.values(src)) {
             let new_node = {
@@ -203,12 +203,12 @@ module {
 
         List.sortInPlace(nodes, cmp);
 
-        var weighted_nodes = deep_copy(nodes);
+        var weighted_nodes = deepCopy(nodes);
 
         // Run max_bitwidth - 1 iterations (Itertools.range(0, max_bitwidth-1) was exclusive)
         for (_ in Utils.range(1, max_bitwidth)) {
           package(weighted_nodes);
-          weighted_nodes := merge(weighted_nodes, deep_copy(nodes));
+          weighted_nodes := merge(weighted_nodes, deepCopy(nodes));
         };
 
         package(weighted_nodes);

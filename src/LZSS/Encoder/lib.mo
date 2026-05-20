@@ -43,11 +43,11 @@ module {
   // ── Public API ──────────────────────────────────────────────────────────
 
   /// Create an encoder at the best (highest ratio) compression level.
-  public func Default() : Encoder { Encoder(#best) };
+  public func default() : Encoder { Encoder(#best) };
 
   /// Encode `bytes` at the best compression level and return the entry list.
   public func encode(bytes : [Nat8]) : List.List<LzssEntry> {
-    let lzss = Default();
+    let lzss = default();
     let buffer = List.empty<LzssEntry>();
     let sink : Sink = { add = func(e) { List.add(buffer, e) } };
     lzss.encode(bytes, sink);
@@ -96,7 +96,7 @@ module {
     };
 
     /// Emit `n` bytes from the front of byte_buffer as literals.
-    func encode_as_literals(n : Nat, sink : Sink) {
+    func encodeAsLiterals(n : Nat, sink : Sink) {
       for (_ in Utils.range(0, n)) {
         let ?byte = byte_buffer.popFront() else Runtime.unreachable();
         search_buffer.push(byte);
@@ -108,7 +108,7 @@ module {
     // ── Public encoding interface ──────────────────────────────────────────
 
     /// Feed one future byte into the streaming encoder.
-    public func encode_byte(future_byte : Nat8, sink : Sink) {
+    public func encodeByte(future_byte : Nat8, sink : Sink) {
       byte_buffer.push(future_byte);
 
       // Seed the prefix table using bytes recently emitted during a match.
@@ -144,14 +144,14 @@ module {
         );
         switch (opt_prefix_index) {
           case (null) {
-            encode_as_literals(1, sink);
+            encodeAsLiterals(1, sink);
             match_index := null;
           };
           case (?prefix_index) {
             let backward_offset = (input_size - prefix_index) : Nat;
             if (backward_offset > search_buffer.size()) {
               // The match is outside the current window; emit literal instead.
-              encode_as_literals(1, sink);
+              encodeAsLiterals(1, sink);
               match_index := null;
             } else {
               match_index := opt_prefix_index;
@@ -201,7 +201,7 @@ module {
     /// Encode all of `bytes` by feeding them one at a time.
     public func encode(bytes : [Nat8], sink : Sink) {
       for (byte in bytes.vals()) {
-        encode_byte(byte, sink);
+        encodeByte(byte, sink);
       };
     };
 

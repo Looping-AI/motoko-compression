@@ -120,7 +120,7 @@ module {
     // Modification time (4 bytes LE, 0 if not set)
     let mtime = if (header.modification_time > 0) header.modification_time else 0;
     let mtime_nat = Int.abs(mtime);
-    bitbuffer.addBytes(Utils.nat_to_le_bytes(mtime_nat, 4));
+    bitbuffer.addBytes(Utils.natToLeBytes(mtime_nat, 4));
 
     // XFL — derived from LZSS level (overrides whatever header.xfl says)
     let xfl : Nat8 = switch lzss {
@@ -139,11 +139,11 @@ module {
       for ({ data } in header.extra_fields.vals()) {
         total += 4 + data.size();
       };
-      bitbuffer.addBytes(Utils.nat_to_le_bytes(total, 2));
+      bitbuffer.addBytes(Utils.natToLeBytes(total, 2));
       for ({ ids; data } in header.extra_fields.vals()) {
         bitbuffer.addByte(ids.0);
         bitbuffer.addByte(ids.1);
-        bitbuffer.addBytes(Utils.nat_to_le_bytes(data.size(), 2));
+        bitbuffer.addBytes(Utils.natToLeBytes(data.size(), 2));
         bitbuffer.addBytes(data);
       };
     };
@@ -171,7 +171,7 @@ module {
       let header_bytes = bitbuffer.getBytes(0, bitbuffer.byteSize());
       let crc32 = CRC32.checksum(header_bytes);
       let crc16 = Nat32.toNat(crc32 & 0xffff);
-      bitbuffer.addBytes(Utils.nat_to_le_bytes(crc16, 2));
+      bitbuffer.addBytes(Utils.natToLeBytes(crc16, 2));
     };
   };
 
@@ -200,7 +200,7 @@ module {
     ignore reader.readBits(3); // reserved
 
     // Modification time (4 bytes LE, Unix seconds)
-    let mtime = Utils.le_bytes_to_nat(reader.readBytes(4));
+    let mtime = Utils.leBytesToNat(reader.readBytes(4));
 
     // XFL
     let xfl = reader.readByte();
@@ -210,13 +210,13 @@ module {
 
     // FEXTRA
     let extra_fields : [ExtraField] = if (has_extra) {
-      let extra_size = Utils.le_bytes_to_nat(reader.readBytes(2));
+      let extra_size = Utils.leBytesToNat(reader.readBytes(2));
       let fields = List.empty<ExtraField>();
       var remaining = extra_size;
       while (remaining > 0) {
         let id1 = reader.readByte();
         let id2 = reader.readByte();
-        let size = Utils.le_bytes_to_nat(reader.readBytes(2));
+        let size = Utils.leBytesToNat(reader.readBytes(2));
         let data = reader.readBytes(size);
         List.add(fields, { ids = (id1, id2); data });
         remaining -= 4 + size;
@@ -261,7 +261,7 @@ module {
       reader.setPosition(saved_pos);
 
       let calculated_crc16 = Nat32.toNat(CRC32.checksum(header_bytes) & 0xffff);
-      let stored_crc16 = Utils.le_bytes_to_nat(reader.readBytes(2));
+      let stored_crc16 = Utils.leBytesToNat(reader.readBytes(2));
       if (stored_crc16 != calculated_crc16) {
         return #err("Gzip: FHCRC header checksum mismatch");
       };
