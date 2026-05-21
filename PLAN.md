@@ -80,12 +80,30 @@ Surprise: `ensureCapacity` fires ~1.9× per `addBits` call (inside the per-byte-
 
 Forward-only bit reader wrapping a `[Nat8]`. Used by every decoder.
 
-- [ ] **Baseline measured**
-- [ ] `readBit` / `readBits` — inline shift arithmetic, eliminate redundant bounds checks
-- [ ] `readByte` / `readBytes` — fast-path when bit cursor is byte-aligned
-- [ ] Evaluate lazy vs. eager buffering strategy
+- [x] **Baseline measured** — 2026-05-21T05-59-06Z (10 KiB workload, 54 462 marks)
+- [x] `isValid` — cache readable upper bound (`available`) as a class field; inline bounds check at every call site; **−59% total instrs, −56% final heap for 10 KiB input**
+- [-] `readBit` / `readBits` — eliminate redundant bounds checks: already addressed by inlining `isValid`
+- [-] `readByte` / `readBytes` — too few calls (≤5) per 10 KiB; impact negligible
+- [-] `getBitsFast` fast-path in BitBuffer (single-byte / two-byte inline) — **attempted, reverted**; see Notes
+- [-] Evaluate lazy vs. eager buffering strategy — not warranted after isValid fix
 
 **Notes:**
+Baseline: `isValid` = 27 215 calls, 91 753 avg instrs/call, 5 522 B heap/call — dominant hot path.
+`peekBits` = 16 966 calls; `skipBits` = 10 238 calls. Both call `isValid` on every invocation.
+Root cause: `isValid` did `bitbuffer.bitSize() - offset - tailBits`, which is 3 chained Nat
+subtractions + a method-call indirection, allocating on every read. Fix: cache
+`available = bitbuffer.bitSize() - tailBits` as a class field; maintain it in `addBytes`,
+`clearRead`, `hideTailBits`, and `clear`. Inline check becomes `n + offset > available` — one
+Nat addition, no heap allocation, no function call.
+Post-fix baseline: `peekBits` = 59 874 avg instrs/call, 3 527 B heap/call.
+
+**getBitsFast finding:** Implemented single-byte and two-byte inline fast paths in `BitBuffer` to
+eliminate the `getBits` loop for the common DEFLATE peek case. Result: −0.8% instrs, −0.06% heap.
+Conclusion: Motoko on IC stores small `Nat` values as tagged immediate integers (no heap
+allocation), so the `getBits` loop was already cheap. The remaining ~3 500 B/call in the
+`peekBits` interval comes from the calling code between marks (Huffman decoder body: table
+lookup, `value % 32`, `value / 32`, loop overhead) — not from `BitBuffer.getBits` itself.
+Further reductions require optimising `src/Huffman/Decoder.mo` (Layer 1).
 
 ---
 
@@ -96,8 +114,8 @@ Fixed-capacity O(1) ring buffer for the LZSS sliding window (32 KiB).
 - [x] **Baseline measured** — 2026-05-20T15:10:10Z (10 KiB workload, 61 477 marks)
 - [-] `push` — replace modulo wraparound with conditional branch; **−0.044% instrs (negligible)**
 - [x] `clear` — O(1) reset (only `head := 0; count := 0`) vs. sweep all slots; **−19.3% avg_delta, −3.47M instrs max_delta (accepted)**
-- [ ] `get` — profile index computation vs. linear scan alternatives
-- [ ] Evaluate whether Prim.Array_init inlining is necessary
+- [-] `get` — profile index computation vs. linear scan alternatives
+- [-] Evaluate whether Prim.Array_init inlining is necessary
 
 **Notes:**
 Tested Candidate 1 (modulo→branch wrap on push/get/popFront): −60 to −120 instrs avg per call, cumulative −0.047%. **Decision: too small, skip.**
@@ -319,7 +337,8 @@ Update these numbers each time a new baseline is established.
 
 ## Completed optimizations log
 
-| Date       | Component | File                                  | Change                                                                | Δ instrs/call                            | Δ heap/call       | Δ total heap (10 KiB) | Commit |
-| ---------- | --------- | ------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------- | ----------------- | --------------------- | ------ |
-| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`           | Inline `getPos` at 2 call sites                                       | −58 034 (−32%) on `getByte`/`getBits`    | −3 464 B (−32%)   | −37 MB                | —      |
-| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites | −48 133 per `range` call (×11 201 calls) | −2 684 B per call | ~−30 MB               | —      |
+| Date       | Component | File                                  | Change                                                                     | Δ instrs/call                                                              | Δ heap/call                                | Δ total heap (10 KiB)   | Commit |
+| ---------- | --------- | ------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------ | ----------------------- | ------ |
+| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`           | Inline `getPos` at 2 call sites                                            | −58 034 (−32%) on `getByte`/`getBits`                                      | −3 464 B (−32%)                            | −37 MB                  | —      |
+| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites      | −48 133 per `range` call (×11 201 calls)                                   | −2 684 B per call                          | ~−30 MB                 | —      |
+| 2026-05-21 | bitreader | `src/internal/BitReader.mo`           | Cache `available` field; inline `isValid` bounds check at all 5 call sites | −59% total workload instrs; `peekBits` −59% instrs, `skipBits` −59% instrs | `peekBits` −60% heap, `skipBits` −60% heap | −90 MB (161 MB → 71 MB) | —      |
