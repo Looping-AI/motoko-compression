@@ -17,16 +17,18 @@ module {
     let bitbuffer = BitBuffer.new();
     var tailBits = 0;
 
-    /// Returns true when `n` bits are available to read.
-    func isValid(n : Nat) : Bool {
-      n <= (bitbuffer.bitSize() - offset - tailBits : Nat);
-    };
+    // Invariant: available = bitbuffer.bitSize() - tailBits
+    // (readable bits at offset = 0, i.e. the upper bound on reads).
+    // isValid(n) ≡ n + offset <= available.  Kept in sync by addBytes,
+    // clearRead, hideTailBits, and clear so the hot read path never calls
+    // bitbuffer.bitSize().
+    var available = 0;
 
     // ── Bit-level reads ───────────────────────────────────────────────────
 
     /// Return the next bit without advancing the read position.
     public func peekBit() : Bool {
-      if (not isValid(1)) {
+      if (offset >= available) {
         Runtime.trap("BitReader.peekBit: out of bounds or empty");
       };
       bitbuffer.getBit(offset);
@@ -41,7 +43,7 @@ module {
 
     /// Return the next `n` bits as a Nat (LSB-first) without advancing.
     public func peekBits(n : Nat) : Nat {
-      if (not isValid(n)) {
+      if (n + offset > available) {
         Runtime.trap("BitReader.peekBits: out of bounds at offset");
       };
       bitbuffer.getBits(offset, n);
@@ -56,7 +58,7 @@ module {
 
     /// Advance the read position by `n` bits without returning a value.
     public func skipBits(n : Nat) {
-      if (not isValid(n)) {
+      if (n + offset > available) {
         Runtime.trap("BitReader.skipBits: out of bounds");
       };
       offset += n;
@@ -66,10 +68,10 @@ module {
 
     /// Return the next byte without advancing the read position.
     public func peekByte() : Nat8 {
-      if (not isValid(8)) {
+      if (8 + offset > available) {
         Runtime.trap("BitReader.peekByte: out of bounds");
       };
-      // Dead branch removed: after is_valid(8), bitSize() >= 8 is guaranteed.
+      // Dead branch removed: after bounds check, bitSize() >= 8 is guaranteed.
       bitbuffer.getByte(offset);
     };
 
@@ -92,11 +94,7 @@ module {
 
     /// Number of readable bits (excludes already-consumed and hidden tail bits).
     public func bitSize() : Nat {
-      if (tailBits + offset < (bitbuffer.bitSize() : Nat)) {
-        (bitbuffer.bitSize() - offset - tailBits : Nat);
-      } else {
-        0;
-      };
+      if (offset <= available) available - offset else 0;
     };
 
     /// Ceiling of available bits / 8 (rounds up for a partial trailing byte).
@@ -129,6 +127,7 @@ module {
     /// Discard all bits consumed so far from the underlying buffer and
     /// reset the read position. Reduces memory usage on long streams.
     public func clearRead() {
+      available -= offset;
       bitbuffer.dropBits(offset);
       offset := 0;
     };
@@ -137,18 +136,25 @@ module {
     public func clear() {
       offset := 0;
       tailBits := 0;
+      available := 0;
       bitbuffer.clear();
     };
 
     // ── Write ─────────────────────────────────────────────────────────────
 
     /// Append bytes to the end of the buffer for future reading.
-    public func addBytes(bytes : [Nat8]) { bitbuffer.addBytes(bytes) };
+    public func addBytes(bytes : [Nat8]) {
+      bitbuffer.addBytes(bytes);
+      available += bytes.size() * 8;
+    };
 
     // ── Tail masking ──────────────────────────────────────────────────────
 
     /// Hide the last `n` bits from reads (reduces visible `bitSize` by `n`).
-    public func hideTailBits(n : Nat) { tailBits := n };
+    public func hideTailBits(n : Nat) {
+      available := available + tailBits - n;
+      tailBits := n;
+    };
 
   };
 

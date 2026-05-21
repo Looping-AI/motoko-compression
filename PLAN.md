@@ -64,10 +64,10 @@ Most hot operations: `addBits`, `readBits`, `byteAt`, `ensureCapacity`.
 
 - [x] **Baseline measured** — 2026-05-20T13:16:25Z (10 KiB workload, 62 473 marks)
 - [x] `getPos` — inlined at `getBit` and `getBits` call sites; **−32% instrs and −32% heap per read call; −37 MB final heap for 10 KiB input**
-- [ ] `ensureCapacity` — hoist out of `addBits` loop (called ~2× per `addBits`; ~19 719 calls vs ~10 259 `addBits` calls)
-- [ ] `getByte` / `getBits` — byte-aligned fast path (direct array read when offset is byte-aligned)
-- [ ] `addBits` — replace `2**take` / `%` / `/=` bignum ops with `Nat8` bit ops in inner loop
-- [ ] Evaluate replacing `[var Nat8]` backing store with a tighter representation
+- [x] `ensureCapacity` — hoist out of `addBits` loop (called ~2× per `addBits`; ~19 719 calls vs ~10 259 `addBits` calls)
+- [-] `getByte` / `getBits` — byte-aligned fast path (direct array read when offset is byte-aligned)
+- [-] `addBits` — replace `2**take` / `%` / `/=` bignum ops with `Nat8` bit ops in inner loop
+- [-] Evaluate replacing `[var Nat8]` backing store with a tighter representation
 
 **Notes:** Baseline perf run: `scripts/output/perf-bitbuffer-2026-05-20T13-16-25-550Z.json`.
 Post-fix #1 run: `scripts/output/perf-bitbuffer-2026-05-20T13-22-43-922Z.json`.

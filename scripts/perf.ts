@@ -95,6 +95,28 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       funcs: ["natToLeBytes", "leBytesToNat"],
     },
   ],
+  bitreader: [
+    {
+      file: "src/internal/BitReader.mo",
+      funcs: [
+        "peekBit",
+        "readBit",
+        "peekBits",
+        "readBits",
+        "skipBits",
+        "peekByte",
+        "readByte",
+        "readBytes",
+        "bitSize",
+        "byteSize",
+        "byteAlign",
+        "getPosition",
+        "clearRead",
+        "clear",
+        "addBytes",
+      ],
+    },
+  ],
 };
 
 /**
@@ -110,6 +132,7 @@ const PAYLOAD_BYTES: Record<string, number> = {
   bitbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   circularbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   utils: 10 * 1024, // 10 KiB — fine-grained primitive
+  bitreader: 10 * 1024, // 10 KiB — fine-grained primitive
 };
 
 // ── CLI ────────────────────────────────────────────────────────────────────────
