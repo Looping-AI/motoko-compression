@@ -102,33 +102,13 @@ module {
     };
   };
 
-  type Tuple<A, B> = (A, B);
-
-  type CompareFn<A> = (A, A) -> Order.Order;
-
-  func tupleCompare<A, B>(
-    cmp1 : CompareFn<A>,
-    cmp2 : CompareFn<B>,
-  ) : CompareFn<Tuple<A, B>> {
-    func(a : Tuple<A, B>, b : Tuple<A, B>) : Order.Order {
-      let (a1, a2) = a;
-      let (b1, b2) = b;
-
-      let res1 = cmp1(a1, b1);
-      if (res1 == #equal) {
-        return cmp2(a2, b2);
-      } else {
-        return res1;
-      };
-    };
-  };
-
   module HuffmanCodes {
     public func calcMaxBitwidth(frequencies : [Nat]) : Nat {
-      let cmp = tupleCompare(Nat.compare, Nat.compare);
-      // Invert compare for min-heap: PriorityQueue is max-first
+      // Invert compare for min-heap: PriorityQueue is max-first.
+      // Inline the tuple comparison to avoid two levels of closure indirection.
       let minCmp = func(a : (Nat, Nat), b : (Nat, Nat)) : Order.Order {
-        cmp(b, a);
+        let d = Nat.compare(b.0, a.0);
+        if (d == #equal) Nat.compare(b.1, a.1) else d;
       };
       let heap = PriorityQueue.empty<(Nat, Nat)>();
 
