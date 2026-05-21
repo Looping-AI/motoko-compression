@@ -35,14 +35,12 @@ const payloadBytes = payloadBytesArg
 // Minimal IDL — only the methods needed for the workload.
 const idlFactory = ({ IDL }: { IDL: any }) =>
   IDL.Service({
-    generateData: IDL.Func([IDL.Nat], [], []),
     generateBytes: IDL.Func([IDL.Nat], [], []),
     compressData: IDL.Func([], [], []),
     decompressData: IDL.Func([], [], []),
   });
 
 interface PerfService {
-  generateData: (size_mb: bigint) => Promise<void>;
   generateBytes: (n_bytes: bigint) => Promise<void>;
   compressData: () => Promise<void>;
   decompressData: () => Promise<void>;

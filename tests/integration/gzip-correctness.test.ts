@@ -50,7 +50,7 @@ describe("Gzip Correctness", () => {
     const SIZE_MIB = 1n;
 
     // 1. Generate SIZE_MIB MiB of pseudo-random data (seeded, deterministic).
-    await actor.generateData(SIZE_MIB);
+    await actor.generateBytes(SIZE_MIB * 1024n * 1024n);
 
     // 2. Compress — dispatch without awaiting, then tick once per MiB to process self-calls.
     const compressPromise = actor.compressData();

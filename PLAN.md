@@ -194,13 +194,25 @@ Decodes Huffman-coded bit streams.
 #### `src/LZSS/Encoder/PrefixTable/lib.mo`
 
 65 536-bucket hash table mapping 3-byte prefixes to most-recent positions.
+Slot `i` (= b0×256 + b1) holds a `List<(Nat8, Nat)>` mapping the third byte to
+the most-recent insertion index.
 
-- [ ] **Baseline measured** (use `bun run perf component=lzss`)
-- [ ] `insert` — reduce allocation of `List` cons cells per collision
-- [ ] Bucket eviction strategy — keep only N most-recent matches per prefix
-- [ ] Evaluate flat array or chained array representation instead of `List`
+- [x] **Baseline measured** — 2026-05-21T14-44-47Z (10 KiB pseudo-random; `insert` avg: 285 651 instrs, 17 240 B heap, 10 244 calls)
+- [-] Flat 2D array `[var ?([var ?Nat])]` (65 536 outer × 256 inner) — **implemented and reverted**; _worse_ than `List` on random data. Each new (b0, b1) bucket allocates a 256-slot array (≈2 KB). For 10 KiB of random input, ~8 700 unique (b0, b1) pairs × 2 KB = ~17 MB extra vs. `List` at ~192 B per new bucket. insert: +727 instrs (+0.25%), heap +1 665 B (+9.7%). See Notes.
+- [x] `insert(bytes:[Nat8], start, len, index)` → `insert(b0, b1, b2, index)` — eliminates transient immutable `[Nat8]` heap allocation at every call site; removes bounds-check trap and index arithmetic inside `insert`. **−514 instrs/call (−0.18%), −56 B heap/call.**
+- [-] Bucket eviction strategy — keep only the most-recent match per prefix (single-slot direct-mapped table); would improve performance at the cost of compression ratio; deferred pending ratio impact measurement
+- [-] Per-bucket `List` → smaller structure — `List<(Nat8,Nat)>` has Brodnik block overhead even for 1-element buckets; but both alternatives tried so far were worse or negligible; structural change needs a different angle
 
 **Notes:**
+Baseline perf runs:
+
+- 100 KiB (hit instruction limit): `perf-lzss-2026-05-21T14-20-55-707Z.json`
+- 10 KiB clean baseline (reverted to `List`): `perf-lzss-2026-05-21T14-44-47-545Z.json`
+- 10 KiB post-2D-array (reverted): `perf-lzss-2026-05-21T14-40-07-347Z.json`
+
+Why the 2D array was worse: `Prim.Array_init<?Nat>(256, null)` allocates a 256-slot array for every new (b0, b1) pair encountered. Pseudo-random data maximises the number of unique (b0, b1) pairs, so almost every insert created a fresh 256-slot bucket. The `List` approach lazily allocates ~192 B per new bucket, far cheaper at low-n.
+
+Key perf insight: the delta values for `insert`, `encodeByte`, `encodeAsLiterals`, and `getUnsafe` all reflect **one full encoder cycle** (time between consecutive same-tag entries), not the cost of the function body alone. Isolated per-function cost cannot be read from this data; absolute improvements appear proportionally across all method deltas.
 
 ---
 
@@ -208,12 +220,24 @@ Decodes Huffman-coded bit streams.
 
 Main LZSS encoder: sliding-window match search producing `LzssEntry` streams.
 
-- [ ] **Baseline measured**
-- [ ] Match search loop — limit look-back depth when `PrefixTable` has many hits
-- [ ] Lazy matching — try next byte before committing to current match
-- [ ] Output `List` accumulation — consider building in reverse then reversing once
+- [x] **Baseline measured** — 2026-05-21T14-44-47Z (10 KiB, `encodeByte` avg: 285 759 instrs, 17 247 B heap, 10 240 calls)
+- [x] `cache_buffer: CircularBuffer(2)` → two `?Nat8` scalar fields (`cache0`, `cache1`) — eliminates CircularBuffer object dispatch (size/push/popFront/get) for 2-byte post-match cache. **−33 instrs/call (−0.012%), −18 B heap/call.**
+- [-] Match search loop — limit look-back depth; not hot on random data (almost no matches); defer until compressible-data workload is available
+- [-] Lazy matching — deferred
+- [-] Output `List<LzssEntry>` accumulation — **structural root cause of heap growth**: each `#literal(Nat8)` variant is a heap object; on incompressible data the encoder emits one `LzssEntry` per input byte, driving heap growth at ≈17 KB/byte (net live heap delta per `encodeByte` call). Addressing this requires either reducing the number of emitted objects (batch-literal representation) or a different output strategy.
 
 **Notes:**
+Post scalar-args run: `perf-lzss-2026-05-21T15-12-47-512Z.json`
+Post scalar-cache run: `perf-lzss-2026-05-21T15-25-32-994Z.json`
+
+Combined effect of both micro-optimisations (#2 + #3 vs. baseline):
+`encodeByte`: 285 759 → 285 212 instrs (−547, −0.19%); heap 17 247 → 17 229 B (−18 B).
+
+The ~17 KB/byte net heap growth is not from any one function. It reflects cumulative allocation
+across the whole encoder cycle (PrefixTable list nodes, LzssEntry variant objects, List backing
+blocks for the output buffer). On pseudo-random data every byte is emitted as a literal, which is
+the worst case for object count. Real compressible data emits far fewer entries (one `#pointer`
+replaces many `#literal`s), so the heap cost on realistic inputs will be significantly lower.
 
 ---
 
@@ -221,11 +245,14 @@ Main LZSS encoder: sliding-window match search producing `LzssEntry` streams.
 
 Expands back-references from an `LzssEntry` list.
 
-- [ ] **Baseline measured**
-- [ ] Back-copy loop — avoid re-indexing `CircularBuffer` per byte; batch copies
-- [ ] Output `List` building — minimize cons allocations
+- [x] **Baseline measured** — 2026-05-21T15-25-32Z (`decodeEntry` avg: 40 452 instrs, 0 B mem, 10 234 calls per 10 KiB)
+- [-] Back-copy loop — at 40 K instrs/call vs. 285 K for the encoder, decoder is ~7× cheaper; low-priority until encoder is improved
+- [-] Output `List` building — decoder also grows a heap-allocated output list; same structural concern as encoder
 
 **Notes:**
+`decodeEntry` fires 10 234 times for 10 KiB decoded output (≈ one call per output byte).
+Total decoder cost ≈ 414 M instrs per 10 KiB. Compare to encoder ≈ 2 920 M instrs — decoder is
+already 7× cheaper; optimisation priority is lower.
 
 ---
 
@@ -335,12 +362,12 @@ Full Gzip decode pipeline: header → DEFLATE → CRC32 verification.
 Record the last clean perf run for each component here before any optimization work.
 Update these numbers each time a new baseline is established.
 
-| Component | Timestamp            | `avg_delta` instrs | `avg_delta` mem (bytes) | `avg_delta` heap (bytes) |
-| --------- | -------------------- | ------------------ | ----------------------- | ------------------------ |
-| huffman   | 2026-05-20T10:06:04Z | —                  | —                       | —                        |
-| gzip      | 2026-05-20T09:17:56Z | —                  | —                       | —                        |
-| deflate   | —                    | —                  | —                       | —                        |
-| lzss      | —                    | —                  | —                       | —                        |
+| Component | Timestamp            | `avg_delta` instrs     | `avg_delta` mem (bytes) | `avg_delta` heap (bytes) |
+| --------- | -------------------- | ---------------------- | ----------------------- | ------------------------ |
+| huffman   | 2026-05-20T10:06:04Z | —                      | —                       | —                        |
+| gzip      | 2026-05-20T09:17:56Z | —                      | —                       | —                        |
+| deflate   | —                    | —                      | —                       | —                        |
+| lzss      | 2026-05-21T14-44-47Z | 285 759 (`encodeByte`) | 17 247 (`encodeByte`)   | 17 247 (`encodeByte`)    |
 
 <!-- Fill in per_method deltas from scripts/output/ JSON reports -->
 
@@ -348,9 +375,11 @@ Update these numbers each time a new baseline is established.
 
 ## Completed optimizations log
 
-| Date       | Component | File                                  | Change                                                                                           | Δ instrs/call                                                              | Δ heap/call                                | Δ total heap (10 KiB)   | Commit |
-| ---------- | --------- | ------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------ | ----------------------- | ------ |
-| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`           | Inline `getPos` at 2 call sites                                                                  | −58 034 (−32%) on `getByte`/`getBits`                                      | −3 464 B (−32%)                            | −37 MB                  | —      |
-| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites                            | −48 133 per `range` call (×11 201 calls)                                   | −2 684 B per call                          | ~−30 MB                 | —      |
-| 2026-05-21 | bitreader | `src/internal/BitReader.mo`           | Cache `available` field; inline `isValid` bounds check at all 5 call sites                       | −59% total workload instrs; `peekBits` −59% instrs, `skipBits` −59% instrs | `peekBits` −60% heap, `skipBits` −60% heap | −90 MB (161 MB → 71 MB) | —      |
-| 2026-05-21 | crc32     | `src/internal/CRC32.mo`               | Rewrite `update` to process `[Nat8]` in direct 8-byte strides; remove `updateByte` + dead fields | −93% total instrs (697M → 47M); `updateByte` 20 480 calls → 0              | 2 106 B/byte → ~0                          | −35 MB (48 MB → 13 MB)  | —      |
+| Date       | Component | File                                  | Change                                                                                                                                                | Δ instrs/call                                                              | Δ heap/call                                | Δ total heap (10 KiB)   | Commit |
+| ---------- | --------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------ | ----------------------- | ------ |
+| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`           | Inline `getPos` at 2 call sites                                                                                                                       | −58 034 (−32%) on `getByte`/`getBits`                                      | −3 464 B (−32%)                            | −37 MB                  | —      |
+| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites                                                                                 | −48 133 per `range` call (×11 201 calls)                                   | −2 684 B per call                          | ~−30 MB                 | —      |
+| 2026-05-21 | bitreader | `src/internal/BitReader.mo`           | Cache `available` field; inline `isValid` bounds check at all 5 call sites                                                                            | −59% total workload instrs; `peekBits` −59% instrs, `skipBits` −59% instrs | `peekBits` −60% heap, `skipBits` −60% heap | −90 MB (161 MB → 71 MB) | —      |
+| 2026-05-21 | crc32     | `src/internal/CRC32.mo`               | Rewrite `update` to process `[Nat8]` in direct 8-byte strides; remove `updateByte` + dead fields                                                      | −93% total instrs (697M → 47M); `updateByte` 20 480 calls → 0              | 2 106 B/byte → ~0                          | −35 MB (48 MB → 13 MB)  | —      |
+| 2026-05-21 | lzss      | `src/LZSS/Encoder/PrefixTable/lib.mo` | `insert(bytes:[Nat8], start, len, index)` → `insert(b0, b1, b2, index)`; eliminates transient `[Nat8]` allocation and bounds-check at every call site | −514 instrs/call (−0.18%)                                                  | −56 B/call (−0.32%)                        | −574 KB (10 KiB run)    | —      |
+| 2026-05-21 | lzss      | `src/LZSS/Encoder/lib.mo`             | `cache_buffer: CircularBuffer(2)` → two `?Nat8` scalar fields; removes object dispatch for 2-byte post-match cache                                    | −33 instrs/call (−0.012%)                                                  | −18 B/call                                 | −184 KB (10 KiB run)    | —      |

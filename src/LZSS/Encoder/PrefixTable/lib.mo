@@ -13,7 +13,7 @@
 
 import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
-import Runtime "mo:core/Runtime";
+import Runtime "mo:core/Runtime"; // used in unreachable() below
 import Prim "mo:⛔";
 
 module {
@@ -27,18 +27,15 @@ module {
     // 3-byte prefixes whose first two bytes hash to i.
     let table : [var ?List.List<(Nat8, Nat)>] = Prim.Array_init<?List.List<(Nat8, Nat)>>(TABLE_SIZE, null);
 
-    /// Insert a 3-byte prefix starting at `bytes[start]` into the table and
-    /// record `index` as its latest position.
+    /// Insert a 3-byte prefix `(b0, b1, b2)` into the table and record
+    /// `index` as its latest position.
     ///
     /// Returns the previous insertion index for this exact prefix if one
     /// existed, or `null` if this is the first occurrence.
-    public func insert(bytes : [Nat8], start : Nat, len : Nat, index : Nat) : ?Nat {
-      if (bytes.size() < start + len) {
-        Runtime.trap("PrefixTable.insert: bytes.size() < start + len");
-      };
+    public func insert(b0 : Nat8, b1 : Nat8, b2 : Nat8, index : Nat) : ?Nat {
       // Two-byte big-endian index into the table.
-      let table_index : Nat = Nat8.toNat(bytes[start]) * 256 + Nat8.toNat(bytes[start + 1]);
-      let third_byte = bytes[start + 2];
+      let table_index : Nat = Nat8.toNat(b0) * 256 + Nat8.toNat(b1);
+      let third_byte = b2;
 
       let bucket : List.List<(Nat8, Nat)> = switch (table[table_index]) {
         case (?b) b;

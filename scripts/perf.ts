@@ -63,7 +63,31 @@ const REGISTRY: Record<string, PatchTarget[]> = {
     { file: "src/Gzip/Encoder.mo", funcs: ["encode", "finish"] },
     { file: "src/Gzip/Decoder.mo", funcs: ["decode"] },
   ],
-  lzss: [{ file: "src/LZSS/lib.mo", funcs: ["encode", "decode"] }],
+  lzss: [
+    {
+      // Module-level convenience wrappers and top-level decode function.
+      file: "src/LZSS/Decoder.mo",
+      funcs: ["decodeEntry", "decodeIter", "decode"],
+    },
+    {
+      // Encoder: module-level encode wrapper + every class method and private helper.
+      file: "src/LZSS/Encoder/lib.mo",
+      funcs: [
+        "levelToWindowSize",
+        "getUnsafe",
+        "encodeAsLiterals",
+        "encodeByte",
+        "encode",
+        "flush",
+        "clear",
+      ],
+    },
+    {
+      // PrefixTable: the 65 536-bucket hash table — primary suspect.
+      file: "src/LZSS/Encoder/PrefixTable/lib.mo",
+      funcs: ["insert", "clear"],
+    },
+  ],
   bitbuffer: [
     {
       file: "src/internal/BitBuffer.mo",
@@ -154,7 +178,7 @@ const PAYLOAD_BYTES: Record<string, number> = {
   huffman: 100 * 1024,
   deflate: 100 * 1024,
   gzip: 100 * 1024,
-  lzss: 100 * 1024,
+  lzss: 10 * 1024,
   bitbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   circularbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   utils: 10 * 1024, // 10 KiB — fine-grained primitive
