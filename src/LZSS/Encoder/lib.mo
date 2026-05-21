@@ -81,19 +81,11 @@ module {
 
     // ── Internals ──────────────────────────────────────────────────────────
 
-    /// Unwrap get() from a CircularBuffer, trapping if out of bounds.
-    func getUnsafe(buf : CircularBuffer.CircularBuffer, i : Nat) : Nat8 {
-      switch (buf.get(i)) {
-        case (?v) v;
-        case null Runtime.unreachable();
-      };
-    };
-
     /// Emit `n` bytes from the front of byte_buffer as literals.
     func encodeAsLiterals(n : Nat, sink : Sink) {
       var emitted = 0;
       while (emitted < n) {
-        let ?byte = byte_buffer.popFront() else Runtime.unreachable();
+        let byte = byte_buffer.popFrontUnchecked();
         search_buffer.push(byte);
         sink.add(#literal(byte));
         input_size += 1;
@@ -112,13 +104,13 @@ module {
       // front of byte_buffer they form new 3-byte prefixes to record.
       switch (cache0, cache1) {
         case (?c0, ?c1) {
-          ignore prefix_table.insert(c0, c1, getUnsafe(byte_buffer, 0), input_size - 2);
+          ignore prefix_table.insert(c0, c1, byte_buffer.getUnchecked(0), input_size - 2);
           cache0 := ?c1;
           cache1 := null;
         };
         case (?c0, null) {
           if (byte_buffer.size() >= 2) {
-            ignore prefix_table.insert(c0, getUnsafe(byte_buffer, 0), getUnsafe(byte_buffer, 1), input_size - 1);
+            ignore prefix_table.insert(c0, byte_buffer.getUnchecked(0), byte_buffer.getUnchecked(1), input_size - 1);
             cache0 := null;
           };
         };
@@ -130,9 +122,9 @@ module {
       if (byte_buffer.size() == 3) {
         // Try to start a new match at the current lookahead position.
         let opt_prefix_index = prefix_table.insert(
-          getUnsafe(byte_buffer, 0),
-          getUnsafe(byte_buffer, 1),
-          getUnsafe(byte_buffer, 2),
+          byte_buffer.getUnchecked(0),
+          byte_buffer.getUnchecked(1),
+          byte_buffer.getUnchecked(2),
           input_size,
         );
         switch (opt_prefix_index) {
@@ -158,7 +150,7 @@ module {
         let start_index = (search_buffer.size() - backward_offset) : Nat;
         let future_byte_index = start_index + (byte_buffer.size() - 1) : Nat;
 
-        let mismatch = future_byte_index >= search_buffer.size() or future_byte != getUnsafe(search_buffer, future_byte_index);
+        let mismatch = future_byte_index >= search_buffer.size() or future_byte != search_buffer.getUnchecked(future_byte_index);
         let too_long = byte_buffer.size() >= Common.MATCH_MAX_SIZE;
 
         if (mismatch or too_long) {
@@ -170,13 +162,13 @@ module {
             // While 3+ bytes remain, record the current 3-byte prefix.
             if (byte_buffer.size() >= 3) {
               ignore prefix_table.insert(
-                getUnsafe(byte_buffer, 0),
-                getUnsafe(byte_buffer, 1),
-                getUnsafe(byte_buffer, 2),
+                byte_buffer.getUnchecked(0),
+                byte_buffer.getUnchecked(1),
+                byte_buffer.getUnchecked(2),
                 emitted + input_size,
               );
             };
-            let ?byte = byte_buffer.popFront() else Runtime.unreachable();
+            let byte = byte_buffer.popFrontUnchecked();
             search_buffer.push(byte);
             // When fewer than 3 bytes remain, seed cache for the next
             // encodeByte call to complete the prefix table entry.
@@ -217,7 +209,7 @@ module {
       } else {
         var emitted = 0;
         while (emitted < len) {
-          let ?byte = byte_buffer.popFront() else Runtime.unreachable();
+          let byte = byte_buffer.popFrontUnchecked();
           sink.add(#literal(byte));
           emitted += 1;
         };

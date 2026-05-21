@@ -10,7 +10,7 @@ func toArray(buf : CircularBuffer.CircularBuffer) : [Nat8] {
   Array.tabulate<Nat8>(
     buf.size(),
     func(i) {
-      switch (buf.get(i)) { case (?v) v; case null 0 };
+      buf.getUnchecked(i);
     },
   );
 };
@@ -67,7 +67,7 @@ suite(
       func() {
         let b = CircularBuffer.CircularBuffer(8);
         b.push(0xAB);
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(0xAB : Nat8));
+        expect.nat8(b.getUnchecked(0)).equal(0xAB);
       },
     );
 
@@ -78,27 +78,9 @@ suite(
         b.push(10);
         b.push(20);
         b.push(30);
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(10 : Nat8));
-        expect.option(b.get(1), Nat8.toText, Nat8.equal).equal(?(20 : Nat8));
-        expect.option(b.get(2), Nat8.toText, Nat8.equal).equal(?(30 : Nat8));
-      },
-    );
-
-    test(
-      "get(i >= size) returns null",
-      func() {
-        let b = CircularBuffer.CircularBuffer(8);
-        b.push(0xFF);
-        expect.option(b.get(1), Nat8.toText, Nat8.equal).isNull();
-        expect.option(b.get(100), Nat8.toText, Nat8.equal).isNull();
-      },
-    );
-
-    test(
-      "get on empty buffer always returns null",
-      func() {
-        let b = CircularBuffer.CircularBuffer(4);
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).isNull();
+        expect.nat8(b.getUnchecked(0)).equal(10);
+        expect.nat8(b.getUnchecked(1)).equal(20);
+        expect.nat8(b.getUnchecked(2)).equal(30);
       },
     );
 
@@ -119,10 +101,10 @@ suite(
         b.push(2);
         b.push(3);
         b.push(4);
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(1 : Nat8));
-        expect.option(b.get(1), Nat8.toText, Nat8.equal).equal(?(2 : Nat8));
-        expect.option(b.get(2), Nat8.toText, Nat8.equal).equal(?(3 : Nat8));
-        expect.option(b.get(3), Nat8.toText, Nat8.equal).equal(?(4 : Nat8));
+        expect.nat8(b.getUnchecked(0)).equal(1);
+        expect.nat8(b.getUnchecked(1)).equal(2);
+        expect.nat8(b.getUnchecked(2)).equal(3);
+        expect.nat8(b.getUnchecked(3)).equal(4);
         expect.nat(b.size()).equal(4);
       },
     );
@@ -158,8 +140,8 @@ suite(
         b.push(4);
         b.push(5); // evicts 1
         expect.nat(b.size()).equal(4);
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(2 : Nat8));
-        expect.option(b.get(3), Nat8.toText, Nat8.equal).equal(?(5 : Nat8));
+        expect.nat8(b.getUnchecked(0)).equal(2);
+        expect.nat8(b.getUnchecked(3)).equal(5);
       },
     );
 
@@ -190,7 +172,7 @@ suite(
         expect.nat(b.size()).equal(cap);
         var j = 0;
         while (j < cap) {
-          expect.option(b.get(j), Nat8.toText, Nat8.equal).equal(?(Nat8.fromNat(5 + j)));
+          expect.nat8(b.getUnchecked(j)).equal(Nat8.fromNat(5 + j));
           j += 1;
         };
       },
@@ -214,9 +196,9 @@ suite(
       func() {
         let b = CircularBuffer.CircularBuffer(1);
         b.push(0xAA);
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(0xAA : Nat8));
+        expect.nat8(b.getUnchecked(0)).equal(0xAA);
         b.push(0xBB);
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(0xBB : Nat8));
+        expect.nat8(b.getUnchecked(0)).equal(0xBB);
         expect.nat(b.size()).equal(1);
       },
     );
@@ -239,17 +221,6 @@ suite(
         b.push(3);
         b.clear();
         expect.nat(b.size()).equal(0);
-      },
-    );
-
-    test(
-      "get on cleared buffer returns null",
-      func() {
-        let b = CircularBuffer.CircularBuffer(4);
-        b.push(0xFF);
-        b.push(0xFF);
-        b.clear();
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).isNull();
       },
     );
 
@@ -293,27 +264,19 @@ suite(
   func() {
 
     test(
-      "popFront on empty buffer returns null",
-      func() {
-        let b = CircularBuffer.CircularBuffer(4);
-        expect.option(b.popFront(), Nat8.toText, Nat8.equal).isNull();
-      },
-    );
-
-    test(
-      "popFront removes oldest element and shrinks size",
+      "popFrontUnchecked removes oldest element and shrinks size",
       func() {
         let b = CircularBuffer.CircularBuffer(4);
         b.push(10);
         b.push(20);
         b.push(30);
-        let first = b.popFront();
-        expect.option(first, Nat8.toText, Nat8.equal).equal(?(10 : Nat8));
+        let first = b.popFrontUnchecked();
+        expect.nat8(first).equal(10);
         expect.nat(b.size()).equal(2);
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(20 : Nat8));
-        expect.option(b.get(1), Nat8.toText, Nat8.equal).equal(?(30 : Nat8));
-        let second = b.popFront();
-        expect.option(second, Nat8.toText, Nat8.equal).equal(?(20 : Nat8));
+        expect.nat8(b.getUnchecked(0)).equal(20);
+        expect.nat8(b.getUnchecked(1)).equal(30);
+        let second = b.popFrontUnchecked();
+        expect.nat8(second).equal(20);
         expect.nat(b.size()).equal(1);
       },
     );
@@ -332,7 +295,7 @@ suite(
       func() {
         let b = CircularBuffer.CircularBuffer(32768);
         b.push(0xDE);
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(0xDE : Nat8));
+        expect.nat8(b.getUnchecked(0)).equal(0xDE);
         expect.nat(b.size()).equal(1);
       },
     );
@@ -345,9 +308,9 @@ suite(
         while (i < 32768) { b.push(Nat8.fromNat(i % 256)); i += 1 };
         expect.nat(b.size()).equal(32768);
         // oldest = i=0 → value 0
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(0 : Nat8));
+        expect.nat8(b.getUnchecked(0)).equal(0);
         // newest = i=32767 → 32767 % 256 = 255
-        expect.option(b.get(32767), Nat8.toText, Nat8.equal).equal(?(255 : Nat8));
+        expect.nat8(b.getUnchecked(32767)).equal(255);
       },
     );
 
@@ -360,9 +323,9 @@ suite(
         b.push(0x42); // evicts slot 0 (value 0)
         expect.nat(b.size()).equal(32768);
         // new oldest is i=1 → value 1
-        expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(1 : Nat8));
+        expect.nat8(b.getUnchecked(0)).equal(1);
         // newest is 0x42
-        expect.option(b.get(32767), Nat8.toText, Nat8.equal).equal(?(0x42 : Nat8));
+        expect.nat8(b.getUnchecked(32767)).equal(0x42);
       },
     );
 

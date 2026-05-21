@@ -49,19 +49,26 @@ module {
 
     // ── Access ────────────────────────────────────────────────────────────
 
-    /// Return the element at logical index `i` (0 = oldest), or null if i >= size.
-    public func get(i : Nat) : ?Nat8 {
-      if (i >= count) return null;
-      ?(buf[(head + i) % cap]);
+    /// Return the element at logical index `i` (0 = oldest) without bounds
+    /// checking and without allocating an option wrapper.
+    ///
+    /// Caller MUST ensure `i < size()`; passing an out-of-range index returns
+    /// stale or zero data instead of trapping. Intended for hot paths where
+    /// the caller has already verified the index is in range.
+    public func getUnchecked(i : Nat) : Nat8 {
+      buf[(head + i) % cap];
     };
 
-    /// Remove and return the oldest element (head), or null if empty.
-    public func popFront() : ?Nat8 {
-      if (count == 0) return null;
+    /// Remove and return the oldest element (head) without bounds checking.
+    ///
+    /// Caller MUST ensure `size() > 0`; calling on an empty buffer returns
+    /// stale or zero data instead of trapping. Intended for hot paths where
+    /// the caller has already verified the buffer is non-empty.
+    public func popFrontUnchecked() : Nat8 {
       let v = buf[head];
       head := (head + 1) % cap;
       count -= 1;
-      ?v;
+      v;
     };
 
   }; // end class CircularBuffer

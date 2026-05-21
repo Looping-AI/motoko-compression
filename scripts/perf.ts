@@ -74,7 +74,6 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       file: "src/LZSS/Encoder/lib.mo",
       funcs: [
         "levelToWindowSize",
-        "getUnsafe",
         "encodeAsLiterals",
         "encodeByte",
         "encode",
