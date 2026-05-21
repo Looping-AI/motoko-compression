@@ -7,11 +7,9 @@ import Prim "mo:⛔";
 
 import Common "Common";
 import BitReader "../internal/BitReader";
-import BitBuffer "../internal/BitBuffer";
 
 module {
   type Result<A, B> = Result.Result<A, B>;
-  type BitBuffer = BitBuffer.BitBuffer;
   type BitReader = BitReader.BitReader;
 
   type Code = Common.Code;

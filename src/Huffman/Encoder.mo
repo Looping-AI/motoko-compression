@@ -75,7 +75,7 @@ module {
 
     public func encode(bitbuffer : BitBuffer, symbol : Nat) {
       let code = table[symbol];
-      assert code != { bitwidth = 0; bits = 0 : Nat16 };
+      assert code.bitwidth != 0;
       bitbuffer.addBits(code.bitwidth, Nat16.toNat(code.bits));
     };
 

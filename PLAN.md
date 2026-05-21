@@ -128,11 +128,21 @@ Candidate 2 (unchecked access paths) not tested; deferred pending use-site refac
 
 Single-pass 32-bit checksum over `[Nat8]`.
 
-- [ ] **Baseline measured**
-- [ ] Replace table-driven lookup with the standard 256-entry precomputed table (if not already)
-- [ ] Ensure loop body avoids unnecessary boxing of Nat32 intermediate values
+- [x] **Baseline measured** — 2026-05-21T10-22-27Z (10 KiB workload, 20 488 marks)
+- [x] `update` — rewrite to process `data` directly in 8-byte chunks, bypassing per-byte staging buffer; **−93% total instrs, −15× speedup; `updateByte` calls eliminated entirely**
+- [-] `updateByte` — intentionally retained as public API
+- [-] Replace table-driven lookup — already uses slicing-by-8 (8×256 table); optimal for Motoko/Wasm
+- [-] `Nat32` intermediate boxing in `singleSlicingUpdateFromData` — minor; not warranted after bulk-path fix
 
 **Notes:**
+Baseline: `updateByte` = 20 480 calls, 33 979 avg instrs/call, 2 106 B heap/call — dominant hot path.
+Root cause: `update` routed every byte through `updateByte`, which staged bytes one-at-a-time,
+fired `input_size >= INIT_SIZE` checks on every byte, and ran a shift loop.
+Fix: fast path in `update` walks `data` in 8-byte strides via `singleSlicingUpdateFromData`,
+reading directly from the immutable array. Slow path (buffer has leftover bytes from prior call)
+fills to 8, flushes, then re-enters the fast path.
+Post-fix: `update` = 2 marks per 10 KiB workload; `updateByte` retained as public API; ~47M total instrs vs ~697M.
+Post-fix perf run: `scripts/output/perf-crc32-2026-05-21T10-44-25-774Z.json`; `update(10 KiB)` = ~2.2M instrs (delta `checksum:update → checksum:finish`).
 
 ---
 
@@ -144,11 +154,11 @@ Single-pass 32-bit checksum over `[Nat8]`.
 
 Shared types and helpers: `reverseCodeBits`, `restoreHuffmanCodes`.
 
-- [ ] **Baseline measured**
-- [ ] `reverseCodeBits` — use bit-parallel reverse or precomputed 8-bit table
-- [ ] `restoreHuffmanCodes` — profile sort step; consider radix sort for small alphabets
+- [x] **Baseline measured** — 2026-05-21 (100 KiB workload, `perf-huffman-2026-05-21T11-29-07-926Z.json`)
+- [-] `reverseCodeBits` — SWAR 16-bit bit-parallel reverse attempted (Phase 3); −851 instrs/call but only 636 calls total ≈ negligible; **reverted**
+- [-] `restoreHuffmanCodes` — 318 calls per workload; not hot enough to warrant change
 
-**Notes:**
+**Notes:** `reverseCodeBits` is called only 636×/100 KiB. Even a 100% speedup moves the overall workload by < 0.3%. Not worth further investment.
 
 ---
 
@@ -156,12 +166,12 @@ Shared types and helpers: `reverseCodeBits`, `restoreHuffmanCodes`.
 
 Builds a Huffman encoder from bit-widths or symbol frequencies.
 
-- [ ] **Baseline measured** (use `bun run perf component=huffman`)
-- [ ] `fromFrequencies` — heap-sort priority queue vs. current structure
-- [ ] Tree traversal — eliminate List allocations in canonical-code assignment
-- [ ] `tupleCompare` — ensure it is inlined by the compiler
+- [x] **Baseline measured** — 2026-05-21 (100 KiB workload): `encode` = 102 243 calls, 54 045 avg instrs, 3 104 B heap
+- [-] `encode` assert — changed to scalar field check (Phase 1A, kept); −70 instrs/call, negligible in practice
+- [-] `fromFrequencies` — construction path; 4 calls per workload; not hot
+- [-] Tree traversal / `tupleCompare` — not hot enough to warrant change
 
-**Notes:**
+**Notes:** `encode` is hot (102 K calls) but its ~54 K instrs/call cost is dominated by the `BitBuffer.addBits` callee (Layer 0). No Huffman-layer change can meaningfully reduce this without optimising the primitive.
 
 ---
 
@@ -169,12 +179,13 @@ Builds a Huffman encoder from bit-widths or symbol frequencies.
 
 Decodes Huffman-coded bit streams.
 
-- [ ] **Baseline measured**
-- [ ] `fromBitwidths` — profile table construction cost
-- [ ] Inner decode loop — look-up table (LUT) decode vs. tree traversal
-- [ ] Evaluate canonical Huffman LUT (256-entry, O(1) per symbol)
+- [x] **Baseline measured** — 2026-05-21 (100 KiB workload): `decode` = 102 243 calls, 57 047 avg instrs, 3 318 B heap
+- [-] `decode` — `?Nat min_bitwidth` → `Nat` sentinel (Phase 2A): IC represents small `?Nat` as tagged immediate; 0 heap savings, −85 instrs; **reverted**
+- [-] `decodeSymbol` trap method to avoid `#ok`/`#err` overhead (Phase 2B): −24 B/call; **reverted as negligible**
+- [-] `setMapping` loop — stride walk to eliminate per-iteration Nat16 conversions (Phase 4): `2 ** bitwidth` exponentiation costs more than the ops it replaced; **+7% regression; reverted**
+- [-] Evaluate canonical Huffman LUT — already implemented (flat `[var Nat]` table, O(1) lookup); no algorithm change needed
 
-**Notes:**
+**Notes:** `decode` cost (~57 K instrs/call) is dominated by `BitReader.peekBits` / `skipBits` (Layer 0). The LUT is already in place; remaining cost is in bit-reader primitives. Further gains require Layer 0 work on `BitReader`.
 
 ---
 
@@ -337,8 +348,9 @@ Update these numbers each time a new baseline is established.
 
 ## Completed optimizations log
 
-| Date       | Component | File                                  | Change                                                                     | Δ instrs/call                                                              | Δ heap/call                                | Δ total heap (10 KiB)   | Commit |
-| ---------- | --------- | ------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------ | ----------------------- | ------ |
-| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`           | Inline `getPos` at 2 call sites                                            | −58 034 (−32%) on `getByte`/`getBits`                                      | −3 464 B (−32%)                            | −37 MB                  | —      |
-| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites      | −48 133 per `range` call (×11 201 calls)                                   | −2 684 B per call                          | ~−30 MB                 | —      |
-| 2026-05-21 | bitreader | `src/internal/BitReader.mo`           | Cache `available` field; inline `isValid` bounds check at all 5 call sites | −59% total workload instrs; `peekBits` −59% instrs, `skipBits` −59% instrs | `peekBits` −60% heap, `skipBits` −60% heap | −90 MB (161 MB → 71 MB) | —      |
+| Date       | Component | File                                  | Change                                                                                           | Δ instrs/call                                                              | Δ heap/call                                | Δ total heap (10 KiB)   | Commit |
+| ---------- | --------- | ------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------ | ----------------------- | ------ |
+| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`           | Inline `getPos` at 2 call sites                                                                  | −58 034 (−32%) on `getByte`/`getBits`                                      | −3 464 B (−32%)                            | −37 MB                  | —      |
+| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites                            | −48 133 per `range` call (×11 201 calls)                                   | −2 684 B per call                          | ~−30 MB                 | —      |
+| 2026-05-21 | bitreader | `src/internal/BitReader.mo`           | Cache `available` field; inline `isValid` bounds check at all 5 call sites                       | −59% total workload instrs; `peekBits` −59% instrs, `skipBits` −59% instrs | `peekBits` −60% heap, `skipBits` −60% heap | −90 MB (161 MB → 71 MB) | —      |
+| 2026-05-21 | crc32     | `src/internal/CRC32.mo`               | Rewrite `update` to process `[Nat8]` in direct 8-byte strides; remove `updateByte` + dead fields | −93% total instrs (697M → 47M); `updateByte` 20 480 calls → 0              | 2 106 B/byte → ~0                          | −35 MB (48 MB → 13 MB)  | —      |

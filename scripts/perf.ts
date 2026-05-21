@@ -32,8 +32,28 @@ type PatchTarget = { file: string; funcs: string[] };
  */
 const REGISTRY: Record<string, PatchTarget[]> = {
   huffman: [
-    { file: "src/Huffman/Encoder.mo", funcs: ["encode", "fromFrequencies"] },
-    { file: "src/Huffman/Decoder.mo", funcs: ["decode"] },
+    {
+      file: "src/Huffman/Common.mo",
+      funcs: ["reverseCodeBits", "restoreHuffmanCodes"],
+    },
+    {
+      file: "src/Huffman/Encoder.mo",
+      funcs: [
+        "fromBitwidths",
+        "fromFrequencies",
+        "build",
+        "encode",
+        "lookup",
+        "maxSymbol",
+        "calcMaxBitwidth",
+        "calcBitwidths",
+        "package",
+      ],
+    },
+    {
+      file: "src/Huffman/Decoder.mo",
+      funcs: ["fromBitwidths", "setMapping", "build", "decode"],
+    },
   ],
   deflate: [
     { file: "src/Deflate/Encoder.mo", funcs: ["encode", "finish"] },
@@ -131,10 +151,10 @@ const REGISTRY: Record<string, PatchTarget[]> = {
  * components stay at 1 MiB to keep the run representative.
  */
 const PAYLOAD_BYTES: Record<string, number> = {
-  huffman: 1024 * 1024,
-  deflate: 1024 * 1024,
-  gzip: 1024 * 1024,
-  lzss: 1024 * 1024,
+  huffman: 100 * 1024,
+  deflate: 100 * 1024,
+  gzip: 100 * 1024,
+  lzss: 100 * 1024,
   bitbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   circularbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   utils: 10 * 1024, // 10 KiB — fine-grained primitive
