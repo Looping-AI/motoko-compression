@@ -45,13 +45,15 @@ These are the innermost hot-path components. Gains here compound upward.
 
 Helper math and byte-conversion functions called throughout the library.
 
-- [ ] **Baseline measured** — capture `avg_delta` for each util call site
-- [ ] `natToLeBytes` — avoid intermediate allocations
-- [ ] `leBytesToNat` / `bytesToNat` — loop unroll or bitshift path
-- [ ] `divCeil` — verify compiler constant-folds; otherwise inline at call sites
-- [ ] `range` / `revRange` — check if `Iter` wrapper adds overhead vs raw loops
+- [x] **Baseline measured** — 2026-05-20T23-35-43Z (10 KiB workload)
+- [-] `natToLeBytes` — 3 calls per 10 KiB; impact negligible
+- [-] `leBytesToNat` / `bytesToNat` — 3 calls per 10 KiB; impact negligible
+- [-] `divCeil` — too few call sites to warrant change
+- [x] `range` / `revRange` — **fully removed**; all 20+ call sites replaced with inline `while` loops across 8 src files + 3 test files
 
-**Notes:** <!-- fill in deltas and commit refs -->
+**Notes:** Baseline: `range` = 11 201 calls, 48 133 avg instrs/call, 2 684 B heap/call — dominant hot path.
+`natToLeBytes`, `leBytesToNat`, `divCeil`: ≤ 3 calls each → combined impact < 0.01% of workload; skipped.
+Post-removal: `range`/`revRange` deleted from `src/internal/utils.mo`; functions no longer exist.
 
 ---
 
@@ -317,6 +319,7 @@ Update these numbers each time a new baseline is established.
 
 ## Completed optimizations log
 
-| Date       | Component | File                        | Change                          | Δ instrs/call                         | Δ heap/call     | Δ total heap (10 KiB) | Commit |
-| ---------- | --------- | --------------------------- | ------------------------------- | ------------------------------------- | --------------- | --------------------- | ------ |
-| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo` | Inline `getPos` at 2 call sites | −58 034 (−32%) on `getByte`/`getBits` | −3 464 B (−32%) | −37 MB                | —      |
+| Date       | Component | File                                  | Change                                                                | Δ instrs/call                            | Δ heap/call       | Δ total heap (10 KiB) | Commit |
+| ---------- | --------- | ------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------- | ----------------- | --------------------- | ------ |
+| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`           | Inline `getPos` at 2 call sites                                       | −58 034 (−32%) on `getByte`/`getBits`    | −3 464 B (−32%)   | −37 MB                | —      |
+| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites | −48 133 per `range` call (×11 201 calls) | −2 684 B per call | ~−30 MB               | —      |

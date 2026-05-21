@@ -15,7 +15,6 @@ import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
 import Runtime "mo:core/Runtime";
 import Prim "mo:⛔";
-import Utils "../../../internal/utils";
 
 module {
 
@@ -72,8 +71,10 @@ module {
 
     /// Reset the table, discarding all recorded prefix positions.
     public func clear() {
-      for (i in Utils.range(0, TABLE_SIZE)) {
+      var i = 0;
+      while (i < TABLE_SIZE) {
         table[i] := null;
+        i += 1;
       };
     };
 

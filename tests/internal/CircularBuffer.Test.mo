@@ -1,7 +1,6 @@
 import { test; suite; expect } "mo:test";
 import Array "mo:core/Array";
 import Nat8 "mo:core/Nat8";
-import Utils "../../src/internal/utils";
 import CircularBuffer "../../src/internal/CircularBuffer";
 
 // ── helpers ───────────────────────────────────────────────────────────────
@@ -48,7 +47,8 @@ suite(
       "size stays at capacity after overflow pushes",
       func() {
         let b = CircularBuffer.CircularBuffer(4);
-        for (_ in Utils.range(0, 10)) b.push(0x42);
+        var _j = 0;
+        while (_j < 10) { b.push(0x42); _j += 1 };
         expect.nat(b.size()).equal(4);
       },
     );
@@ -185,10 +185,13 @@ suite(
         let cap = 5;
         let b = CircularBuffer.CircularBuffer(cap);
         // push 0..9; last 5 are [5,6,7,8,9]
-        for (i in Utils.range(0, 10)) b.push(Nat8.fromNat(i));
+        var i = 0;
+        while (i < 10) { b.push(Nat8.fromNat(i)); i += 1 };
         expect.nat(b.size()).equal(cap);
-        for (i in Utils.range(0, cap)) {
-          expect.option(b.get(i), Nat8.toText, Nat8.equal).equal(?(Nat8.fromNat(5 + i)));
+        var j = 0;
+        while (j < cap) {
+          expect.option(b.get(j), Nat8.toText, Nat8.equal).equal(?(Nat8.fromNat(5 + j)));
+          j += 1;
         };
       },
     );
@@ -199,7 +202,8 @@ suite(
         let cap = 4;
         let b = CircularBuffer.CircularBuffer(cap);
         // push 0..11; last 4 are [8,9,10,11]
-        for (i in Utils.range(0, 12)) b.push(Nat8.fromNat(i));
+        var i = 0;
+        while (i < 12) { b.push(Nat8.fromNat(i)); i += 1 };
         expect.nat(b.size()).equal(cap);
         expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([8, 9, 10, 11]);
       },
@@ -337,7 +341,8 @@ suite(
       "filling 32768 window then checking oldest and newest",
       func() {
         let b = CircularBuffer.CircularBuffer(32768);
-        for (i in Utils.range(0, 32768)) b.push(Nat8.fromNat(i % 256));
+        var i = 0;
+        while (i < 32768) { b.push(Nat8.fromNat(i % 256)); i += 1 };
         expect.nat(b.size()).equal(32768);
         // oldest = i=0 → value 0
         expect.option(b.get(0), Nat8.toText, Nat8.equal).equal(?(0 : Nat8));
@@ -350,7 +355,8 @@ suite(
       "one overflow evicts exactly one element from 32768 window",
       func() {
         let b = CircularBuffer.CircularBuffer(32768);
-        for (i in Utils.range(0, 32768)) b.push(Nat8.fromNat(i % 256));
+        var i = 0;
+        while (i < 32768) { b.push(Nat8.fromNat(i % 256)); i += 1 };
         b.push(0x42); // evicts slot 0 (value 0)
         expect.nat(b.size()).equal(32768);
         // new oldest is i=1 → value 1

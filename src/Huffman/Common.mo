@@ -4,8 +4,6 @@ import List "mo:core/List";
 import Order "mo:core/Order";
 import Result "mo:core/Result";
 
-import Utils "../internal/utils";
-
 module {
   type Result<A, B> = Result.Result<A, B>;
 
@@ -21,10 +19,12 @@ module {
     var prev = code.bits;
     var curr = 0 : Nat16;
 
-    for (_ in Utils.range(1, code.bitwidth + 1)) {
+    var _j = 0;
+    while (_j < code.bitwidth) {
       curr <<= (1 : Nat16);
       curr |= prev & (1 : Nat16);
       prev >>= (1 : Nat16);
+      _j += 1;
     };
 
     {

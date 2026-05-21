@@ -1,6 +1,5 @@
 import { test; suite; expect } "mo:test";
 import Nat8 "mo:core/Nat8";
-import Utils "../../src/internal/utils";
 import BitBuffer "../../src/internal/BitBuffer";
 
 // ── addBit / getBit ────────────────────────────────────────────────────────
@@ -49,11 +48,14 @@ suite(
       "bits span two bytes",
       func() {
         let b = BitBuffer.BitBuffer(8);
-        for (_ in Utils.range(0, 9)) b.addBit(true);
+        var _j = 0;
+        while (_j < 9) { b.addBit(true); _j += 1 };
         expect.nat(b.bitSize()).equal(9);
         expect.nat(b.byteSize()).equal(2);
-        for (i in Utils.range(0, 9)) {
+        var i = 0;
+        while (i < 9) {
           expect.bool(b.getBit(i)).isTrue();
+          i += 1;
         };
       },
     );
@@ -423,8 +425,10 @@ suite(
       "writing 64 bytes triggers multiple capacity doublings",
       func() {
         let b = BitBuffer.BitBuffer(8); // initial cap = 8 bytes
-        for (i in Utils.range(0, 64)) {
+        var i = 0;
+        while (i < 64) {
           b.addByte(Nat8.fromNat(i));
+          i += 1;
         };
         expect.nat(b.byteSize()).equal(64);
         expect.nat8(b.getByte(0)).equal(0);
@@ -663,8 +667,10 @@ suite(
       "clear after capacity growth still allows writes",
       func() {
         let b = BitBuffer.BitBuffer(8);
-        for (i in Utils.range(0, 32)) {
+        var i = 0;
+        while (i < 32) {
           b.addByte(Nat8.fromNat(i % 256));
+          i += 1;
         };
         b.clear();
         expect.nat(b.bitSize()).equal(0);

@@ -4,7 +4,6 @@ import Iter "mo:core/Iter";
 import List "mo:core/List";
 import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
-import Utils "../src/internal/utils";
 
 import Common "../src/LZSS/Common";
 import PrefixTable "../src/LZSS/Encoder/PrefixTable/lib";
@@ -189,8 +188,10 @@ suite(
         let got = listToArray(buf);
         // Both paths must produce identical entry sequences.
         expect.bool(got.size() == expected.size()).isTrue();
-        for (i in Utils.range(0, got.size())) {
+        var i = 0;
+        while (i < got.size()) {
           expect.bool(entryEqual(got[i], expected[i])).isTrue();
+          i += 1;
         };
       },
     );

@@ -6,7 +6,7 @@
 /// Key changes from original:
 ///   - Buffer<Nat8> output → List.List<Nat8> (mo:core, array-backed, O(1) get).
 ///   - Buffer<LzssEntry> input → List.List<LzssEntry>.
-///   - It.range(a, b) → Utils.range(a, b) (both exclusive — same semantics).
+///   - It.range(a, b) → inline while loop (both exclusive — same semantics).
 ///   - Debug.trap → Runtime.trap.
 ///   - buffer.get(i) returns T directly in mo:base vs ?T in mo:core/List;
 ///     unwrapped with `else Runtime.unreachable()`.
@@ -18,7 +18,6 @@ import Iter "mo:core/Iter";
 import List "mo:core/List";
 import Runtime "mo:core/Runtime";
 import Common "Common";
-import Utils "../internal/utils";
 
 module {
 
@@ -53,12 +52,14 @@ module {
           // As we append bytes, mo:core/List.get sees them immediately (array-backed),
           // so the copy loop handles both normal and RLE (offset < len) cases uniformly.
           let index = (cur_size - backward_offset) : Nat;
-          for (i in Utils.range(index, index + len)) {
+          var i = index;
+          while (i < index + len) {
             let byte = switch (List.get(output, i)) {
               case (?b) b;
               case null Runtime.unreachable();
             };
             List.add(output, byte);
+            i += 1;
           };
         };
       };

@@ -8,7 +8,6 @@ import Prim "mo:⛔";
 import Common "Common";
 import BitReader "../internal/BitReader";
 import BitBuffer "../internal/BitBuffer";
-import Utils "../internal/utils";
 
 module {
   type Result<A, B> = Result.Result<A, B>;
@@ -39,7 +38,8 @@ module {
 
       let possible_mappings = (2 ** (max_bitwidth - code.bitwidth)) - 1 : Nat;
 
-      for (p in Utils.range(0, possible_mappings + 1)) {
+      var p = 0;
+      while (p < possible_mappings + 1) {
         let padding = Nat16.fromNat(p);
         let i = Nat16.toNat((padding << Nat16.fromNat(code.bitwidth)) | code_be.bits);
 
@@ -58,6 +58,7 @@ module {
         };
 
         table[i] := Nat16.toNat(value);
+        p += 1;
       };
 
       #ok();

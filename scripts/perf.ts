@@ -92,7 +92,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
   utils: [
     {
       file: "src/internal/utils.mo",
-      funcs: ["natToLeBytes", "leBytesToNat", "range", "revRange"],
+      funcs: ["natToLeBytes", "leBytesToNat"],
     },
   ],
 };

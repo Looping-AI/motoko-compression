@@ -21,7 +21,6 @@ import HuffmanDecoder "../Huffman/Decoder";
 import BitBuffer "../internal/BitBuffer";
 import BitReader "../internal/BitReader";
 import Symbol "Symbol";
-import Utils "../internal/utils";
 
 module {
 
@@ -46,7 +45,8 @@ module {
       // Build literal/length encoder from fixed codes
       let lb = HuffmanEncoder.Builder(288);
       for ({ bitwidth; symbol_start; symbol_end; base_code } in Symbol.FIXED_LENGTH_CODES.vals()) {
-        for (sym in Utils.range(symbol_start, symbol_end + 1)) {
+        var sym = symbol_start;
+        while (sym < symbol_end + 1) {
           let code = {
             bitwidth;
             bits = base_code + Nat16.fromNat(sym - symbol_start);
@@ -55,18 +55,21 @@ module {
             case (#ok(_)) {};
             case (#err(msg)) return #err("FixedHuffmanCodec: literal " # msg);
           };
+          sym += 1;
         };
       };
       let le = lb.build();
 
       // Build distance encoder: 5-bit codes 0-29
       let db = HuffmanEncoder.Builder(30);
-      for (sym in Utils.range(0, 30)) {
+      var sym = 0;
+      while (sym < 30) {
         let code = { bitwidth = 5; bits = Nat16.fromNat(sym) };
         switch (db.setMapping(sym, code)) {
           case (#ok(_)) {};
           case (#err(msg)) return #err("FixedHuffmanCodec: distance " # msg);
         };
+        sym += 1;
       };
       #ok(Symbol.Encoder(le, db.build()));
     };
@@ -77,7 +80,8 @@ module {
       // Build literal/length decoder
       let lb = HuffmanDecoder.Builder(9);
       for ({ bitwidth; symbol_start; symbol_end; base_code } in Symbol.FIXED_LENGTH_CODES.vals()) {
-        for (sym in Utils.range(symbol_start, symbol_end + 1)) {
+        var sym = symbol_start;
+        while (sym < symbol_end + 1) {
           let code = {
             bitwidth;
             bits = base_code + Nat16.fromNat(sym - symbol_start);
@@ -86,17 +90,20 @@ module {
             case (#ok(_)) {};
             case (#err(msg)) return #err("FixedHuffmanCodec load: literal " # msg);
           };
+          sym += 1;
         };
       };
 
       // Build distance decoder: 5-bit codes 0-29
       let db = HuffmanDecoder.Builder(5);
-      for (sym in Utils.range(0, 30)) {
+      var sym = 0;
+      while (sym < 30) {
         let code = { bitwidth = 5; bits = Nat16.fromNat(sym) };
         switch (db.setMapping(sym, code)) {
           case (#ok(_)) {};
           case (#err(msg)) return #err("FixedHuffmanCodec load: distance " # msg);
         };
+        sym += 1;
       };
       ignore reader; // fixed codec reads nothing from the stream
       #ok(Symbol.Decoder(lb.build(), db.build()));
@@ -159,11 +166,15 @@ module {
 
       // Find the last non-trivial entry in BITWIDTH_CODE_ORDER
       var bw_max_idx = 0;
-      label search for (i in Utils.revRange(Symbol.BITWIDTH_CODE_ORDER.size(), 0)) {
-        let idx = Symbol.BITWIDTH_CODE_ORDER[i];
-        if (sym_freq[idx] > 0 and bwe.lookup(idx).bitwidth > 0) {
-          bw_max_idx := i;
-          break search;
+      label search {
+        var i = Symbol.BITWIDTH_CODE_ORDER.size();
+        while (i > 0) {
+          i -= 1;
+          let idx = Symbol.BITWIDTH_CODE_ORDER[i];
+          if (sym_freq[idx] > 0 and bwe.lookup(idx).bitwidth > 0) {
+            bw_max_idx := i;
+            break search;
+          };
         };
       };
       let bwcc = Nat.max(4, bw_max_idx + 1);
@@ -174,9 +185,11 @@ module {
       bitbuffer.addBits(4, bwcc - 4);
 
       // Code lengths for meta-Huffman tree
-      for (i in Utils.range(0, bwcc)) {
+      var i = 0;
+      while (i < bwcc) {
         let idx = Symbol.BITWIDTH_CODE_ORDER[i];
         bitbuffer.addBits(3, if (sym_freq[idx] != 0) bwe.lookup(idx).bitwidth else 0);
+        i += 1;
       };
 
       // Compressed code-length sequences
@@ -199,7 +212,8 @@ module {
       let runs = List.empty<Run>();
 
       func rle(enc : HuffmanEncoder.Encoder, code_count : Nat) {
-        for (sym in Utils.range(0, code_count)) {
+        var sym = 0;
+        while (sym < code_count) {
           let bw = enc.lookup(sym).bitwidth;
           let extend = switch (List.last(runs)) {
             case (?last) last.value == bw;
@@ -211,6 +225,7 @@ module {
           } else {
             List.add(runs, { value = bw; var count = 1 });
           };
+          sym += 1;
         };
       };
       rle(codec.literal, lcc);
@@ -228,8 +243,10 @@ module {
             List.add(codes, { symbol = 16; count = n - 3; bitwidth = 2 });
             run.count -= n;
           };
-          for (_ in Utils.range(0, run.count)) {
+          var _j = 0;
+          while (_j < run.count) {
             List.add(codes, { ZERO_CODE with symbol = run.value });
+            _j += 1;
           };
         } else {
           // Zeros: use code 18 (11-138) then code 17 (3-10) then literals
@@ -241,8 +258,10 @@ module {
           if (run.count >= 3) {
             List.add(codes, { symbol = 17; count = run.count - 3; bitwidth = 3 });
           } else {
-            for (_ in Utils.range(0, run.count)) {
+            var _j = 0;
+            while (_j < run.count) {
               List.add(codes, ZERO_CODE);
+              _j += 1;
             };
           };
         };
@@ -273,7 +292,8 @@ module {
           if (code <= 15) (code, 1) else return #err("Deflate: invalid bitwidth code " # debug_show code);
         };
       };
-      for (_ in Utils.range(0, cnt)) { List.add(bws, item) };
+      var _j = 0;
+      while (_j < cnt) { List.add(bws, item); _j += 1 };
       #ok();
     };
 
@@ -287,8 +307,10 @@ module {
 
       // Read meta code lengths in BITWIDTH_CODE_ORDER
       let bw_arr = Prim.Array_init<Nat>(19, 0);
-      for (i in Utils.range(0, bwcc)) {
+      var i = 0;
+      while (i < bwcc) {
         bw_arr[Symbol.BITWIDTH_CODE_ORDER[i]] := reader.readBits(3);
+        i += 1;
       };
       let bwd = switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(bw_arr))) {
         case (#ok(d)) d;

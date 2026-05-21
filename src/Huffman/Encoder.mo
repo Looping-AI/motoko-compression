@@ -12,7 +12,6 @@ import Prim "mo:⛔";
 import BitBuffer "../internal/BitBuffer";
 import BitReader "../internal/BitReader";
 import Common "Common";
-import Utils "../internal/utils";
 
 module {
   type Result<A, B> = Result.Result<A, B>;
@@ -88,10 +87,14 @@ module {
     public func maxSymbol() : Nat {
       var max_index = 0;
 
-      label for_loop for (i in Utils.revRange(table.size(), 0)) {
-        if (table[i].bitwidth > 0) {
-          max_index := i;
-          break for_loop;
+      label for_loop {
+        var i = table.size();
+        while (i > 0) {
+          i -= 1;
+          if (table[i].bitwidth > 0) {
+            max_index := i;
+            break for_loop;
+          };
         };
       };
 
@@ -206,9 +209,11 @@ module {
         var weighted_nodes = deepCopy(nodes);
 
         // Run max_bitwidth - 1 iterations (Itertools.range(0, max_bitwidth-1) was exclusive)
-        for (_ in Utils.range(1, max_bitwidth)) {
+        var _j = 1;
+        while (_j < max_bitwidth) {
           package(weighted_nodes);
           weighted_nodes := merge(weighted_nodes, deepCopy(nodes));
+          _j += 1;
         };
 
         package(weighted_nodes);
@@ -253,20 +258,24 @@ module {
         };
 
         if (i < List.size(buffer_a)) {
-          for (idx in Utils.range(i, List.size(buffer_a))) {
+          var idx = i;
+          while (idx < List.size(buffer_a)) {
             let v = switch (List.get(buffer_a, idx)) {
               case (?v) v;
               case null Runtime.unreachable();
             };
             List.add(buffer, v);
+            idx += 1;
           };
         } else {
-          for (idx in Utils.range(j, List.size(buffer_b))) {
+          var idx = j;
+          while (idx < List.size(buffer_b)) {
             let v = switch (List.get(buffer_b, idx)) {
               case (?v) v;
               case null Runtime.unreachable();
             };
             List.add(buffer, v);
+            idx += 1;
           };
         };
 
