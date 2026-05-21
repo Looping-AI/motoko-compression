@@ -234,6 +234,293 @@ function findFuncBrace(
   return null;
 }
 
+/**
+ * Returns true if the function declaration (from `funcIdx` through `braceIdx`)
+ * has a unit return type — either no return-type annotation, or `: ()`.
+ *
+ * Only functions that return unit are safe to instrument with an `:end` mark
+ * placed immediately before the closing brace; non-unit functions rely on
+ * explicit `return` sites found by `findReturnSites`.
+ */
+function funcReturnsUnit(
+  lines: string[],
+  funcIdx: number,
+  braceIdx: number,
+): boolean {
+  // Join the declaration lines and strip the trailing `{`.
+  const sig = lines
+    .slice(funcIdx, braceIdx + 1)
+    .join(" ")
+    .replace(/\{[^{]*$/, "")
+    .trimEnd();
+
+  // If there is no `: <type>` annotation after the closing `)` of the param
+  // list, the return type defaults to unit.
+  // Pattern: after the signature's last `)`, look for `: <type>`.
+  // We use a conservative check: split on ") :" and take the last token.
+  const colonIdx = sig.lastIndexOf(") :");
+  if (colonIdx === -1) return true; // No annotation → unit.
+
+  const returnType = sig.slice(colonIdx + 3).trim(); // after ") :"
+  return returnType === "()" || returnType === "";
+}
+
+/**
+ * Walk from `openBraceLineIdx` forward, tracking brace depth (string/comment-aware).
+ * Returns the line index of the `}` that closes the opening brace on that line.
+ */
+function findFuncClosingBrace(
+  lines: string[],
+  openBraceLineIdx: number,
+): number {
+  let depth = 0;
+  let inString = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let lineIdx = openBraceLineIdx; lineIdx < lines.length; lineIdx++) {
+    const line = lines[lineIdx];
+    inLineComment = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      const next = i + 1 < line.length ? line[i + 1] : "";
+
+      if (inLineComment) break;
+      if (inBlockComment) {
+        if (ch === "*" && next === "/") {
+          inBlockComment = false;
+          i++;
+        }
+        continue;
+      }
+      if (inString) {
+        if (ch === "\\") {
+          i++;
+          continue;
+        }
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === "/" && next === "/") {
+        inLineComment = true;
+        break;
+      }
+      if (ch === "/" && next === "*") {
+        inBlockComment = true;
+        i++;
+        continue;
+      }
+
+      if (ch === "{") {
+        depth++;
+        continue;
+      }
+      if (ch === "}") {
+        depth--;
+        if (depth === 0) return lineIdx;
+      }
+    }
+  }
+
+  throw new Error(
+    `findFuncClosingBrace: no matching closing brace from line ${openBraceLineIdx}`,
+  );
+}
+
+// ── Return-site detection ──────────────────────────────────────────────────────
+
+type ReturnSite =
+  | { kind: "standalone"; lineIdx: number }
+  | {
+      kind: "inline_if";
+      lineIdx: number;
+      indent: string;
+      condition: string;
+      returnExpr: string;
+    }
+  | { kind: "unhandled"; lineIdx: number };
+
+/**
+ * Classify a line known to contain an outer-function `return` statement.
+ *
+ * - `standalone`: `return` is the first non-space token → insert end mark before.
+ * - `inline_if`:  `if (cond) return expr;` all on one line → rewrite into block.
+ * - `unhandled`:  any other pattern → skip and count.
+ */
+function classifyReturnSite(lineIdx: number, line: string): ReturnSite {
+  const indent = line.match(/^(\s*)/)?.[1] ?? "";
+
+  // `return ...` as the first non-space token.
+  if (/^\s*return\b/.test(line)) {
+    return { kind: "standalone", lineIdx };
+  }
+
+  // `if (condition) return expr;` on a single line.
+  const ifMatch = /^(\s*)if\s*\(/.exec(line);
+  if (ifMatch) {
+    const openParenIdx = ifMatch[0].length - 1; // index of `(` in the original line
+    let parenDepth = 0;
+    let condEnd = -1;
+    for (let i = openParenIdx; i < line.length; i++) {
+      if (line[i] === "(") parenDepth++;
+      else if (line[i] === ")") {
+        parenDepth--;
+        if (parenDepth === 0) {
+          condEnd = i;
+          break;
+        }
+      }
+    }
+    if (condEnd !== -1) {
+      const condition = line.slice(openParenIdx + 1, condEnd);
+      const afterCond = line.slice(condEnd + 1).trim();
+      if (/^return\b/.test(afterCond)) {
+        const returnExpr = afterCond
+          .slice("return".length)
+          .trimStart()
+          .replace(/;\s*$/, "");
+        return { kind: "inline_if", lineIdx, indent, condition, returnExpr };
+      }
+    }
+  }
+
+  return { kind: "unhandled", lineIdx };
+}
+
+/**
+ * Find every outer-function `return` statement in the function body
+ * [openBraceLineIdx, closingBraceLineIdx).
+ *
+ * Uses a scope stack to skip `return` statements that belong to nested `func`
+ * literals (e.g. comparator closures in Huffman/Encoder.mo).
+ */
+function findReturnSites(
+  lines: string[],
+  openBraceLineIdx: number,
+  closingBraceLineIdx: number,
+): ReturnSite[] {
+  const sites: ReturnSite[] = [];
+
+  // 'func' = nested function literal body; 'block' = any other {…} scope.
+  const scopeStack: Array<"func" | "block"> = [];
+  let funcNestDepth = 0;
+  let seenFunctionOpenBrace = false; // have we consumed the outer function's own `{`?
+  let lookingForFuncBrace = false; // set after `func` keyword; cleared at the next `{`
+
+  let inString = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (
+    let lineIdx = openBraceLineIdx;
+    lineIdx < closingBraceLineIdx;
+    lineIdx++
+  ) {
+    const line = lines[lineIdx];
+    inLineComment = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      const next = i + 1 < line.length ? line[i + 1] : "";
+
+      if (inLineComment) break;
+      if (inBlockComment) {
+        if (ch === "*" && next === "/") {
+          inBlockComment = false;
+          i++;
+        }
+        continue;
+      }
+      if (inString) {
+        if (ch === "\\") {
+          i++;
+          continue;
+        }
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === "/" && next === "/") {
+        inLineComment = true;
+        break;
+      }
+      if (ch === "/" && next === "*") {
+        inBlockComment = true;
+        i++;
+        continue;
+      }
+
+      if (ch === "{") {
+        if (!seenFunctionOpenBrace) {
+          // Outer function's own opening brace — don't push onto scope stack.
+          seenFunctionOpenBrace = true;
+          lookingForFuncBrace = false; // the `func` keyword was the outer declaration
+          continue;
+        }
+        const kind = lookingForFuncBrace ? "func" : "block";
+        scopeStack.push(kind);
+        if (kind === "func") funcNestDepth++;
+        lookingForFuncBrace = false;
+        continue;
+      }
+
+      if (ch === "}") {
+        if (scopeStack.length > 0) {
+          const popped = scopeStack.pop()!;
+          if (popped === "func") funcNestDepth--;
+        }
+        continue;
+      }
+
+      // Detect `func` keyword → the next `{` is a nested function body.
+      if (ch === "f" && line.slice(i, i + 4) === "func") {
+        const charBefore = i === 0 ? "\n" : line[i - 1];
+        const charAfter = line[i + 4] ?? "\n";
+        if (/\W/.test(charBefore) && /\W/.test(charAfter)) {
+          lookingForFuncBrace = true;
+          i += 3; // advance past 'unc' (loop `i++` handles 'f' → 'u')
+          continue;
+        }
+      }
+
+      // `func name(args): Type = expr` — expression-body func has no `{`.
+      // Clear the flag if we see `=` that is not `==`, `!=`, `<=`, `>=`, or `=>`.
+      if (ch === "=" && next !== "=" && next !== ">" && lookingForFuncBrace) {
+        const prev = i > 0 ? line[i - 1] : "\n";
+        if (prev !== "!" && prev !== "<" && prev !== ">") {
+          lookingForFuncBrace = false;
+        }
+        continue;
+      }
+
+      // Detect `return` keyword when NOT inside a nested func scope.
+      if (
+        funcNestDepth === 0 &&
+        seenFunctionOpenBrace &&
+        ch === "r" &&
+        line.slice(i, i + 6) === "return"
+      ) {
+        const charBefore = i === 0 ? "\n" : line[i - 1];
+        const charAfter = line[i + 6] ?? "\n";
+        if (/\W/.test(charBefore) && /\W/.test(charAfter)) {
+          sites.push(classifyReturnSite(lineIdx, line));
+          break; // at most one return site per line
+        }
+      }
+    }
+  }
+
+  return sites;
+}
+
 /** Abort early if any registered function cannot be found in its source file. */
 function validateTargets(): void {
   for (const { file, funcs } of targets) {
@@ -247,6 +534,13 @@ function validateTargets(): void {
   }
 }
 
+// Counts return sites that couldn't be automatically instrumented.
+let unhandledReturnCount = 0;
+
+type PatchOp =
+  | { kind: "insert"; afterLine: number; text: string }
+  | { kind: "replace"; lineIdx: number; newLines: string[] };
+
 /** Patch every registered source file in-memory, recording originals for revert. */
 function patchSources(): void {
   for (const { file, funcs } of targets) {
@@ -255,26 +549,84 @@ function patchSources(): void {
     patchRecords.push({ file: absFile, original });
 
     const lines = original.split("\n");
+    const ops: PatchOp[] = [];
 
-    // 1. Collect insertion points first; process in reverse order so that
-    //    earlier splice() calls don't shift the indices of later ones.
-    const insertions: Array<{ afterLine: number; mark: string }> = [];
     for (const func of funcs) {
       const found = findFuncBrace(lines, func)!;
+      const openBraceLineIdx = found.braceIdx;
+      const closingBraceLineIdx = findFuncClosingBrace(lines, openBraceLineIdx);
+
       const declIndent = lines[found.funcIdx].match(/^(\s*)/)?.[1] ?? "";
       const bodyIndent = declIndent + "  ";
-      insertions.push({
-        afterLine: found.braceIdx,
-        mark: `${bodyIndent}Perf.mark("${component}:${func}"); // [PERF]`,
+      const startMark = `${bodyIndent}Perf.mark("${component}:${func}:start"); // [PERF]`;
+      const endMarkBody = `Perf.mark("${component}:${func}:end"); // [PERF]`;
+
+      // :start immediately after the opening brace.
+      ops.push({
+        kind: "insert",
+        afterLine: openBraceLineIdx,
+        text: startMark,
       });
+
+      // :end immediately before the closing brace — ONLY for unit-returning
+      // functions (non-unit functions return via their last expression; inserting
+      // a mark there would change the function's return type to ()).
+      if (funcReturnsUnit(lines, found.funcIdx, openBraceLineIdx)) {
+        ops.push({
+          kind: "insert",
+          afterLine: closingBraceLineIdx - 1,
+          text: `${bodyIndent}${endMarkBody}`,
+        });
+      }
+
+      // :end at every early-return exit path.
+      const returnSites = findReturnSites(
+        lines,
+        openBraceLineIdx,
+        closingBraceLineIdx,
+      );
+      for (const site of returnSites) {
+        if (site.kind === "standalone") {
+          // Insert end mark before the `return` line, matching its own indentation.
+          const returnIndent = lines[site.lineIdx].match(/^(\s*)/)?.[1] ?? "";
+          ops.push({
+            kind: "insert",
+            afterLine: site.lineIdx - 1,
+            text: `${returnIndent}${endMarkBody}`,
+          });
+        } else if (site.kind === "inline_if") {
+          // Rewrite `if (cond) return expr;` into a block containing the end mark.
+          ops.push({
+            kind: "replace",
+            lineIdx: site.lineIdx,
+            newLines: [
+              `${site.indent}if (${site.condition}) {`,
+              `${site.indent}  ${endMarkBody}`,
+              `${site.indent}  return${site.returnExpr.length > 0 ? " " + site.returnExpr : ""};`,
+              `${site.indent}};`,
+            ],
+          });
+        } else {
+          unhandledReturnCount++;
+        }
+      }
     }
 
-    insertions.sort((a, b) => b.afterLine - a.afterLine);
-    for (const { afterLine, mark } of insertions) {
-      lines.splice(afterLine + 1, 0, mark);
+    // Apply ops in descending line order so each splice doesn't shift later indices.
+    ops.sort((a, b) => {
+      const aLine = a.kind === "insert" ? a.afterLine : a.lineIdx;
+      const bLine = b.kind === "insert" ? b.afterLine : b.lineIdx;
+      return bLine - aLine;
+    });
+    for (const op of ops) {
+      if (op.kind === "insert") {
+        lines.splice(op.afterLine + 1, 0, op.text);
+      } else {
+        lines.splice(op.lineIdx, 1, ...op.newLines);
+      }
     }
 
-    // 2. Inject the Perf import after the last existing `import` line.
+    // Inject the Perf import after the last existing `import` line.
     const relPath = relative(dirname(absFile), PERF_MO).replace(/\.mo$/, "");
     let lastImportIdx = 0;
     for (let i = 0; i < lines.length; i++) {
@@ -285,6 +637,27 @@ function patchSources(): void {
       0,
       `import Perf "${relPath}"; // [PERF_IMPORT]`,
     );
+
+    // Warn if :start and :end mark counts differ for any function.
+    const patchedSrc = lines.join("\n");
+    for (const func of funcs) {
+      const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const nStart = (
+        patchedSrc.match(
+          new RegExp(esc(`"${component}:${func}:start"`), "g"),
+        ) ?? []
+      ).length;
+      const nEnd = (
+        patchedSrc.match(new RegExp(esc(`"${component}:${func}:end"`), "g")) ??
+        []
+      ).length;
+      if (nStart !== nEnd) {
+        console.warn(
+          `  ⚠ ${func}: ${nStart} :start mark(s) but ${nEnd} :end mark(s)` +
+            ` — some return paths may be uninstrumented`,
+        );
+      }
+    }
 
     writeFileSync(absFile, lines.join("\n"));
   }
@@ -351,31 +724,32 @@ type TimelineEntry = {
   heap: number;
 };
 
-type DeltaStat = {
-  avg_delta: number;
-  min_delta: number;
-  max_delta: number;
+type IntervalStat = {
+  avg: number;
+  min: number;
+  max: number;
 } | null;
 
-type MethodStats = {
+type IntervalStats = {
   calls: number;
-  instrs: DeltaStat;
-  mem: DeltaStat;
-  heap: DeltaStat;
+  inclusive: { instrs: IntervalStat; mem: IntervalStat; heap: IntervalStat };
+  exclusive: { instrs: IntervalStat; mem: IntervalStat; heap: IntervalStat };
 };
 
 type Report = {
   component: string;
   timestamp: string;
   total_marks: number;
-  skipped_boundaries: number;
+  unpaired_starts: number;
+  unhandled_returns: number;
   timeline: TimelineEntry[];
-  per_method: Record<string, MethodStats>;
+  intervals: Record<string, IntervalStats>;
 };
 
-/** Sample up to `points` evenly-spaced marks by index (always includes first and last). */
+/** Sample up to `points` evenly-spaced `:start` marks by index (always includes first and last). */
 function computeTimeline(marks: Mark[], points = 11): TimelineEntry[] {
-  const N = marks.length;
+  const startMarks = marks.filter((m) => m.tag.endsWith(":start"));
+  const N = startMarks.length;
   if (N === 0) return [];
   const indices = new Set<number>();
   for (let i = 0; i < points; i++) {
@@ -383,83 +757,139 @@ function computeTimeline(marks: Mark[], points = 11): TimelineEntry[] {
   }
   return [...indices]
     .sort((a, b) => a - b)
-    .map((idx) => ({ index: idx, ...marks[idx] }));
+    .map((idx) => ({ index: idx, ...startMarks[idx] }));
 }
 
-/** Compute per-method delta statistics (instrs/mem/heap) from consecutive calls.
+/**
+ * Match `:start` and `:end` marks into intervals and compute per-function
+ * inclusive and exclusive (self-time) statistics using a call-stack.
  *
- * IC.performanceCounter(1) resets to zero at the start of each new ICP message
- * (e.g. every inter-canister self-call boundary in the gzip encoder). Any pair
- * of consecutive marks where instrs[i] < instrs[i-1] is a cross-message pair
- * and its delta is meaningless — we detect these globally and exclude them.
+ * IC.performanceCounter(1) resets at ICP message boundaries. A drop in the
+ * global `instrs` counter signals a reset; any open stack frames at that point
+ * are discarded as unpaired.
  */
-function computePerMethod(marks: Mark[]): {
-  stats: Record<string, MethodStats>;
-  skipped_boundaries: number;
+function computeIntervals(marks: Mark[]): {
+  intervals: Record<string, IntervalStats>;
+  unpaired_starts: number;
+  unpaired_by_func: Record<string, number>;
 } {
-  // Build a sorted array of reset global indices for efficient range queries.
-  const resetIndices: number[] = [];
-  for (let i = 1; i < marks.length; i++) {
-    if (marks[i].instrs < marks[i - 1].instrs) resetIndices.push(i);
-  }
+  type StackFrame = {
+    func: string;
+    startMark: Mark;
+    // Running sum of direct children's inclusive cost within this invocation.
+    childrenIncl: { instrs: number; mem: number; heap: number };
+  };
 
-  /** Returns true if a message boundary reset occurred strictly between
-   *  global indices `a` (exclusive) and `b` (inclusive). */
-  function hasResetBetween(a: number, b: number): boolean {
-    return resetIndices.some((r) => r > a && r <= b);
-  }
+  type CompletedInterval = {
+    inclusive: { instrs: number; mem: number; heap: number };
+    exclusive: { instrs: number; mem: number; heap: number };
+  };
 
-  // Group marks in first-seen insertion order, tagging each with its global index.
-  const groups = new Map<string, Array<{ mark: Mark; globalIdx: number }>>();
+  const stack: StackFrame[] = [];
+  const completed = new Map<string, CompletedInterval[]>();
+  const unpaired_by_func: Record<string, number> = {};
+  let unpaired_starts = 0;
+
+  const countUnpaired = (func: string, n = 1) => {
+    unpaired_starts += n;
+    unpaired_by_func[func] = (unpaired_by_func[func] ?? 0) + n;
+  };
+
   for (let i = 0; i < marks.length; i++) {
-    const m = marks[i];
-    const g = groups.get(m.tag);
-    if (g) g.push({ mark: m, globalIdx: i });
-    else groups.set(m.tag, [{ mark: m, globalIdx: i }]);
+    const mark = marks[i];
+
+    // Detect message-boundary reset: IC counter dropped.
+    if (i > 0 && mark.instrs < marks[i - 1].instrs) {
+      for (const frame of stack) countUnpaired(frame.func);
+      stack.length = 0;
+    }
+
+    const lastColon = mark.tag.lastIndexOf(":");
+    if (lastColon === -1) continue; // legacy tag without direction — ignore
+    const direction = mark.tag.slice(lastColon + 1);
+    const func = mark.tag.slice(0, lastColon);
+
+    if (direction === "start") {
+      stack.push({
+        func,
+        startMark: mark,
+        childrenIncl: { instrs: 0, mem: 0, heap: 0 },
+      });
+    } else if (direction === "end") {
+      // Find the nearest matching :start on the stack (LIFO per function).
+      let foundIdx = -1;
+      for (let j = stack.length - 1; j >= 0; j--) {
+        if (stack[j].func === func) {
+          foundIdx = j;
+          break;
+        }
+      }
+      if (foundIdx === -1) continue; // orphaned :end — skip
+
+      // Frames above `foundIdx` are unpaired (can happen with unhandled returns).
+      if (foundIdx < stack.length - 1) {
+        for (let k = foundIdx + 1; k < stack.length; k++)
+          countUnpaired(stack[k].func);
+        stack.splice(foundIdx + 1);
+      }
+
+      const frame = stack.pop()!;
+      const incl = {
+        instrs: mark.instrs - frame.startMark.instrs,
+        mem: mark.mem - frame.startMark.mem,
+        heap: mark.heap - frame.startMark.heap,
+      };
+      const excl = {
+        instrs: incl.instrs - frame.childrenIncl.instrs,
+        mem: incl.mem - frame.childrenIncl.mem,
+        heap: incl.heap - frame.childrenIncl.heap,
+      };
+
+      // Propagate this interval's inclusive cost to the parent frame.
+      if (stack.length > 0) {
+        const parent = stack[stack.length - 1];
+        parent.childrenIncl.instrs += incl.instrs;
+        parent.childrenIncl.mem += incl.mem;
+        parent.childrenIncl.heap += incl.heap;
+      }
+
+      const list = completed.get(func) ?? [];
+      list.push({ inclusive: incl, exclusive: excl });
+      completed.set(func, list);
+    }
   }
 
-  const result: Record<string, MethodStats> = {};
-  for (const [tag, group] of groups) {
-    if (group.length < 2) {
-      result[tag] = {
-        calls: group.length,
-        instrs: null,
-        mem: null,
-        heap: null,
-      };
-      continue;
-    }
-    const stats = (key: "instrs" | "mem" | "heap"): DeltaStat => {
-      let sum = 0,
-        min = Infinity,
-        max = -Infinity,
-        count = 0;
-      for (let i = 1; i < group.length; i++) {
-        // Skip the pair if a message boundary reset occurred anywhere between
-        // the two marks (not just at the second mark's global index).
-        if (hasResetBetween(group[i - 1].globalIdx, group[i].globalIdx))
-          continue;
-        const d = group[i].mark[key] - group[i - 1].mark[key];
-        sum += d;
-        if (d < min) min = d;
-        if (d > max) max = d;
-        count++;
-      }
-      if (count === 0) return null;
-      return {
-        avg_delta: Math.round(sum / count),
-        min_delta: min,
-        max_delta: max,
-      };
+  for (const frame of stack) countUnpaired(frame.func); // frames still open at end of marks
+
+  // Build per-function stats.
+  const makeStat = (vals: number[]): IntervalStat => {
+    if (vals.length === 0) return null;
+    const sum = vals.reduce((a, b) => a + b, 0);
+    return {
+      avg: Math.round(sum / vals.length),
+      min: Math.min(...vals),
+      max: Math.max(...vals),
     };
-    result[tag] = {
-      calls: group.length,
-      instrs: stats("instrs"),
-      mem: stats("mem"),
-      heap: stats("heap"),
+  };
+
+  const result: Record<string, IntervalStats> = {};
+  for (const [func, ivs] of completed) {
+    result[func] = {
+      calls: ivs.length,
+      inclusive: {
+        instrs: makeStat(ivs.map((iv) => iv.inclusive.instrs)),
+        mem: makeStat(ivs.map((iv) => iv.inclusive.mem)),
+        heap: makeStat(ivs.map((iv) => iv.inclusive.heap)),
+      },
+      exclusive: {
+        instrs: makeStat(ivs.map((iv) => iv.exclusive.instrs)),
+        mem: makeStat(ivs.map((iv) => iv.exclusive.mem)),
+        heap: makeStat(ivs.map((iv) => iv.exclusive.heap)),
+      },
     };
   }
-  return { stats: result, skipped_boundaries: resetIndices.length };
+
+  return { intervals: result, unpaired_starts, unpaired_by_func };
 }
 
 /** Write one compact JSON object per line (JSON Lines format). */
@@ -594,10 +1024,24 @@ async function main() {
 
     writeJsonl(marks, `${base}.jsonl`);
 
-    const { stats: perMethod, skipped_boundaries } = computePerMethod(marks);
-    if (skipped_boundaries > 0) {
+    const { intervals, unpaired_starts, unpaired_by_func } =
+      computeIntervals(marks);
+    if (unpaired_starts > 0) {
       console.log(
-        `  ⚠ Skipped ${skipped_boundaries} cross-message boundary pair(s) from delta stats`,
+        `  ⚠ ${unpaired_starts} unpaired :start mark(s) (uninstrumented return paths or message boundaries)`,
+      );
+      const entries = Object.entries(unpaired_by_func).sort(
+        (a, b) => b[1] - a[1],
+      );
+      for (const [func, n] of entries) {
+        console.log(
+          `      ${func.padEnd(36)} ${n.toLocaleString("en-US").padStart(8)}`,
+        );
+      }
+    }
+    if (unhandledReturnCount > 0) {
+      console.log(
+        `  ⚠ ${unhandledReturnCount} return site(s) not automatically instrumented`,
       );
     }
 
@@ -605,9 +1049,10 @@ async function main() {
       component,
       timestamp,
       total_marks: marks.length,
-      skipped_boundaries,
+      unpaired_starts,
+      unhandled_returns: unhandledReturnCount,
       timeline: computeTimeline(marks),
-      per_method: perMethod,
+      intervals,
     };
     writeFileSync(`${base}.json`, JSON.stringify(report, null, 2));
 
