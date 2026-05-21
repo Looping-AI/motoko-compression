@@ -117,6 +117,12 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       ],
     },
   ],
+  crc32: [
+    {
+      file: "src/internal/CRC32.mo",
+      funcs: ["checksum", "updateByte", "update", "finish", "reset"],
+    },
+  ],
 };
 
 /**
@@ -133,6 +139,7 @@ const PAYLOAD_BYTES: Record<string, number> = {
   circularbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   utils: 10 * 1024, // 10 KiB — fine-grained primitive
   bitreader: 10 * 1024, // 10 KiB — fine-grained primitive
+  crc32: 10 * 1024, // 10 KiB — fine-grained primitive
 };
 
 // ── CLI ────────────────────────────────────────────────────────────────────────

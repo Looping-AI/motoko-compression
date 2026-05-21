@@ -45,6 +45,32 @@ module CRC32 {
     };
 
     public func update(data : [Nat8]) {
+      let n = data.size();
+      if (n == 0) return;
+      var i = 0;
+
+      // Fast path: buffer is empty — process full 8-byte chunks directly from
+      // `data`, skipping the staging buffer, per-byte counter increments, and
+      // the payload-shift loop entirely.
+      if (payload_count == 0) {
+        let leftover = n % 8;
+        let chunkEnd = n - leftover;
+        while (i < chunkEnd) {
+          crc := singleSlicingUpdateFromData(data, i, crc);
+          i += 8;
+        };
+        // Buffer trailing bytes (0–7).
+        while (i < n) {
+          payload[payload_count] := data[i];
+          payload_count += 1;
+          i += 1;
+        };
+        input_size += n;
+        return;
+      };
+
+      // Slow path: fall back to updateByte when the buffer already has bytes
+      // (handles callers that mix updateByte and update).
       for (byte in data.vals()) {
         updateByte(byte);
       };
@@ -59,6 +85,20 @@ module CRC32 {
         Nat8.toNat32(p[0]) | Nat8.toNat32(p[1]) << 8 | Nat8.toNat32(p[2]) << 16 | Nat8.toNat32(p[3]) << 24
       );
       u := table[0][Nat8.toNat(p[7])] ^ table[1][Nat8.toNat(p[6])] ^ table[2][Nat8.toNat(p[5])] ^ table[3][Nat8.toNat(p[4])] ^ table[4][Nat32.toNat(u >> 24)] ^ table[5][Nat32.toNat((u >> 16) & 0xFF)] ^ table[6][Nat32.toNat((u >> 8) & 0xFF)] ^ table[7][Nat32.toNat(u & 0xFF)];
+
+      u;
+    };
+
+    // Like singleSlicingUpdate but reads directly from an immutable [Nat8] at
+    // the given byte offset, avoiding a copy into the staging buffer.
+    func singleSlicingUpdateFromData(data : [Nat8], offset : Nat, crc : Nat32) : Nat32 {
+      let table = Table.slicingTable;
+      var u = crc;
+
+      u := u ^ (
+        Nat8.toNat32(data[offset]) | Nat8.toNat32(data[offset + 1]) << 8 | Nat8.toNat32(data[offset + 2]) << 16 | Nat8.toNat32(data[offset + 3]) << 24
+      );
+      u := table[0][Nat8.toNat(data[offset + 7])] ^ table[1][Nat8.toNat(data[offset + 6])] ^ table[2][Nat8.toNat(data[offset + 5])] ^ table[3][Nat8.toNat(data[offset + 4])] ^ table[4][Nat32.toNat(u >> 24)] ^ table[5][Nat32.toNat((u >> 16) & 0xFF)] ^ table[6][Nat32.toNat((u >> 8) & 0xFF)] ^ table[7][Nat32.toNat(u & 0xFF)];
 
       u;
     };
