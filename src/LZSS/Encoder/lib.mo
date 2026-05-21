@@ -8,7 +8,7 @@
 ///     mapping #fast → 1 024, #balance → 8 192, #best → 32 768.
 ///   - mo:buffer-deque/BufferDeque (byte_buffer) → CircularBuffer + popFront().
 ///   - mo:circular-buffer (search_buffer, cache_buffer) → CircularBuffer.
-///   - Itertools.range → Utils.range (both exclusive).
+///   - Hot Itertools.range loops → direct while loops.
 ///   - Prelude.unreachable() → Runtime.unreachable().
 ///   - Dead code removed: encode_v1, longest_prefix_length.
 
@@ -19,7 +19,6 @@ import Runtime "mo:core/Runtime";
 import CircularBuffer "../../internal/CircularBuffer";
 import Common "../Common";
 import PrefixTable "PrefixTable/lib";
-import Utils "../../internal/utils";
 
 module {
 
@@ -91,11 +90,13 @@ module {
 
     /// Emit `n` bytes from the front of byte_buffer as literals.
     func encodeAsLiterals(n : Nat, sink : Sink) {
-      for (_ in Utils.range(0, n)) {
+      var emitted = 0;
+      while (emitted < n) {
         let ?byte = byte_buffer.popFront() else Runtime.unreachable();
         search_buffer.push(byte);
         sink.add(#literal(byte));
         input_size += 1;
+        emitted += 1;
       };
     };
 
@@ -166,14 +167,15 @@ module {
           // Emit the accumulated match (all but the last buffered byte).
           let len = (byte_buffer.size() - 1) : Nat;
 
-          for (i in Utils.range(0, len)) {
+          var emitted = 0;
+          while (emitted < len) {
             // While 3+ bytes remain, record the current 3-byte prefix.
             if (byte_buffer.size() >= 3) {
               ignore prefix_table.insert(
                 [getUnsafe(byte_buffer, 0), getUnsafe(byte_buffer, 1), getUnsafe(byte_buffer, 2)],
                 0,
                 3,
-                i + input_size,
+                emitted + input_size,
               );
             };
             let ?byte = byte_buffer.popFront() else Runtime.unreachable();
@@ -183,6 +185,7 @@ module {
             if (byte_buffer.size() < 3) {
               cache_buffer.push(byte);
             };
+            emitted += 1;
           };
 
           sink.add(#pointer(backward_offset, len));
@@ -210,9 +213,11 @@ module {
         let backward_offset = (input_size - prefix_index) : Nat;
         sink.add(#pointer(backward_offset, len));
       } else {
-        for (_ in Utils.range(0, len)) {
+        var emitted = 0;
+        while (emitted < len) {
           let ?byte = byte_buffer.popFront() else Runtime.unreachable();
           sink.add(#literal(byte));
+          emitted += 1;
         };
       };
     };
