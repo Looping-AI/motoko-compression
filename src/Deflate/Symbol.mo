@@ -148,21 +148,6 @@ module {
       281 + (length - 131) / 32;
     } else { 285 } // length == 258
   };
-  func lenExtraBits(length : Nat) : Nat {
-    if (length <= 10 or length == 258) { 0 } else if (length <= 18) { 1 } else if (length <= 34) {
-      2;
-    } else if (length <= 66) { 3 } else if (length <= 130) { 4 } else { 5 };
-  };
-  func lenExtra(length : Nat) : Nat {
-    if (length <= 10 or length == 258) { 0 } else if (length <= 18) {
-      (length - 11) % 2;
-    } else if (length <= 34) { (length - 19) % 4 } else if (length <= 66) {
-      (length - 35) % 8;
-    } else if (length <= 130) { (length - 67) % 16 } else {
-      (length - 131) % 32;
-    };
-  };
-
   func distCode(distance : Nat) : Nat {
     if (distance <= 4) { distance - 1 } else {
       var extra_bits = 1;
@@ -171,22 +156,6 @@ module {
       while (base * 2 < distance) { extra_bits += 1; marker += 2; base *= 2 };
       let half = base / 2;
       if (distance < base + half + 1) { marker } else { marker + 1 };
-    };
-  };
-  func distExtraBits(distance : Nat) : Nat {
-    if (distance <= 4) { 0 } else {
-      var extra_bits = 1;
-      var base = 4;
-      while (base * 2 < distance) { extra_bits += 1; base *= 2 };
-      extra_bits;
-    };
-  };
-  func distExtra(distance : Nat) : Nat {
-    if (distance <= 4) { 0 } else {
-      var base = 4;
-      while (base * 2 < distance) { base *= 2 };
-      let half = base / 2;
-      (distance - base - 1) % half;
     };
   };
 
@@ -200,21 +169,23 @@ module {
   /// No heap allocation. Use for Huffman frequency counting and any code
   /// that needs only the code value without extra-bits metadata.
   public func lengthMarker(symbol : Symbol) : Nat {
-    switch symbol {
+    let r = switch symbol {
       case (#EndOfBlock) 256;
       case (#literal(byte)) Nat8.toNat(byte);
       case (#pointer(_, length)) lenCode(length);
     };
+    return r;
   };
 
   /// Returns the distance code (0..29) for `symbol`, or `NO_DISTANCE` for
   /// non-pointer symbols.  No heap allocation.  Use for Huffman frequency
   /// counting and any code that needs only the code value.
   public func distanceMarker(symbol : Symbol) : Nat {
-    switch symbol {
+    let r = switch symbol {
       case (#pointer(distance, _)) distCode(distance);
       case _ NO_DISTANCE;
     };
+    return r;
   };
 
   // ── Encoder class ──────────────────────────────────────────────────────

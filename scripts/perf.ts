@@ -58,11 +58,11 @@ const REGISTRY: Record<string, PatchTarget[]> = {
   deflate: [
     {
       file: "src/Deflate/Symbol.mo",
-      funcs: ["lengthCode", "distanceCode"],
+      funcs: ["lengthMarker", "distanceMarker"],
     },
     {
       file: "src/Deflate/Block.mo",
-      funcs: ["size", "add", "flush", "clear"],
+      funcs: ["add", "flush", "clear"],
     },
     {
       file: "src/Deflate/HuffmanCodec.mo",
@@ -664,6 +664,8 @@ function validateTargets(): void {
 
 // Counts return sites that couldn't be automatically instrumented.
 let unhandledReturnCount = 0;
+// Instrumentation warnings deferred to the results section.
+const patchWarnings: string[] = [];
 
 type PatchOp =
   | { kind: "insert"; afterLine: number; text: string }
@@ -699,7 +701,7 @@ function patchSources(): void {
       // body IS the return value, so we can't add an :end mark — skip and warn.
       if (closingBraceLineIdx === openBraceLineIdx) {
         if (!funcReturnsUnit(lines, found.funcIdx, openBraceLineIdx)) {
-          console.warn(
+          patchWarnings.push(
             `  ⚠ ${func}: skipping (single-line non-unit function — cannot instrument without altering return type)`,
           );
           continue;
@@ -837,7 +839,7 @@ function patchSources(): void {
         []
       ).length;
       if (nStart !== nEnd) {
-        console.warn(
+        patchWarnings.push(
           `  ⚠ ${func}: ${nStart} :start mark(s) but ${nEnd} :end mark(s)` +
             ` — some return paths may be uninstrumented`,
         );
@@ -1237,6 +1239,10 @@ async function main() {
           `      ${func.padEnd(36)} ${n.toLocaleString("en-US").padStart(8)}`,
         );
       }
+    }
+    if (patchWarnings.length > 0) {
+      console.log("\nInstrumentation notes:");
+      for (const w of patchWarnings) console.log(w);
     }
     if (unhandledReturnCount > 0) {
       console.log(
