@@ -29,20 +29,15 @@ func roundTrip(data : [Nat8], options : Deflate.DeflateOptions) : [Nat8] {
   decoder.toArray();
 };
 
-let rawOpts : Deflate.DeflateOptions = {
-  block_size = 65_535;
-  dynamic_huffman = false;
-  lzss = null;
-};
 let fixedOpts : Deflate.DeflateOptions = {
   block_size = 65_535;
   dynamic_huffman = false;
-  lzss = ?#fast;
+  lzss = #fast;
 };
 let dynOpts : Deflate.DeflateOptions = {
   block_size = 65_535;
   dynamic_huffman = true;
-  lzss = ?#best;
+  lzss = #best;
 };
 
 // ── Symbol helpers ────────────────────────────────────────────────────────
@@ -128,44 +123,6 @@ suite(
           };
           case null Runtime.trap("Expected Some");
         };
-      },
-    );
-  },
-);
-
-// ── Suite: Raw block round-trip ───────────────────────────────────────────
-
-suite(
-  "Raw block round-trip",
-  func() {
-
-    test(
-      "empty input",
-      func() {
-        expect.array(roundTrip([], rawOpts), Nat8.toText, Nat8.equal).equal([]);
-      },
-    );
-
-    test(
-      "single byte",
-      func() {
-        expect.array(roundTrip([42], rawOpts), Nat8.toText, Nat8.equal).equal([42]);
-      },
-    );
-
-    test(
-      "Hello World!",
-      func() {
-        let data : [Nat8] = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33];
-        expect.array(roundTrip(data, rawOpts), Nat8.toText, Nat8.equal).equal(data);
-      },
-    );
-
-    test(
-      "all zeros 256 bytes",
-      func() {
-        let arr = Array.tabulate<Nat8>(256, func(_) { 0 });
-        expect.array(roundTrip(arr, rawOpts), Nat8.toText, Nat8.equal).equal(arr);
       },
     );
   },
@@ -422,26 +379,13 @@ suite(
   func() {
 
     test(
-      "raw, 200 bytes, block_size=37 (forces ~5 blocks)",
-      func() {
-        let data = Array.tabulate<Nat8>(200, func(i) = Nat8.fromNat(i % 256));
-        let opts : Deflate.DeflateOptions = {
-          block_size = 37;
-          dynamic_huffman = false;
-          lzss = null;
-        };
-        expect.array(roundTrip(data, opts), Nat8.toText, Nat8.equal).equal(data);
-      },
-    );
-
-    test(
       "fixed Huffman, 1000 bytes, block_size=100",
       func() {
         let data = Array.tabulate<Nat8>(1000, func(i) = Nat8.fromNat(i % 256));
         let opts : Deflate.DeflateOptions = {
           block_size = 100;
           dynamic_huffman = false;
-          lzss = ?#fast;
+          lzss = #fast;
         };
         expect.array(roundTrip(data, opts), Nat8.toText, Nat8.equal).equal(data);
       },
@@ -454,7 +398,7 @@ suite(
         let opts : Deflate.DeflateOptions = {
           block_size = 64;
           dynamic_huffman = true;
-          lzss = ?#best;
+          lzss = #best;
         };
         expect.array(roundTrip(data, opts), Nat8.toText, Nat8.equal).equal(data);
       },
@@ -542,27 +486,10 @@ suite(
 );
 
 // ── Suite: Encoder construction validation ────────────────────────────────
-//
-// `Deflate.buildEncoder` traps when raw mode is requested with a block_size
-// above `NO_COMPRESSION_MAX_BLOCK_SIZE` (65 535). Trap behaviour is exercised
-// via a TrapCanister-style replica test elsewhere if needed; here we only
-// verify that the accepted ranges build without error.
 
 suite(
   "Encoder construction",
   func() {
-
-    test(
-      "raw block_size = 65535 accepted",
-      func() {
-        let opts : Deflate.DeflateOptions = {
-          block_size = 65_535;
-          dynamic_huffman = false;
-          lzss = null;
-        };
-        let _ = Deflate.buildEncoder(opts);
-      },
-    );
 
     test(
       "compressed block_size > 65535 accepted",
@@ -570,7 +497,7 @@ suite(
         let opts : Deflate.DeflateOptions = {
           block_size = 100_000;
           dynamic_huffman = true;
-          lzss = ?#fast;
+          lzss = #fast;
         };
         let _ = Deflate.buildEncoder(opts);
       },

@@ -6,7 +6,6 @@
 /// Intended for use from tests/BitReaderTraps.Test.mo (replica test).
 
 import BitReader "../../src/internal/BitReader";
-import Deflate "../../src/Deflate/lib";
 import List "mo:core/List";
 import LZSS "../../src/LZSS/lib";
 
@@ -36,16 +35,6 @@ persistent actor class TrapCanister() {
     let entries = List.empty<LZSS.LzssEntry>();
     List.add(entries, #pointer(5, 3)); // backward_offset=5 > output.size()=0
     ignore LZSS.decode(entries);
-  };
-
-  /// Traps: block_size > NO_COMPRESSION_MAX_BLOCK_SIZE is illegal in raw mode.
-  public func buildEncoderRawOversized() : async () {
-    let opts : Deflate.DeflateOptions = {
-      block_size = 100_000;
-      dynamic_huffman = false;
-      lzss = null;
-    };
-    ignore Deflate.buildEncoder(opts);
   };
 
 };

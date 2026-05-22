@@ -89,26 +89,6 @@ persistent actor {
       },
     );
 
-    // ── Deflate traps ─────────────────────────────────────────────────────
-
-    await suite(
-      "Deflate encoder traps — invalid construction",
-      func() : async () {
-
-        await test(
-          "buildEncoder raw with block_size > 65535 traps",
-          func() : async () {
-            var trapped = false;
-            try { await helper.buildEncoderRawOversized() } catch (err) {
-              if (Error.code(err) == #canister_error) { trapped := true };
-            };
-            expect.bool(trapped).isTrue();
-          },
-        );
-
-      },
-    );
-
   };
 
 };

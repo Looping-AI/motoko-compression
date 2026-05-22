@@ -89,11 +89,11 @@ module {
   // ── Encode ───────────────────────────────────────────────────────────────
 
   /// Encode a Gzip header into `bitbuffer`.
-  /// `lzss` is used to derive the XFL byte; pass `null` for no compression.
+  /// `lzss` is used to derive the XFL byte.
   public func encode(
     bitbuffer : BitBuffer,
     header : Header,
-    lzss : ?CompressionLevel,
+    lzss : CompressionLevel,
   ) {
     // Magic bytes
     bitbuffer.addByte(0x1f);
@@ -124,9 +124,9 @@ module {
 
     // XFL — derived from LZSS level (overrides whatever header.xfl says)
     let xfl : Nat8 = switch lzss {
-      case (?#best) 0x02;
-      case (?#fast) 0x04;
-      case _ 0x00;
+      case (#best) 0x02;
+      case (#fast) 0x04;
+      case (#balance) 0x00;
     };
     bitbuffer.addByte(xfl);
 

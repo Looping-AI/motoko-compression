@@ -1,31 +1,23 @@
-/// Deflate block implementations: raw (non-compressed) and compressed.
+/// Deflate block implementations: compressed blocks (fixed and dynamic Huffman).
 ///
 /// Migrated from edjcase/motoko_compression.
-/// Buffer<Nat8> queue → mo:core/Queue; Buffer<Symbol> → mo:core/List.
+/// Buffer<Symbol> → mo:core/List.
 
-import Array "mo:core/Array";
 import List "mo:core/List";
-import Nat "mo:core/Nat";
-import Queue "mo:core/Queue";
 import Runtime "mo:core/Runtime";
 import BitBuffer "../internal/BitBuffer";
 import LzssCommon "../LZSS/Common";
 import LzssEncoder "../LZSS/Encoder/lib";
 import Symbol "Symbol";
 import HuffmanCodec "HuffmanCodec";
-import Utils "../internal/utils";
 
 module {
 
   type BitBuffer = BitBuffer.BitBuffer;
 
-  /// Maximum payload for a single raw (non-compressed) deflate block.
-  public let NO_COMPRESSION_MAX_BLOCK_SIZE : Nat = 65_535;
-
   // ── Block type ─────────────────────────────────────────────────────────
 
   public type BlockType = {
-    #Raw;
     #Fixed : { lzss : LzssEncoder.Encoder; block_limit : Nat };
     #Dynamic : { lzss : LzssEncoder.Encoder; block_limit : Nat };
   };
@@ -33,7 +25,6 @@ module {
   /// BTYPE value for each block kind (RFC 1951 §3.2.3).
   public func blockToNat(bt : BlockType) : Nat {
     switch bt {
-      case (#Raw) 0;
       case (#Fixed(_)) 1;
       case (#Dynamic(_)) 2;
     };
@@ -55,51 +46,12 @@ module {
   /// Construct a block of the given type.
   public func block(bt : BlockType) : BlockInterface {
     switch bt {
-      case (#Raw) Raw();
       case (#Fixed({ lzss; block_limit })) {
         Compress(lzss, HuffmanCodec.FixedHuffmanCodec(), block_limit);
       };
       case (#Dynamic({ lzss; block_limit })) {
         Compress(lzss, HuffmanCodec.DynamicHuffmanCodec(), block_limit);
       };
-    };
-  };
-
-  // ── Raw block ──────────────────────────────────────────────────────────
-
-  public class Raw() {
-    let queue = Queue.empty<Nat8>();
-    var input_size : Nat = 0;
-
-    public func size() : Nat { input_size };
-
-    public func add(byte : Nat8) {
-      input_size += 1;
-      Queue.pushBack(queue, byte);
-    };
-
-    public func flush(bitbuffer : BitBuffer, _is_final : Bool) {
-      // `_is_final` is unused here: Raw blocks hold no LZSS lookahead
-      // buffer, so there is nothing extra to drain on the final block.
-      // The Bool exists only to satisfy the shared BlockInterface.
-      bitbuffer.byteAlign();
-      let sz = Nat.min(NO_COMPRESSION_MAX_BLOCK_SIZE, input_size);
-      let sz_bytes = Utils.natToLeBytes(sz, 2);
-      // LEN then NLEN (one's complement of LEN)
-      bitbuffer.addBytes(sz_bytes);
-      bitbuffer.addBytes(Array.map<Nat8, Nat8>(sz_bytes, func(x) { ^x }));
-      var i = 0;
-      while (i < sz) {
-        let ?byte = Queue.popFront(queue) else return;
-        input_size -= 1;
-        bitbuffer.addByte(byte);
-        i += 1;
-      };
-    };
-
-    public func clear() {
-      Queue.clear(queue);
-      input_size := 0;
     };
   };
 

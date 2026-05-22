@@ -104,32 +104,6 @@ suite(
   },
 );
 
-// ── Suite: No-compression round-trips ────────────────────────────────────
-
-suite(
-  "No-compression (raw) round-trips",
-  func() {
-
-    test(
-      "empty input (raw)",
-      func() {
-        let enc = Gzip.EncoderBuilder().noCompression();
-        expect.array(roundTrip([], enc), Nat8.toText, Nat8.equal).equal([]);
-      },
-    );
-
-    test(
-      "hello world (raw)",
-      func() {
-        let data : [Nat8] = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100];
-        let enc = Gzip.EncoderBuilder().noCompression();
-        expect.array(roundTrip(data, enc), Nat8.toText, Nat8.equal).equal(data);
-      },
-    );
-
-  },
-);
-
 // ── Suite: LZSS level options ─────────────────────────────────────────────
 
 suite(

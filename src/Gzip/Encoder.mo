@@ -11,7 +11,6 @@
 import Array "mo:core/Array";
 import Blob "mo:core/Blob";
 import List "mo:core/List";
-import Nat "mo:core/Nat";
 import Nat32 "mo:core/Nat32";
 import Text "mo:core/Text";
 
@@ -48,7 +47,7 @@ module {
     var _header : Header = Header.defaultHeader();
 
     var _opts : DeflateOptions = {
-      lzss = ?#best;
+      lzss = #best;
       block_size = Utils.INSTRUCTION_LIMIT;
       dynamic_huffman = false;
     };
@@ -56,16 +55,6 @@ module {
     /// Override the Gzip header fields.
     public func header(h : Header) : EncoderBuilder {
       _header := h;
-      self;
-    };
-
-    /// Disable LZSS compression (raw blocks, no compression).
-    /// Block size is automatically capped to the raw-block maximum (65 535).
-    public func noCompression() : EncoderBuilder {
-      _opts := {
-        _opts with lzss = null;
-        block_size = Nat.min(_opts.block_size, 65_535);
-      };
       self;
     };
 
@@ -83,7 +72,7 @@ module {
 
     /// Set the LZSS compression level.
     public func lzss(level : CompressionLevel) : EncoderBuilder {
-      _opts := { _opts with lzss = ?level };
+      _opts := { _opts with lzss = level };
       self;
     };
 
