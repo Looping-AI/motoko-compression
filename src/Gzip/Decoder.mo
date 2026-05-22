@@ -108,8 +108,9 @@ module {
 
     /// Reset the decoder state so it can be reused for a new stream.
     public func clear() {
-      reader.reset();
+      reader.clear();
       List.clear(buffer);
+      deflate.clear();
     };
   };
 

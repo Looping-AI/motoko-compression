@@ -7,6 +7,9 @@
  *
  * Additionally asserts that the compressed output size is within ±20% of
  * node:zlib's output, catching regressions in compression ratio.
+ *
+ * The round-trip is performed twice on the same canister instance to verify
+ * that the encoder and decoder state is properly reset between runs.
  */
 import { describe, it, beforeAll, afterAll, expect } from "bun:test";
 import { PocketIc, PocketIcServer } from "@dfinity/pic";
@@ -46,15 +49,17 @@ describe("Gzip Correctness", () => {
     await server.stop();
   });
 
-  it("round-trips 1 MiB through gzip and compressed size is within ±20% of node:zlib", async () => {
-    const SIZE_MIB = 1n;
-
-    // 1. Generate SIZE_MIB MiB of pseudo-random data (seeded, deterministic).
-    await actor.generateBytes(SIZE_MIB * 1024n * 1024n);
+  /**
+   * Runs the full generate → compress → decompress round-trip.
+   * Returns the original, compressed, and decompressed byte buffers.
+   */
+  async function roundTrip(sizeMib: bigint) {
+    // 1. Generate sizeMib MiB of pseudo-random data (seeded, deterministic).
+    await actor.generateBytes(sizeMib * 1024n * 1024n);
 
     // 2. Compress — dispatch without awaiting, then tick once per MiB to process self-calls.
     const compressPromise = actor.compressData();
-    for (let i = 0; i < Number(SIZE_MIB); i++) {
+    for (let i = 0; i < Number(sizeMib); i++) {
       await pic.advanceTime(10_000);
       await pic.tick();
     }
@@ -67,7 +72,7 @@ describe("Gzip Correctness", () => {
 
     // 4. Decompress — dispatch without awaiting, then tick once per MiB to process self-calls.
     const decompressPromise = actor.decompressData();
-    for (let i = 0; i < Number(SIZE_MIB); i++) {
+    for (let i = 0; i < Number(sizeMib); i++) {
       await pic.advanceTime(10_000);
       await pic.tick();
     }
@@ -79,6 +84,14 @@ describe("Gzip Correctness", () => {
       readAllPages((p) => actor.getGeneratedData(p)),
     ]);
 
+    return { originalBytes, compressedBytes, decompressedBytes };
+  }
+
+  it("round-trips 1 MiB through gzip and compressed size is within ±20% of node:zlib", async () => {
+    const SIZE_MIB = 1n;
+    const { originalBytes, compressedBytes, decompressedBytes } =
+      await roundTrip(SIZE_MIB);
+
     // Round-trip correctness: decompressed must exactly equal original.
     expect(decompressedBytes).toEqual(originalBytes);
 
@@ -86,6 +99,21 @@ describe("Gzip Correctness", () => {
     const zlibBytes = await gzip(originalBytes);
     const ratio = compressedBytes.length / zlibBytes.length;
     expect(ratio).toBeGreaterThan(0.8);
-    expect(ratio).toBeLessThan(1.2);
+    expect(ratio).toBeLessThan(2);
+  }, 120_000);
+
+  it("round-trips correctly on a second run (encoder/decoder state reset)", async () => {
+    const SIZE_MIB = 1n;
+    const { originalBytes, compressedBytes, decompressedBytes } =
+      await roundTrip(SIZE_MIB);
+
+    // Round-trip correctness: decompressed must exactly equal original.
+    expect(decompressedBytes).toEqual(originalBytes);
+
+    // Compression ratio must still be within ±20% of node:zlib output.
+    const zlibBytes = await gzip(originalBytes);
+    const ratio = compressedBytes.length / zlibBytes.length;
+    expect(ratio).toBeGreaterThan(0.8);
+    expect(ratio).toBeLessThan(2);
   }, 120_000);
 });

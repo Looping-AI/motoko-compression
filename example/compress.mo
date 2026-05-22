@@ -125,6 +125,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Compress all stored data in IC_INPUT_CHUNK slices and persist the result.
   /// Spreads work across ICP messages via self-calls.
   public func compressData() : async () {
+    gzip_encoder.clear();
     for (chunk in chunks(getData(), IC_INPUT_CHUNK).vals()) {
       await _compressChunk(chunk);
     };
@@ -145,6 +146,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   /// Decompress the stored compressed data and cache the result in _decompressed.
   public func decompressData() : async () {
+    gzip_decoder.clear();
     let ?compressed = _compressed else return;
     for (chunk in compressed.chunks.vals()) {
       await _decodeChunk(chunk);

@@ -30,6 +30,11 @@ module {
     let buffer = Option.get(output_buffer, List.empty<Nat8>());
     let lzss = LzssDecoder.Decoder();
 
+    /// Reset decoder state so it can process a new stream.
+    public func clear() {
+      end_of_blocks := false;
+    };
+
     /// Process deflate blocks until the final block or the stream is empty.
     public func decode() : Result<(), Text> {
       label _loop loop {
