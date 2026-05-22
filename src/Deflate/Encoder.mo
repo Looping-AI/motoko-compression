@@ -91,7 +91,7 @@ module {
 
     /// Reset the encoder state (does not touch the underlying BitBuffer).
     public func clear() {
-      return block.clear();
+      block.clear();
     };
 
     /// Flush the final block, byte-align the buffer, and return it.
