@@ -262,11 +262,17 @@ already 7× cheaper; optimisation priority is lower.
 
 Maps LZSS entries to DEFLATE length/distance symbols and extra bits.
 
-- [ ] **Baseline measured** (captured within `bun run perf component=deflate`)
-- [ ] `lengthCode` / `distanceCode` — verify static tables are compiled as constants
-- [ ] Replace `switch` chains with binary-search or precomputed lookup arrays
+- [x] **Baseline measured** — 2026-05-21T23-21-50Z (100 KiB, dynamic Huffman, single block)
+- [ ] `lengthCode` / `distanceCode` — eliminate per-call tuple heap allocation
+- [ ] Replace `switch` arithmetic with precomputed lookup arrays (LENGTH_TABLE / DISTANCE_TABLE already exist on the decode side)
 
 **Notes:**
+`lengthCode` = 45,835 calls, **54,967 avg instrs/call, 3,309 B heap/call**.
+`distanceCode` = 45,835 calls, **54,911 avg instrs/call, 3,273 B heap/call**.
+Together: ~5.04B instrs ≈ **50% of total `flush` cost**; ~302 MB heap across one 100 KiB compress call.
+Root cause: both functions return heap-allocated tuple types — `(Nat16, Nat, Nat16)` and `?(Nat, Nat, Nat16)`.
+`distanceCode` also contains a `while` loop (up to log₂(distance) iterations) that mutates `Nat` locals, adding box/unbox overhead per pointer symbol.
+Primary target: eliminate tuple allocation — pass an output record by ref, use a lookup table, or return a flat scalar encoding.
 
 ---
 
@@ -274,11 +280,13 @@ Maps LZSS entries to DEFLATE length/distance symbols and extra bits.
 
 Block type management and block boundary encoding.
 
-- [ ] **Baseline measured**
-- [ ] `blockToNat` — trivial, likely already optimal
-- [ ] `block` factory — ensure no closure overhead per block
+- [x] **Baseline measured** — 2026-05-21T23-21-50Z (same run as Symbol.mo)
+- [-] `blockToNat` — non-unit return type; unpaired in baseline run (`:end` not emitted). Called once; negligible.
+- [-] `block` factory — called once at construction; not hot.
+- [ ] `Compress.flush` — contains the Huffman `build` + `save` + symbol-emission loop; non-unit callees not yet measured (see HuffmanCodec.mo)
 
 **Notes:**
+All block functions have non-unit return types or were called only once. `flush` and `add` were not captured as intervals because `flush` is unit-returning and was found, but `build`/`save` inside it are non-unit and their `:end` marks were not injected. The residual cost inside `Compress.flush` after subtracting `lengthCode`+`distanceCode` (5.04B) from the total `flush` interval (10.17B) is **~5.13B instrs** — attributable to LZSS lookahead drain, Huffman `build`, `save`, and the symbol-emission loop.
 
 ---
 
@@ -286,12 +294,14 @@ Block type management and block boundary encoding.
 
 Fixed and Dynamic Huffman codec: `build`, `save`, `load`.
 
-- [ ] **Baseline measured**
-- [ ] Dynamic `build` — profile frequency counting pass
-- [ ] `save` — minimize BitBuffer write calls (batch multi-bit writes)
-- [ ] `load` — optimize decoding-tree reconstruction from bit-widths
+- [x] **Baseline measured** — 2026-05-21T23-21-50Z (same run; unpaired — non-unit returns)
+- [ ] Dynamic `build` — frequency counting + two `HuffmanEncoder.fromFrequencies` calls; cost unknown (unpaired)
+- [ ] `save` — writes HLIT/HDIST/HCLEN + meta-Huffman tree + RLE code lengths; cost unknown (unpaired)
+- [ ] `load` — reads meta-Huffman tree + decode bitwidth sequences; cost unknown (unpaired)
+- [ ] Instrument return sites manually (add `:end` marks before each `#ok`/`#err` return) to unlock cost data
 
 **Notes:**
+`build`, `save`, `load` all return `Result<...>` — perf.ts did not inject `:end` marks (9 unpaired starts total across the deflate run). The combined cost of `build` + `save` + symbol-encoding loop is embedded in the ~5.13B residual of `Compress.flush`. To isolate these, add manual `Perf.mark()` calls in `HuffmanCodec.mo` before/after each function body, or extend perf.ts's `findReturnSites` to handle `Result`-returning functions.
 
 ---
 
@@ -299,12 +309,16 @@ Fixed and Dynamic Huffman codec: `build`, `save`, `load`.
 
 DEFLATE encoder: converts symbol stream to compressed bit stream.
 
-- [ ] **Baseline measured**
-- [ ] Symbol emission loop — reduce per-symbol dispatch overhead
+- [x] **Baseline measured** — 2026-05-21T23-21-50Z
+- [ ] Symbol emission loop — `lengthCode`/`distanceCode` called once per symbol; fixing those (Symbol.mo) will directly reduce this
 - [ ] BitBuffer interaction — batch writes where symbol + extra bits fit in one call
-- [ ] Block flush strategy — tune block-size threshold
+- [ ] Block flush strategy — tune block-size threshold (currently 1 MiB → single block for 100 KiB workload)
 
 **Notes:**
+`encode` (top-level byte feeder): 1 call, **614M instrs** (LZSS + byte accumulation for 100 KiB).
+`flush` (final `finish()` call): 1 call, **10,171M instrs** — entire compression step.
+Only 1 block flushed for the 100 KiB workload (block_size = 1 MiB in example/compress.mo).
+`encodeByte`, `clear`, `finish` are unit-returning but only called 1-2 times; not individually hot.
 
 ---
 
@@ -312,11 +326,13 @@ DEFLATE encoder: converts symbol stream to compressed bit stream.
 
 DEFLATE decoder: reconstructs byte stream from compressed blocks.
 
-- [ ] **Baseline measured**
+- [x] **Baseline measured** — 2026-05-21T23-21-50Z (decoder ran; all functions unpaired)
 - [ ] Block loop — reduce redundant state checks
 - [ ] Back-reference copy — batch byte writes into CircularBuffer
+- [ ] Instrument return sites manually (`decode`, `decodeCompressed`, `finish` all return `Result<>`)
 
 **Notes:**
+`decode`, `decodeCompressed`, `load` (HuffmanCodec), `save`: all non-unit return types — `:end` marks not injected. `:start` marks confirmed in the JSONL output (decoder ran after encoder). Decoder cost cannot be isolated without manual `:end` injection or a dedicated decoder-only perf workload.
 
 ---
 
@@ -362,12 +378,12 @@ Full Gzip decode pipeline: header → DEFLATE → CRC32 verification.
 Record the last clean perf run for each component here before any optimization work.
 Update these numbers each time a new baseline is established.
 
-| Component | Timestamp            | `avg_delta` instrs     | `avg_delta` mem (bytes) | `avg_delta` heap (bytes) |
-| --------- | -------------------- | ---------------------- | ----------------------- | ------------------------ |
-| huffman   | 2026-05-20T10:06:04Z | —                      | —                       | —                        |
-| gzip      | 2026-05-20T09:17:56Z | —                      | —                       | —                        |
-| deflate   | —                    | —                      | —                       | —                        |
-| lzss      | 2026-05-21T14-44-47Z | 285 759 (`encodeByte`) | 17 247 (`encodeByte`)   | 17 247 (`encodeByte`)    |
+| Component | Timestamp            | `avg_delta` instrs                              | `avg_delta` mem (bytes) | `avg_delta` heap (bytes) |
+| --------- | -------------------- | ----------------------------------------------- | ----------------------- | ------------------------ |
+| huffman   | 2026-05-20T10:06:04Z | —                                               | —                       | —                        |
+| gzip      | 2026-05-20T09:17:56Z | —                                               | —                       | —                        |
+| deflate   | 2026-05-21T23-21-50Z | 54,967 (`lengthCode`) / 54,911 (`distanceCode`) | 3,311 / 3,274           | 3,309 / 3,273            |
+| lzss      | 2026-05-21T14-44-47Z | 285 759 (`encodeByte`)                          | 17 247 (`encodeByte`)   | 17 247 (`encodeByte`)    |
 
 <!-- Fill in per_method deltas from scripts/output/ JSON reports -->
 

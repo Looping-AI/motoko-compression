@@ -56,8 +56,26 @@ const REGISTRY: Record<string, PatchTarget[]> = {
     },
   ],
   deflate: [
-    { file: "src/Deflate/Encoder.mo", funcs: ["encode", "finish"] },
-    { file: "src/Deflate/Decoder.mo", funcs: ["decode"] },
+    {
+      file: "src/Deflate/Symbol.mo",
+      funcs: ["lengthCode", "distanceCode"],
+    },
+    {
+      file: "src/Deflate/Block.mo",
+      funcs: ["size", "add", "flush", "clear"],
+    },
+    {
+      file: "src/Deflate/HuffmanCodec.mo",
+      funcs: ["build", "save", "load", "buildBitwidthCodes", "loadBitwidths"],
+    },
+    {
+      file: "src/Deflate/Encoder.mo",
+      funcs: ["encodeByte", "encode", "flush", "clear", "finish"],
+    },
+    {
+      file: "src/Deflate/Decoder.mo",
+      funcs: ["decode", "decodeNonCompressed", "decodeCompressed", "finish"],
+    },
   ],
   gzip: [
     { file: "src/Gzip/Encoder.mo", funcs: ["encode", "finish"] },
@@ -216,20 +234,91 @@ const patchRecords: PatchRecord[] = [];
 /**
  * Locate the line index of `func <name>(` (or `func <name><`) and the line
  * index where the function's opening brace `{` appears.
- * Scans up to 6 lines forward from the declaration to handle multi-line signatures.
- * Returns null when the function is not found.
+ * Scans up to 8 lines forward from the declaration to handle multi-line signatures.
+ * Uses balanced-paren scanning to skip over structural record types inside the
+ * parameter list (e.g. `{ next : () -> T }`) and find the actual function body `{`.
+ * Returns null when the function is not found or uses expression-body syntax (`= expr`).
  */
 function findFuncBrace(
   lines: string[],
   funcName: string,
-): { funcIdx: number; braceIdx: number } | null {
+): { funcIdx: number; braceIdx: number; braceCharIdx: number } | null {
   const funcRe = new RegExp(`\\bfunc\\s+${funcName}\\s*[(<]`);
   const funcIdx = lines.findIndex((l) => funcRe.test(l));
   if (funcIdx === -1) return null;
 
-  for (let i = funcIdx; i < Math.min(funcIdx + 6, lines.length); i++) {
-    if (lines[i].includes("{")) return { funcIdx, braceIdx: i };
+  // Join up to 8 lines to handle multi-line signatures, then scan
+  // character-by-character so structural record types inside the parameter
+  // list (e.g. `{ next : () -> ?T }`) are skipped correctly.
+  const combined = lines
+    .slice(funcIdx, Math.min(funcIdx + 8, lines.length))
+    .join("\n");
+
+  // Position cursor after `func funcName`.
+  const funcNameMatch = new RegExp(`\\bfunc\\s+${funcName}\\s*`).exec(combined);
+  if (!funcNameMatch) return null;
+  let i = funcNameMatch.index + funcNameMatch[0].length;
+
+  // Skip generic type-parameter list `<…>` if present.
+  if (combined[i] === "<") {
+    let depth = 0;
+    while (i < combined.length) {
+      if (combined[i] === "<") depth++;
+      else if (combined[i] === ">") {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+      i++;
+    }
   }
+
+  // Consume the parameter list `(…)`, tracking nested parens to skip
+  // structural types like `(_ : { next : () -> T })`.
+  if (combined[i] !== "(") return null;
+  let parenDepth = 0;
+  while (i < combined.length) {
+    if (combined[i] === "(") parenDepth++;
+    else if (combined[i] === ")") {
+      parenDepth--;
+      if (parenDepth === 0) {
+        i++;
+        break;
+      }
+    }
+    i++;
+  }
+
+  // After the param list, scan for:
+  //   `{`  → function body opening brace  → return its line index.
+  //   `=`  → expression-body (no brace)   → return null.
+  while (i < combined.length) {
+    const ch = combined[i];
+    const next = combined[i + 1] ?? "";
+    const prev = combined[i - 1] ?? "";
+    if (ch === "{") {
+      const before = combined.slice(0, i);
+      const newlinesBefore = (before.match(/\n/g) ?? []).length;
+      const lineStartInCombined = before.lastIndexOf("\n") + 1;
+      const braceCharIdx = i - lineStartInCombined;
+      return { funcIdx, braceIdx: funcIdx + newlinesBefore, braceCharIdx };
+    }
+    // Detect expression-body `=` (but not `==`, `!=`, `<=`, `>=`).
+    if (
+      ch === "=" &&
+      next !== "=" &&
+      next !== ">" &&
+      prev !== "!" &&
+      prev !== "<" &&
+      prev !== ">"
+    ) {
+      return null;
+    }
+    i++;
+  }
+
   return null;
 }
 
@@ -271,6 +360,7 @@ function funcReturnsUnit(
 function findFuncClosingBrace(
   lines: string[],
   openBraceLineIdx: number,
+  openBraceCharIdx: number = 0,
 ): number {
   let depth = 0;
   let inString = false;
@@ -281,7 +371,10 @@ function findFuncClosingBrace(
     const line = lines[lineIdx];
     inLineComment = false;
 
-    for (let i = 0; i < line.length; i++) {
+    // On the open-brace line, start scanning at the brace itself so that any
+    // structural-type `{...}` pair earlier on the same line is not counted.
+    const startCol = lineIdx === openBraceLineIdx ? openBraceCharIdx : 0;
+    for (let i = startCol; i < line.length; i++) {
       const ch = line[i];
       const next = i + 1 < line.length ? line[i + 1] : "";
 
@@ -342,6 +435,13 @@ type ReturnSite =
       condition: string;
       returnExpr: string;
     }
+  | {
+      kind: "inline_case";
+      lineIdx: number;
+      indent: string;
+      caseHead: string;
+      returnExpr: string;
+    }
   | { kind: "unhandled"; lineIdx: number };
 
 /**
@@ -384,6 +484,35 @@ function classifyReturnSite(lineIdx: number, line: string): ReturnSite {
           .trimStart()
           .replace(/;\s*$/, "");
         return { kind: "inline_if", lineIdx, indent, condition, returnExpr };
+      }
+    }
+  }
+
+  // `case (pattern) return expr;` on a single line (Motoko switch-case arm).
+  const caseStart = /^\s*case\s+\(/.exec(line);
+  if (caseStart) {
+    let depth = 0;
+    let parenEnd = -1;
+    const openIdx = line.indexOf("(", caseStart[0].length - 1);
+    for (let i = openIdx; i < line.length; i++) {
+      if (line[i] === "(") depth++;
+      else if (line[i] === ")") {
+        depth--;
+        if (depth === 0) {
+          parenEnd = i;
+          break;
+        }
+      }
+    }
+    if (parenEnd !== -1) {
+      const afterCase = line.slice(parenEnd + 1).trim();
+      if (/^return\b/.test(afterCase)) {
+        const caseHead = line.slice(0, parenEnd + 1).trimEnd();
+        const returnExpr = afterCase
+          .slice("return".length)
+          .trim()
+          .replace(/;\s*$/, "");
+        return { kind: "inline_case", lineIdx, indent, caseHead, returnExpr };
       }
     }
   }
@@ -553,12 +682,47 @@ function patchSources(): void {
     for (const func of funcs) {
       const found = findFuncBrace(lines, func)!;
       const openBraceLineIdx = found.braceIdx;
-      const closingBraceLineIdx = findFuncClosingBrace(lines, openBraceLineIdx);
+      const closingBraceLineIdx = findFuncClosingBrace(
+        lines,
+        openBraceLineIdx,
+        found.braceCharIdx,
+      );
 
       const declIndent = lines[found.funcIdx].match(/^(\s*)/)?.[1] ?? "";
       const bodyIndent = declIndent + "  ";
       const startMark = `${bodyIndent}Perf.mark("${component}:${func}:start"); // [PERF]`;
       const endMarkBody = `Perf.mark("${component}:${func}:end"); // [PERF]`;
+
+      // Special case: single-line function body (opening and closing brace on
+      // the same line). Expand to multi-line so :start/:end fit inside the body.
+      // Only safe for unit-returning functions; for non-unit single-liners the
+      // body IS the return value, so we can't add an :end mark — skip and warn.
+      if (closingBraceLineIdx === openBraceLineIdx) {
+        if (!funcReturnsUnit(lines, found.funcIdx, openBraceLineIdx)) {
+          console.warn(
+            `  ⚠ ${func}: skipping (single-line non-unit function — cannot instrument without altering return type)`,
+          );
+          continue;
+        }
+        const line = lines[openBraceLineIdx];
+        const openBraceCharIdx = found.braceCharIdx;
+        const closeBraceCharIdx = line.lastIndexOf("}");
+        const body = line.slice(openBraceCharIdx + 1, closeBraceCharIdx).trim();
+        const afterClose = line.slice(closeBraceCharIdx + 1);
+        const beforeOpen = line.slice(0, openBraceCharIdx);
+        ops.push({
+          kind: "replace",
+          lineIdx: openBraceLineIdx,
+          newLines: [
+            `${beforeOpen}{`,
+            startMark,
+            ...(body ? [`${bodyIndent}${body}`] : []),
+            `${bodyIndent}${endMarkBody}`,
+            `${declIndent}}${afterClose}`,
+          ],
+        });
+        continue;
+      }
 
       // :start immediately after the opening brace.
       ops.push({
@@ -568,8 +732,11 @@ function patchSources(): void {
       });
 
       // :end immediately before the closing brace — ONLY for unit-returning
-      // functions (non-unit functions return via their last expression; inserting
-      // a mark there would change the function's return type to ()).
+      // functions. For non-unit functions, a trailing Perf.mark (type ()) would
+      // either become dead code that still type-checks the function body as ()
+      // or be parsed as part of the prior expression. Non-unit functions rely
+      // entirely on the explicit-`return` sites instrumented below; if any
+      // return path can't be classified, the unpaired-mark warning surfaces it.
       if (funcReturnsUnit(lines, found.funcIdx, openBraceLineIdx)) {
         ops.push({
           kind: "insert",
@@ -605,6 +772,18 @@ function patchSources(): void {
               `${site.indent}};`,
             ],
           });
+        } else if (site.kind === "inline_case") {
+          // Rewrite `case (pat) return expr;` into a block with the end mark.
+          ops.push({
+            kind: "replace",
+            lineIdx: site.lineIdx,
+            newLines: [
+              `${site.caseHead} {`,
+              `${site.indent}  ${endMarkBody}`,
+              `${site.indent}  return ${site.returnExpr};`,
+              `${site.indent}};`,
+            ],
+          });
         } else {
           unhandledReturnCount++;
         }
@@ -612,10 +791,17 @@ function patchSources(): void {
     }
 
     // Apply ops in descending line order so each splice doesn't shift later indices.
+    // Tie-break rule: for ops targeting the same line, :start marks must be processed
+    // LAST so that each splice(P, 0, ...) pushes them topmost in the final file.
     ops.sort((a, b) => {
       const aLine = a.kind === "insert" ? a.afterLine : a.lineIdx;
       const bLine = b.kind === "insert" ? b.afterLine : b.lineIdx;
-      return bLine - aLine;
+      if (bLine !== aLine) return bLine - aLine;
+      // Equal target line: :start processed last → ends up above :end marks.
+      const aIsStart = a.kind === "insert" && a.text.includes(":start");
+      const bIsStart = b.kind === "insert" && b.text.includes(":start");
+      if (aIsStart !== bIsStart) return aIsStart ? 1 : -1;
+      return 0;
     });
     for (const op of ops) {
       if (op.kind === "insert") {
@@ -916,7 +1102,21 @@ async function main() {
     const outputFile = join(BUILDS_DIR, `${component}-perf.wasm`);
     const entryFile = resolve(ROOT, "example", "compress.mo");
     const compileArgs = [mocPath, ...sourcesArgs, "-o", outputFile, entryFile];
-    await $`${compileArgs}`.env({ ...process.env });
+    try {
+      await $`${compileArgs}`.env({ ...process.env });
+    } catch (err) {
+      // Save patched sources so the user can inspect the syntax error before
+      // the automatic revert kicks in.
+      for (const { file } of patchRecords) {
+        const dumpPath = join(
+          BUILDS_DIR,
+          `${component}-` + file.replace(/\//g, "_") + ".patched.mo",
+        );
+        writeFileSync(dumpPath, readFileSync(file, "utf8"));
+        console.error(`  ✗ Patched source dumped to ${dumpPath}`);
+      }
+      throw err;
+    }
 
     // Gzip the WASM in-place.
     const tmpFile = `${outputFile}.tmp`;

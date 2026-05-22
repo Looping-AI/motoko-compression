@@ -70,7 +70,7 @@ module {
 
   /// Returns (literal-code, extra-bit-count, extra-bit-value) for a symbol.
   public func lengthCode(symbol : Symbol) : (Nat16, Nat, Nat16) {
-    switch symbol {
+    let result : (Nat16, Nat, Nat16) = switch symbol {
       case (#EndOfBlock) { (256, 0, 0) };
       case (#literal(byte)) { (Nat8.toNat16(byte), 0, 0) };
       case (#pointer(_, length)) {
@@ -90,13 +90,15 @@ module {
         };
       };
     };
+
+    return result;
   };
 
   // ── Distance encoding ──────────────────────────────────────────────────
 
   /// Returns ?(distance-code, extra-bit-count, extra-bit-value), or null for non-pointers.
   public func distanceCode(symbol : Symbol) : ?(Nat, Nat, Nat16) {
-    switch symbol {
+    let result : ?(Nat, Nat, Nat16) = switch symbol {
       case (#pointer(distance, _)) {
         if (distance == 0 or distance > MAX_DISTANCE) {
           Runtime.trap("Deflate: distance " # debug_show distance # " out of range");
@@ -126,6 +128,8 @@ module {
       };
       case (_) null;
     };
+
+    return result;
   };
 
   // ── Encoder class ──────────────────────────────────────────────────────

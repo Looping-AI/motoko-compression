@@ -54,11 +54,14 @@ module {
         };
 
         switch res {
-          case (#err(msg)) return #err(msg);
+          case (#err(msg)) {
+            return #err(msg);
+          };
           case (#ok(_)) {};
         };
       };
-      #ok();
+
+      return #ok();
     };
 
     /// Decode a non-compressed (raw) block.
@@ -84,12 +87,16 @@ module {
     func decodeCompressed(huffman : HuffmanCodec.HuffmanCodec) : Result<(), Text> {
       let sym_dec = switch (huffman.load(bitreader)) {
         case (#ok(d)) d;
-        case (#err(msg)) return #err(msg);
+        case (#err(msg)) {
+          return #err(msg);
+        };
       };
       label _loop loop {
         let sym = switch (sym_dec.decode(bitreader)) {
           case (#ok(s)) s;
-          case (#err(msg)) return #err(msg);
+          case (#err(msg)) {
+            return #err(msg);
+          };
         };
         switch sym {
           case (#EndOfBlock) break _loop;
@@ -97,11 +104,13 @@ module {
           case (#pointer(back)) lzss.decodeEntry(buffer, #pointer(back));
         };
       };
-      #ok();
+      return #ok();
     };
 
     /// Process any remaining data in the bitreader and return.
-    public func finish() : Result<(), Text> { decode() };
+    public func finish() : Result<(), Text> {
+      return decode();
+    };
 
     /// Return all decoded bytes as an immutable array.
     public func toArray() : [Nat8] { List.toArray(buffer) };
