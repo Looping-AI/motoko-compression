@@ -60,9 +60,9 @@ module {
     var _header : Header = Header.defaultHeader();
 
     var _deflate_opts : DeflateOptions = {
-      lzss = #best;
+      lzss = #balance; // default LZSS compression level (matches zlib's default)
       deflate_block_size = DEFAULT_DEFLATE_BLOCK_SIZE;
-      dynamic_huffman = false;
+      dynamic_huffman = true; // Better ratio, without impactful performance penalty, matches zlib's default
     };
 
     var _output_chunk_size : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;

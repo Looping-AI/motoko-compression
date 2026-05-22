@@ -10,6 +10,7 @@
     "test": "bun test tests/integration/",
     "test:correctness": "bun test tests/integration/gzip-correctness.test.ts",
     "test:interop": "bun test tests/integration/gzip-interop.test.ts",
+    "test:timing": "bun test tests/integration/gzip-timing.test.ts",
     "perf": "bun run scripts/perf.ts"
   },
   "devDependencies": {

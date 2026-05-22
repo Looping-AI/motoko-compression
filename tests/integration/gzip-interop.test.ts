@@ -39,7 +39,7 @@ describe("Gzip Interop", () => {
   }, 30_000);
 
   it("decompresses node:zlib gzip output correctly (random, 1 MiB)", async () => {
-    const SIZE_MIB = 1;
+    const SIZE_MIB = 20;
 
     // 1. Build SIZE_MIB MiB of cryptographically random bytes.
     const original = randomBytes(SIZE_MIB * 1024 * 1024);

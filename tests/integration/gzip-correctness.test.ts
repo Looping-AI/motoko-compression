@@ -95,11 +95,11 @@ describe("Gzip Correctness", () => {
     // Round-trip correctness: decompressed must exactly equal original.
     expect(decompressedBytes).toEqual(originalBytes);
 
-    // Compression ratio must be within ±20% of node:zlib output.
+    // Compression ratio must be within ±10% of node:zlib output.
     const zlibBytes = await gzip(originalBytes);
     const ratio = compressedBytes.length / zlibBytes.length;
-    expect(ratio).toBeGreaterThan(0.8);
-    expect(ratio).toBeLessThan(2);
+    expect(ratio).toBeGreaterThan(0.9);
+    expect(ratio).toBeLessThan(1.1);
   }, 120_000);
 
   it("round-trips correctly on a second run (encoder/decoder state reset)", async () => {
@@ -110,10 +110,10 @@ describe("Gzip Correctness", () => {
     // Round-trip correctness: decompressed must exactly equal original.
     expect(decompressedBytes).toEqual(originalBytes);
 
-    // Compression ratio must still be within ±20% of node:zlib output.
+    // Compression ratio must still be within ±10% of node:zlib output.
     const zlibBytes = await gzip(originalBytes);
     const ratio = compressedBytes.length / zlibBytes.length;
-    expect(ratio).toBeGreaterThan(0.8);
-    expect(ratio).toBeLessThan(2);
+    expect(ratio).toBeGreaterThan(0.9);
+    expect(ratio).toBeLessThan(1.1);
   }, 120_000);
 });
