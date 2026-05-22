@@ -15,8 +15,11 @@ module {
   // ── Options ────────────────────────────────────────────────────────────
 
   public type DeflateOptions = {
-    /// Maximum number of uncompressed bytes per block.
-    block_size : Nat;
+    /// Maximum number of uncompressed bytes per Deflate block.
+    /// Controls compression ratio (Huffman table overhead) and per-block
+    /// working memory. Does NOT affect LZSS back-reference reach (the
+    /// 32 KiB sliding window persists across blocks). Recommended: 32 KiB.
+    deflate_block_size : Nat;
     /// Use dynamic Huffman tables (true) or fixed tables (false).
     dynamic_huffman : Bool;
     /// LZSS compression level.
@@ -30,12 +33,12 @@ module {
     let block_type = if (options.dynamic_huffman) {
       #Dynamic({
         lzss = LzssEncoder.Encoder(options.lzss);
-        block_limit = options.block_size;
+        block_limit = options.deflate_block_size;
       });
     } else {
       #Fixed({
         lzss = LzssEncoder.Encoder(options.lzss);
-        block_limit = options.block_size;
+        block_limit = options.deflate_block_size;
       });
     };
 
@@ -51,14 +54,14 @@ module {
 
     /// Encode a single byte, flushing a non-final block if needed.
     public func encodeByte(byte : Nat8) {
-      if (block.size() >= options.block_size) flush(false);
+      if (block.size() >= options.deflate_block_size) flush(false);
       block.add(byte);
     };
 
     /// Encode a slice of bytes.
     public func encode(data : [Nat8]) {
       for (byte in data.vals()) {
-        if (block.size() >= options.block_size) flush(false);
+        if (block.size() >= options.deflate_block_size) flush(false);
         block.add(byte);
       };
     };

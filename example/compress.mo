@@ -23,7 +23,13 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // ── Constants ─────────────────────────────────────────────────────────────
 
   transient let MB = 1_024 * 1_024;
-  transient let BLOCK_SIZE = 1 * MB;
+
+  /// Max bytes fed to the encoder per ICP self-call.
+  /// Each call receives a fresh instruction budget. Sized to stay well within
+  /// the IC inter-canister ingress limit (2 MiB) so the payload fits in one
+  /// message and produces at most one output chunk.
+  transient let IC_INPUT_CHUNK = 2 * MB;
+
   transient let PAGE_SIZE = 2 * MB;
 
   // ── Stable state ──────────────────────────────────────────────────────────
@@ -34,7 +40,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   // ── Transient state ───────────────────────────────────────────────────────
 
-  transient let gzip_encoder = Gzip.EncoderBuilder().blockSize(BLOCK_SIZE).build();
+  transient let gzip_encoder = Gzip.EncoderBuilder().outputChunkSize(IC_INPUT_CHUNK).build();
   transient let gzip_decoder = Gzip.Decoder();
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -116,10 +122,10 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     gzip_encoder.encode(chunk);
   };
 
-  /// Compress all stored data in BLOCK_SIZE chunks and persist the result.
+  /// Compress all stored data in IC_INPUT_CHUNK slices and persist the result.
   /// Spreads work across ICP messages via self-calls.
   public func compressData() : async () {
-    for (chunk in chunks(getData(), BLOCK_SIZE).vals()) {
+    for (chunk in chunks(getData(), IC_INPUT_CHUNK).vals()) {
       await _compressChunk(chunk);
     };
     _compressed := ?gzip_encoder.finish();

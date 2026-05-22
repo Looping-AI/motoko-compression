@@ -7,6 +7,7 @@
 ///   - Chunking uses `setOnBlockFlushed` callback instead of mo:bitbuffer events.
 ///   - `encodeBuffer` dropped (Buffer type gone); `encodeText` and `encodeBlob` kept.
 ///   - Default lzss = `?#best`; `dynamic_huffman = false` (fixed Huffman, faster).
+///   - `deflateBlockSize` and `outputChunkSize` are separate, orthogonal knobs.
 
 import Array "mo:core/Array";
 import Blob "mo:core/Blob";
@@ -28,6 +29,18 @@ module {
   type CompressionLevel = Common.CompressionLevel;
   type DeflateOptions = DeflateEncoder.DeflateOptions;
 
+  // ── Constants ────────────────────────────────────────────────────────────
+
+  /// Default DEFLATE block size (bytes). Matches zlib's level-default and keeps
+  /// per-block working memory (List<Symbol>) proportionate. Has no effect on
+  /// LZSS back-reference reach (the 32 KiB sliding window spans all blocks).
+  let DEFAULT_DEFLATE_BLOCK_SIZE : Nat = 32_768; // 32 KiB
+
+  /// Default output chunk size (bytes). Each output chunk holds one or more
+  /// complete DEFLATE blocks and can be fed to `Decoder.decode()` independently.
+  /// Sized to fit IC ingress and inter-canister response limits (≤ 2 MiB).
+  let DEFAULT_OUTPUT_CHUNK_SIZE : Nat = 2_097_152; // 2 MiB
+
   // ── Public types ─────────────────────────────────────────────────────────
 
   /// The result of `Encoder.finish()`.
@@ -46,11 +59,13 @@ module {
 
     var _header : Header = Header.defaultHeader();
 
-    var _opts : DeflateOptions = {
+    var _deflate_opts : DeflateOptions = {
       lzss = #best;
-      block_size = Utils.INSTRUCTION_LIMIT;
+      deflate_block_size = DEFAULT_DEFLATE_BLOCK_SIZE;
       dynamic_huffman = false;
     };
+
+    var _output_chunk_size : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
 
     /// Override the Gzip header fields.
     public func header(h : Header) : EncoderBuilder {
@@ -60,30 +75,59 @@ module {
 
     /// Use dynamic Huffman tables (better ratio, slightly slower).
     public func dynamicHuffman() : EncoderBuilder {
-      _opts := { _opts with dynamic_huffman = true };
+      _deflate_opts := { _deflate_opts with dynamic_huffman = true };
       self;
     };
 
     /// Use fixed Huffman tables (faster, slightly larger output).
     public func fixedHuffman() : EncoderBuilder {
-      _opts := { _opts with dynamic_huffman = false };
+      _deflate_opts := { _deflate_opts with dynamic_huffman = false };
       self;
     };
 
     /// Set the LZSS compression level.
     public func lzss(level : CompressionLevel) : EncoderBuilder {
-      _opts := { _opts with lzss = level };
+      _deflate_opts := { _deflate_opts with lzss = level };
       self;
     };
 
-    /// Set the Deflate block size (bytes). Each block becomes one output chunk.
-    public func blockSize(size : Nat) : EncoderBuilder {
-      _opts := { _opts with block_size = size };
+    /// Set the DEFLATE block size (bytes).
+    ///
+    /// This is an **internal compression parameter**: it controls how often
+    /// a new DEFLATE block (and its Huffman table) is started. Smaller values
+    /// increase Huffman overhead; larger values increase per-block memory use.
+    /// The LZSS 32 KiB back-reference window spans all blocks regardless.
+    /// Default: 32 KiB (matches zlib's default).
+    public func deflateBlockSize(size : Nat) : EncoderBuilder {
+      _deflate_opts := { _deflate_opts with deflate_block_size = size };
+      self;
+    };
+
+    /// Set the output chunk size (bytes).
+    ///
+    /// `finish()` packs one or more complete DEFLATE blocks into each output
+    /// chunk, keeping each chunk at most this many bytes. The final chunk also
+    /// carries the 8-byte Gzip footer, so it may be up to ~16 bytes larger than
+    /// this limit. Cuts are always snapped to DEFLATE block boundaries, which is
+    /// required for chunks to be independently decodable via `Decoder.decode()`.
+    ///
+    /// If a single DEFLATE block already exceeds this size, it will be emitted
+    /// as its own (oversized) chunk — set `deflateBlockSize` ≤ `outputChunkSize`.
+    ///
+    /// Default: 2 MiB (fits IC ingress and inter-canister response limits).
+    ///
+    /// This value is also a sensible upper bound for the input slice you feed
+    /// per self-call when spreading compression across ICP messages, since each
+    /// call's compressed output will then be at most one chunk.
+    public func outputChunkSize(size : Nat) : EncoderBuilder {
+      _output_chunk_size := size;
       self;
     };
 
     /// Build the configured `Encoder`.
-    public func build() : Encoder { Encoder(_header, _opts) };
+    public func build() : Encoder {
+      Encoder(_header, _deflate_opts, _output_chunk_size);
+    };
   };
 
   // ── Encoder ───────────────────────────────────────────────────────────────
@@ -92,7 +136,7 @@ module {
   ///
   /// Call `encode(bytes)` one or more times, then `finish()` to retrieve
   /// the compressed `EncodedResponse`.
-  public class Encoder(header : Header, deflate_options : DeflateOptions) {
+  public class Encoder(header : Header, deflate_options : DeflateOptions, output_chunk_size : Nat) {
 
     var input_size = 0;
     let crc32 = CRC32.CRC32();
@@ -109,8 +153,13 @@ module {
       }
     );
 
-    /// Returns the configured Deflate block size.
-    public func blockSize() : Nat { deflate_options.block_size };
+    /// Returns the configured output chunk size.
+    ///
+    /// Use this value as the per-self-call input slice size when spreading
+    /// compression across ICP messages: each input slice of this size will
+    /// produce at most one output chunk, keeping inter-canister payloads
+    /// within IC message limits.
+    public func outputChunkSize() : Nat { output_chunk_size };
 
     /// Compress `bytes` and accumulate them in the internal buffer.
     public func encode(bytes : [Nat8]) {
@@ -169,7 +218,15 @@ module {
       let total = bitbuffer.byteSize();
       let all = bitbuffer.getBytes(0, total);
 
-      // Slice at block boundaries; last chunk includes the Gzip footer
+      // Slice `all` into output chunks.
+      //
+      // Each chunk holds one or more complete DEFLATE blocks (cuts snapped to
+      // DEFLATE boundaries so chunks are independently decodable). The final
+      // chunk carries the Gzip footer and may be up to ~16 B larger than
+      // `output_chunk_size` due to footer + last-block Huffman overhead.
+      //
+      // Degenerate case: if a single DEFLATE block exceeds `output_chunk_size`,
+      // it is emitted as its own oversized chunk rather than being split mid-block.
       let ends = List.toArray(block_ends);
       let n = ends.size();
 
@@ -177,14 +234,27 @@ module {
         // encode() was never called — single chunk with header + empty Deflate + footer
         [all];
       } else {
-        Array.tabulate<[Nat8]>(
-          n,
-          func(i) {
-            let lo = if (i == 0) 0 else ends[i - 1];
-            let hi = if (i == n - 1) total else ends[i];
-            Array.tabulate<Nat8>(hi - lo, func(j) { all[lo + j] });
-          },
-        );
+        let out = List.empty<[Nat8]>();
+        var chunk_lo = 0;
+        var prev_block_end = 0;
+        var blocks_in_chunk = 0;
+
+        for (block_end in ends.vals()) {
+          // Avoid Nat underflow: rewrite `block_end - chunk_lo > output_chunk_size`
+          // as `block_end > chunk_lo + output_chunk_size` (both are Nat, sum never wraps).
+          if (block_end > chunk_lo + output_chunk_size and blocks_in_chunk > 0) {
+            // Adding this block would exceed the limit; emit what we have.
+            List.add(out, Array.tabulate<Nat8>(prev_block_end - chunk_lo, func(j) { all[chunk_lo + j] }));
+            chunk_lo := prev_block_end;
+            blocks_in_chunk := 0;
+          };
+          prev_block_end := block_end;
+          blocks_in_chunk += 1;
+        };
+
+        // Final chunk: from chunk_lo to end of buffer (includes Gzip footer).
+        List.add(out, Array.tabulate<Nat8>(total - chunk_lo, func(j) { all[chunk_lo + j] }));
+        List.toArray(out);
       };
 
       let resp = { chunks; total_size = total };

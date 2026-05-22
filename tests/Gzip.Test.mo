@@ -202,9 +202,9 @@ suite(
     test(
       "small block size produces multiple chunks",
       func() {
-        // A 1-byte block size forces a chunk per symbol (many chunks)
+        // A 1-byte deflate block size forces a block per byte (many chunks)
         let data = Array.tabulate<Nat8>(64, func(i) { Nat8.fromNat(i) });
-        let encoder = Gzip.EncoderBuilder().blockSize(1).build();
+        let encoder = Gzip.EncoderBuilder().deflateBlockSize(1).outputChunkSize(1).build();
         encoder.encode(data);
         let resp = encoder.finish();
         expect.bool(resp.chunks.size() > 0).isTrue();
@@ -230,7 +230,7 @@ suite(
       "total_size matches sum of chunk sizes",
       func() {
         let data = Array.tabulate<Nat8>(256, func(i) { Nat8.fromNat(i % 128) });
-        let encoder = Gzip.EncoderBuilder().blockSize(64).build();
+        let encoder = Gzip.EncoderBuilder().deflateBlockSize(64).outputChunkSize(64).build();
         encoder.encode(data);
         let resp = encoder.finish();
 

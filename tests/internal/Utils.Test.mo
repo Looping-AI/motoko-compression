@@ -3,22 +3,6 @@ import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
 import Utils "../../src/internal/utils";
 
-// ── INSTRUCTION_LIMIT ──────────────────────────────────────────────────────
-
-suite(
-  "Utils.INSTRUCTION_LIMIT",
-  func() {
-
-    test(
-      "value is 1_048_576",
-      func() {
-        expect.nat(Utils.INSTRUCTION_LIMIT).equal(1_048_576);
-      },
-    );
-
-  },
-);
-
 // ── nat_to_le_bytes ────────────────────────────────────────────────────────
 
 suite(

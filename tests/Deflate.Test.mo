@@ -30,12 +30,12 @@ func roundTrip(data : [Nat8], options : Deflate.DeflateOptions) : [Nat8] {
 };
 
 let fixedOpts : Deflate.DeflateOptions = {
-  block_size = 65_535;
+  deflate_block_size = 65_535;
   dynamic_huffman = false;
   lzss = #fast;
 };
 let dynOpts : Deflate.DeflateOptions = {
-  block_size = 65_535;
+  deflate_block_size = 65_535;
   dynamic_huffman = true;
   lzss = #best;
 };
@@ -383,7 +383,7 @@ suite(
       func() {
         let data = Array.tabulate<Nat8>(1000, func(i) = Nat8.fromNat(i % 256));
         let opts : Deflate.DeflateOptions = {
-          block_size = 100;
+          deflate_block_size = 100;
           dynamic_huffman = false;
           lzss = #fast;
         };
@@ -396,7 +396,7 @@ suite(
       func() {
         let data = Array.tabulate<Nat8>(500, func(i) = Nat8.fromNat((i * 7) % 256));
         let opts : Deflate.DeflateOptions = {
-          block_size = 64;
+          deflate_block_size = 64;
           dynamic_huffman = true;
           lzss = #best;
         };
@@ -495,7 +495,7 @@ suite(
       "compressed block_size > 65535 accepted",
       func() {
         let opts : Deflate.DeflateOptions = {
-          block_size = 100_000;
+          deflate_block_size = 100_000;
           dynamic_huffman = true;
           lzss = #fast;
         };

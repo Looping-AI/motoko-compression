@@ -29,6 +29,9 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   transient let gzip_encoder = Gzip.EncoderBuilder().build();
   transient let gzip_decoder = Gzip.Decoder();
 
+  /// Max bytes fed to the encoder per ICP self-call (matches output chunk size).
+  transient let IC_INPUT_CHUNK = gzip_encoder.outputChunkSize();
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   func chunks(data : [Nat8], size : Nat) : [[Nat8]] {
@@ -67,7 +70,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   // ── Private helpers ───────────────────────────────────────────────────────
 
   func compressImage(data : [Nat8]) : async* Gzip.EncodedResponse {
-    for (chunk in chunks(data, gzip_encoder.blockSize()).vals()) {
+    for (chunk in chunks(data, IC_INPUT_CHUNK).vals()) {
       await _compressChunk(chunk);
     };
     gzip_encoder.finish();
