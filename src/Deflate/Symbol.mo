@@ -7,17 +7,12 @@
 import Nat8 "mo:core/Nat8";
 import Nat16 "mo:core/Nat16";
 import Result "mo:core/Result";
-import Runtime "mo:core/Runtime";
 import HuffmanEncoder "../Huffman/Encoder";
 import HuffmanDecoder "../Huffman/Decoder";
 import BitBuffer "../internal/BitBuffer";
 import BitReader "../internal/BitReader";
 
 module {
-
-  type BitBuffer = BitBuffer.BitBuffer;
-  type BitReader = BitReader.BitReader;
-  type Result<A, B> = Result.Result<A, B>;
 
   /// A deflate symbol: literal byte, back-reference, or end-of-block.
   public type Symbol = {
@@ -66,99 +61,7 @@ module {
 
   public let MAX_DISTANCE : Nat = 32_768;
 
-  // ── Length encoding ────────────────────────────────────────────────────
-
-  /// Returns (literal-code, extra-bit-count, extra-bit-value) for a symbol.
-  public func lengthCode(symbol : Symbol) : (Nat16, Nat, Nat16) {
-    let result : (Nat16, Nat, Nat16) = switch symbol {
-      case (#EndOfBlock) { (256, 0, 0) };
-      case (#literal(byte)) { (Nat8.toNat16(byte), 0, 0) };
-      case (#pointer(_, length)) {
-        if (length < 3 or length > 258) {
-          Runtime.trap("Deflate: length " # debug_show length # " out of range [3,258]");
-        };
-        let len = Nat16.fromNat(length);
-        if (len <= 10) { (257 + (len - 3), 0, 0) } else if (len <= 18) {
-          (265 + ((len - 11) / 2), 1, (len - 11) % 2);
-        } else if (len <= 34) { (269 + ((len - 19) / 4), 2, (len - 19) % 4) } else if (len <= 66) {
-          (273 + ((len - 35) / 8), 3, (len - 35) % 8);
-        } else if (len <= 130) { (277 + ((len - 67) / 16), 4, (len - 67) % 16) } else if (len <= 257) {
-          (281 + ((len - 131) / 32), 5, (len - 131) % 32);
-        } else {
-          // length == 258
-          (285, 0, 0);
-        };
-      };
-    };
-
-    return result;
-  };
-
-  // ── Distance encoding ──────────────────────────────────────────────────
-
-  /// Returns ?(distance-code, extra-bit-count, extra-bit-value), or null for non-pointers.
-  public func distanceCode(symbol : Symbol) : ?(Nat, Nat, Nat16) {
-    let result : ?(Nat, Nat, Nat16) = switch symbol {
-      case (#pointer(distance, _)) {
-        if (distance == 0 or distance > MAX_DISTANCE) {
-          Runtime.trap("Deflate: distance " # debug_show distance # " out of range");
-        };
-        if (distance <= 4) {
-          ?(distance - 1, 0, 0);
-        } else {
-          var extra_bits = 1;
-          var base = 4;
-          var marker = 4;
-          // Advance until 2*base >= distance
-          while (base * 2 < distance) {
-            extra_bits += 1;
-            marker += 2;
-            base *= 2;
-          };
-          // base < distance <= 2*base
-          let half = base / 2;
-          let delta = distance - base - 1; // always >= 0 (base < distance)
-          let offset = Nat16.fromNat(delta % half);
-          if (distance <= base + half) {
-            ?(marker, extra_bits, offset);
-          } else {
-            ?(marker + 1, extra_bits, offset);
-          };
-        };
-      };
-      case (_) null;
-    };
-
-    return result;
-  };
-
-  // ── Encoder class ──────────────────────────────────────────────────────
-
-  public class Encoder(
-    literal_encoder : HuffmanEncoder.Encoder,
-    distance_encoder : HuffmanEncoder.Encoder,
-  ) {
-    public let literal = literal_encoder;
-    public let distance = distance_encoder;
-
-    /// Encode one symbol into `bitbuffer`.
-    public func encode(bitbuffer : BitBuffer, symbol : Symbol) {
-      let (marker, extra_bits, offset) = lengthCode(symbol);
-      literal_encoder.encode(bitbuffer, Nat16.toNat(marker));
-      if (extra_bits > 0) {
-        bitbuffer.addBits(extra_bits, Nat16.toNat(offset));
-      };
-      switch (distanceCode(symbol)) {
-        case (?(m, eb, off)) {
-          distance_encoder.encode(bitbuffer, m);
-          if (eb > 0) { bitbuffer.addBits(eb, Nat16.toNat(off)) };
-        };
-        case null {};
-      };
-    };
-  };
-
-  // ── Decoder tables ─────────────────────────────────────────────────────
+  // ── Decoder tables (RFC 1951) ──────────────────────────────────────────
 
   /// (base_length, extra_bits) indexed by length_code - 257.
   let LENGTH_TABLE : [(Nat, Nat)] = [
@@ -227,6 +130,166 @@ module {
     (24_577, 13),
   ];
 
+  // ── Encode helpers (private) ─────────────────────────────────────────────
+  //
+  // Motoko modules only allow purely static top-level `let` bindings
+  // (array literals, func definitions, etc.) — no `var`, loops, or function
+  // applications are permitted at module scope.  The encode logic is
+  // therefore expressed as private functions.  The hot Encoder.encode path
+  // fully inlines the equivalent code with local `var` variables.
+
+  // Helpers used by lengthMarker/distanceMarker and the inlined Encoder.encode.
+  func lenCode(length : Nat) : Nat {
+    if (length <= 10) { 257 + (length - 3) } else if (length <= 18) {
+      265 + (length - 11) / 2;
+    } else if (length <= 34) { 269 + (length - 19) / 4 } else if (length <= 66) {
+      273 + (length - 35) / 8;
+    } else if (length <= 130) { 277 + (length - 67) / 16 } else if (length <= 257) {
+      281 + (length - 131) / 32;
+    } else { 285 } // length == 258
+  };
+  func lenExtraBits(length : Nat) : Nat {
+    if (length <= 10 or length == 258) { 0 } else if (length <= 18) { 1 } else if (length <= 34) {
+      2;
+    } else if (length <= 66) { 3 } else if (length <= 130) { 4 } else { 5 };
+  };
+  func lenExtra(length : Nat) : Nat {
+    if (length <= 10 or length == 258) { 0 } else if (length <= 18) {
+      (length - 11) % 2;
+    } else if (length <= 34) { (length - 19) % 4 } else if (length <= 66) {
+      (length - 35) % 8;
+    } else if (length <= 130) { (length - 67) % 16 } else {
+      (length - 131) % 32;
+    };
+  };
+
+  func distCode(distance : Nat) : Nat {
+    if (distance <= 4) { distance - 1 } else {
+      var extra_bits = 1;
+      var base = 4;
+      var marker = 4;
+      while (base * 2 < distance) { extra_bits += 1; marker += 2; base *= 2 };
+      let half = base / 2;
+      if (distance < base + half + 1) { marker } else { marker + 1 };
+    };
+  };
+  func distExtraBits(distance : Nat) : Nat {
+    if (distance <= 4) { 0 } else {
+      var extra_bits = 1;
+      var base = 4;
+      while (base * 2 < distance) { extra_bits += 1; base *= 2 };
+      extra_bits;
+    };
+  };
+  func distExtra(distance : Nat) : Nat {
+    if (distance <= 4) { 0 } else {
+      var base = 4;
+      while (base * 2 < distance) { base *= 2 };
+      let half = base / 2;
+      (distance - base - 1) % half;
+    };
+  };
+
+  // ── Scalar marker helpers (no tuple, no heap allocation) ──────────────
+
+  /// Sentinel returned by `distanceMarker` for non-pointer symbols.
+  /// Distance codes are 0..29, so 30 is always out of the valid range.
+  public let NO_DISTANCE : Nat = 30;
+
+  /// Returns the literal/length code (0..285) for `symbol` as a plain `Nat`.
+  /// No heap allocation. Use for Huffman frequency counting and any code
+  /// that needs only the code value without extra-bits metadata.
+  public func lengthMarker(symbol : Symbol) : Nat {
+    switch symbol {
+      case (#EndOfBlock) 256;
+      case (#literal(byte)) Nat8.toNat(byte);
+      case (#pointer(_, length)) lenCode(length);
+    };
+  };
+
+  /// Returns the distance code (0..29) for `symbol`, or `NO_DISTANCE` for
+  /// non-pointer symbols.  No heap allocation.  Use for Huffman frequency
+  /// counting and any code that needs only the code value.
+  public func distanceMarker(symbol : Symbol) : Nat {
+    switch symbol {
+      case (#pointer(distance, _)) distCode(distance);
+      case _ NO_DISTANCE;
+    };
+  };
+
+  // ── Encoder class ──────────────────────────────────────────────────────
+
+  public class Encoder(
+    literal_encoder : HuffmanEncoder.Encoder,
+    distance_encoder : HuffmanEncoder.Encoder,
+  ) {
+    public let literal = literal_encoder;
+    public let distance = distance_encoder;
+
+    /// Encode one symbol into `bitbuffer`.
+    ///
+    /// Hot path: length and distance encoding is fully inlined — no tuple
+    /// allocation per symbol.  Length uses an if/else chain; distance uses a
+    /// single while-loop with local `var` accumulators.
+    public func encode(bitbuffer : BitBuffer.BitBuffer, symbol : Symbol) {
+      switch symbol {
+        case (#EndOfBlock) {
+          literal_encoder.encode(bitbuffer, 256);
+        };
+        case (#literal(byte)) {
+          literal_encoder.encode(bitbuffer, Nat8.toNat(byte));
+        };
+        case (#pointer(distance, length)) {
+          // ── Length code (O(1) if/else, no heap) ────────────────────────
+          var lCode : Nat = 0;
+          var lBits : Nat = 0;
+          var lVal : Nat = 0;
+          if (length <= 10) {
+            lCode := 257 + (length - 3);
+          } else if (length <= 18) {
+            lCode := 265 + (length - 11) / 2;
+            lBits := 1;
+            lVal := (length - 11) % 2;
+          } else if (length <= 34) {
+            lCode := 269 + (length - 19) / 4;
+            lBits := 2;
+            lVal := (length - 19) % 4;
+          } else if (length <= 66) {
+            lCode := 273 + (length - 35) / 8;
+            lBits := 3;
+            lVal := (length - 35) % 8;
+          } else if (length <= 130) {
+            lCode := 277 + (length - 67) / 16;
+            lBits := 4;
+            lVal := (length - 67) % 16;
+          } else if (length < 258) {
+            lCode := 281 + (length - 131) / 32;
+            lBits := 5;
+            lVal := (length - 131) % 32;
+          } else {
+            lCode := 285; // length == 258, no extra bits
+          };
+          literal_encoder.encode(bitbuffer, lCode);
+          if (lBits > 0) { bitbuffer.addBits(lBits, lVal) };
+          // ── Distance code (O(log₂ d) loop, no heap) ───────────────────
+          if (distance <= 4) {
+            distance_encoder.encode(bitbuffer, distance - 1);
+          } else {
+            var dBits = 1;
+            var dBase = 4;
+            while (dBase * 2 < distance) { dBits += 1; dBase *= 2 };
+            // After loop: dBase < distance ≤ 2*dBase
+            let dHalf = dBase / 2;
+            distance_encoder.encode(bitbuffer, 2 * dBits + 2 + (if (distance < dBase + dHalf + 1) 0 else 1));
+            if (dBits > 0) {
+              bitbuffer.addBits(dBits, (distance - dBase - 1) % dHalf);
+            };
+          };
+        };
+      };
+    };
+  };
+
   // ── Decoder class ──────────────────────────────────────────────────────
 
   public class Decoder(
@@ -234,7 +297,7 @@ module {
     distance_decoder : HuffmanDecoder.Decoder,
   ) {
     /// Decode one symbol from `reader`.
-    public func decode(reader : BitReader) : Result<Symbol, Text> {
+    public func decode(reader : BitReader.BitReader) : Result.Result<Symbol, Text> {
       let sym_res = decodeLiteral(reader);
       let #ok(sym) = sym_res else return sym_res;
       // If it's a pointer, the distance is still 0 — we need to decode it.
@@ -249,7 +312,7 @@ module {
       };
     };
 
-    func decodeLiteral(reader : BitReader) : Result<Symbol, Text> {
+    func decodeLiteral(reader : BitReader.BitReader) : Result.Result<Symbol, Text> {
       let val = switch (literal_decoder.decode(reader)) {
         case (#ok(v)) v;
         case (#err(msg)) return #err(msg);
@@ -267,7 +330,7 @@ module {
       };
     };
 
-    func decodeDistance(reader : BitReader) : Result<Nat, Text> {
+    func decodeDistance(reader : BitReader.BitReader) : Result.Result<Nat, Text> {
       let val = switch (distance_decoder.decode(reader)) {
         case (#ok(v)) v;
         case (#err(msg)) return #err(msg);

@@ -132,14 +132,11 @@ module {
       var empty_distance = true;
 
       for (symbol in symbols_iter) {
-        let (marker, _, _) = Symbol.lengthCode(symbol);
-        literal_freq[Nat16.toNat(marker)] += 1;
-        switch (Symbol.distanceCode(symbol)) {
-          case (?(m, _, _)) {
-            distance_freq[m] += 1;
-            empty_distance := false;
-          };
-          case null {};
+        literal_freq[Symbol.lengthMarker(symbol)] += 1;
+        let dm = Symbol.distanceMarker(symbol);
+        if (dm != Symbol.NO_DISTANCE) {
+          distance_freq[dm] += 1;
+          empty_distance := false;
         };
       };
       // EndOfBlock is always emitted, even if not in the iterator

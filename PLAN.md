@@ -262,17 +262,33 @@ already 7× cheaper; optimisation priority is lower.
 
 Maps LZSS entries to DEFLATE length/distance symbols and extra bits.
 
-- [x] **Baseline measured** — 2026-05-21T23-21-50Z (100 KiB, dynamic Huffman, single block)
-- [ ] `lengthCode` / `distanceCode` — eliminate per-call tuple heap allocation
-- [ ] Replace `switch` arithmetic with precomputed lookup arrays (LENGTH_TABLE / DISTANCE_TABLE already exist on the decode side)
+- [x] **Baseline measured** — 2026-05-22T13-23-55Z (100 KiB, **fixed** Huffman, 8 blocks × 12.8 KiB; `deflate:add` avg = 79 523 instrs, 4 744 B heap)
+- [x] `lengthCode` / `distanceCode` — eliminate per-call tuple heap allocation
+- [x] Replace `switch` arithmetic with inline scalar computation; add `lengthMarker`/`distanceMarker` scalar helpers; rewrite `Symbol.Encoder.encode` to fully inline length+distance encoding with local `var` accumulsators and a single `while`-loop (no heap, no function call)
 
-**Notes:**
+**Notes (baseline 2026-05-21T23-21-50Z):**
 `lengthCode` = 45,835 calls, **54,967 avg instrs/call, 3,309 B heap/call**.
 `distanceCode` = 45,835 calls, **54,911 avg instrs/call, 3,273 B heap/call**.
 Together: ~5.04B instrs ≈ **50% of total `flush` cost**; ~302 MB heap across one 100 KiB compress call.
 Root cause: both functions return heap-allocated tuple types — `(Nat16, Nat, Nat16)` and `?(Nat, Nat, Nat16)`.
 `distanceCode` also contains a `while` loop (up to log₂(distance) iterations) that mutates `Nat` locals, adding box/unbox overhead per pointer symbol.
 Primary target: eliminate tuple allocation — pass an output record by ref, use a lookup table, or return a flat scalar encoding.
+
+**Notes (after 2026-05-22T14-32-44Z):**
+Attempted `Array.tabulate` precomputed lookup tables — **rejected by compiler** (Motoko modules only allow purely-static `let` bindings; function applications and `do { var }` blocks are banned at module scope).
+Instead: `Symbol.Encoder.encode` is fully inlined with local `var` accumulators for the length if/else chain and a single fused while-loop for distances. Public `lengthCode`/`distanceCode` API retained (now call private `_lenCode`/`_distCode` etc. helpers). Added `lengthMarker`/`distanceMarker` scalar helpers for the dynamic-Huffman frequency-counting path in `HuffmanCodec.mo`.
+
+Result — **2026-05-22T14-32-44Z** vs baseline:
+
+| Function                      | Before avg instrs           | After                        | Before avg heap | After                |
+| ----------------------------- | --------------------------- | ---------------------------- | --------------- | -------------------- |
+| `deflate:encode` inclusive    | 30.08 B                     | **11.58 B (−61.5%)**         | 1 810 MB        | **705 MB (−61.1%)**  |
+| `deflate:flush` avg inclusive | 3.59 B                      | **31.6 M (−99.1%, 114×)**    | 215 MB          | **50 KB (−99.98%)**  |
+| `deflate:flush` max inclusive | 10.32 B                     | **74.0 M (−99.3%, 139×)**    | 619 MB          | **62 KB (−99.99%)**  |
+| `deflate:add` avg             | 79 523                      | **58 702 (−26.2%)**          | 4 744 B         | **3 543 B (−25.3%)** |
+| `deflate:lengthCode`          | 45 838 calls, 77 849 instrs | **eliminated from hot path** | 4 719 B         | **0**                |
+| `deflate:distanceCode`        | 45 838 calls, 77 747 instrs | **eliminated from hot path** | 4 683 B         | **0**                |
+| `deflate:build` avg           | 749 962                     | 700 739 (−6.6%)              | 33 018 B        | 31 816 B (−3.6%)     |
 
 ---
 
@@ -378,12 +394,12 @@ Full Gzip decode pipeline: header → DEFLATE → CRC32 verification.
 Record the last clean perf run for each component here before any optimization work.
 Update these numbers each time a new baseline is established.
 
-| Component | Timestamp            | `avg_delta` instrs                              | `avg_delta` mem (bytes) | `avg_delta` heap (bytes) |
-| --------- | -------------------- | ----------------------------------------------- | ----------------------- | ------------------------ |
-| huffman   | 2026-05-20T10:06:04Z | —                                               | —                       | —                        |
-| gzip      | 2026-05-20T09:17:56Z | —                                               | —                       | —                        |
-| deflate   | 2026-05-21T23-21-50Z | 54,967 (`lengthCode`) / 54,911 (`distanceCode`) | 3,311 / 3,274           | 3,309 / 3,273            |
-| lzss      | 2026-05-21T14-44-47Z | 285 759 (`encodeByte`)                          | 17 247 (`encodeByte`)   | 17 247 (`encodeByte`)    |
+| Component | Timestamp            | `avg_delta` instrs                                          | `avg_delta` mem (bytes) | `avg_delta` heap (bytes) |
+| --------- | -------------------- | ----------------------------------------------------------- | ----------------------- | ------------------------ |
+| huffman   | 2026-05-20T10:06:04Z | —                                                           | —                       | —                        |
+| gzip      | 2026-05-20T09:17:56Z | —                                                           | —                       | —                        |
+| deflate   | 2026-05-22T14-32-44Z | 58 702 (`add` avg) — `lengthCode`/`distanceCode` eliminated | 3 624 B (`add`)         | 3 543 B (`add`)          |
+| lzss      | 2026-05-21T14-44-47Z | 285 759 (`encodeByte`)                                      | 17 247 (`encodeByte`)   | 17 247 (`encodeByte`)    |
 
 <!-- Fill in per_method deltas from scripts/output/ JSON reports -->
 
@@ -391,11 +407,11 @@ Update these numbers each time a new baseline is established.
 
 ## Completed optimizations log
 
-| Date       | Component | File                                  | Change                                                                                                                                                | Δ instrs/call                                                              | Δ heap/call                                | Δ total heap (10 KiB)   | Commit |
-| ---------- | --------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------ | ----------------------- | ------ |
-| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`           | Inline `getPos` at 2 call sites                                                                                                                       | −58 034 (−32%) on `getByte`/`getBits`                                      | −3 464 B (−32%)                            | −37 MB                  | —      |
-| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites                                                                                 | −48 133 per `range` call (×11 201 calls)                                   | −2 684 B per call                          | ~−30 MB                 | —      |
-| 2026-05-21 | bitreader | `src/internal/BitReader.mo`           | Cache `available` field; inline `isValid` bounds check at all 5 call sites                                                                            | −59% total workload instrs; `peekBits` −59% instrs, `skipBits` −59% instrs | `peekBits` −60% heap, `skipBits` −60% heap | −90 MB (161 MB → 71 MB) | —      |
-| 2026-05-21 | crc32     | `src/internal/CRC32.mo`               | Rewrite `update` to process `[Nat8]` in direct 8-byte strides; remove `updateByte` + dead fields                                                      | −93% total instrs (697M → 47M); `updateByte` 20 480 calls → 0              | 2 106 B/byte → ~0                          | −35 MB (48 MB → 13 MB)  | —      |
-| 2026-05-21 | lzss      | `src/LZSS/Encoder/PrefixTable/lib.mo` | `insert(bytes:[Nat8], start, len, index)` → `insert(b0, b1, b2, index)`; eliminates transient `[Nat8]` allocation and bounds-check at every call site | −514 instrs/call (−0.18%)                                                  | −56 B/call (−0.32%)                        | −574 KB (10 KiB run)    | —      |
-| 2026-05-21 | lzss      | `src/LZSS/Encoder/lib.mo`             | `cache_buffer: CircularBuffer(2)` → two `?Nat8` scalar fields; removes object dispatch for 2-byte post-match cache                                    | −33 instrs/call (−0.012%)                                                  | −18 B/call                                 | −184 KB (10 KiB run)    | —      |
+| Date       | Component | File                                                    | Change                                                                                                                                                                                 | Δ instrs/call                                                                       | Δ heap/call                                | Δ total heap (10 KiB)   | Commit |
+| ---------- | --------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------- | ------ |
+| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`                             | Inline `getPos` at 2 call sites                                                                                                                                                        | −58 034 (−32%) on `getByte`/`getBits`                                               | −3 464 B (−32%)                            | −37 MB                  | —      |
+| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files                   | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites                                                                                                                  | −48 133 per `range` call (×11 201 calls)                                            | −2 684 B per call                          | ~−30 MB                 | —      |
+| 2026-05-21 | bitreader | `src/internal/BitReader.mo`                             | Cache `available` field; inline `isValid` bounds check at all 5 call sites                                                                                                             | −59% total workload instrs; `peekBits` −59% instrs, `skipBits` −59% instrs          | `peekBits` −60% heap, `skipBits` −60% heap | −90 MB (161 MB → 71 MB) | —      |
+| 2026-05-21 | crc32     | `src/internal/CRC32.mo`                                 | Rewrite `update` to process `[Nat8]` in direct 8-byte strides; remove `updateByte` + dead fields                                                                                       | −93% total instrs (697M → 47M); `updateByte` 20 480 calls → 0                       | 2 106 B/byte → ~0                          | −35 MB (48 MB → 13 MB)  | —      |
+| 2026-05-22 | deflate   | `src/Deflate/Symbol.mo` + `src/Deflate/HuffmanCodec.mo` | Inline `Encoder.encode` hot path with `var` accumulator + while-loop; add `lengthMarker`/`distanceMarker` scalars; remove tuple allocation from `lengthCode`/`distanceCode` call sites | `deflate:encode` −61.5% (30.1B → 11.6B); `deflate:flush` avg −99.1% (3.59B → 31.6M) | −99.98% flush heap (215 MB → 50 KB avg)    | —                       | —      |
+| 2026-05-21 | lzss      | `src/LZSS/Encoder/lib.mo`                               | `cache_buffer: CircularBuffer(2)` → two `?Nat8` scalar fields; removes object dispatch for 2-byte post-match cache                                                                     | −33 instrs/call (−0.012%)                                                           | −18 B/call                                 | −184 KB (10 KiB run)    | —      |
