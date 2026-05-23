@@ -77,6 +77,10 @@ module {
     restoreHuffmanCodes(builder, bitwidths);
   };
 
+  /// Sentinel returned by `decodeRaw` when the bit stream contains an
+  /// unrecognised pattern.  Callers must check for this and propagate an error.
+  public let DECODE_ERROR : Nat = 0xFFFF_FFFF;
+
   public class Decoder(table : [var Nat], max_bitwidth : Nat) {
 
     var min_bitwidth : ?Nat = null;
@@ -121,19 +125,18 @@ module {
       #ok(decoded);
     };
 
-    /// Decode one symbol using the fast path: single max_bitwidth peek into
-    /// the flat pre-filled table, no Result allocation, no peek-grow loop.
+    /// Sentinel returned by `decodeRaw` when the bit stream contains an
+    /// unrecognised pattern (i.e. the table entry is the initialisation
+    /// sentinel).  Callers must check for this value and propagate an error.
     ///
-    /// The caller must use a `BitAccumulator` (not a `BitReader`). Refill is
-    /// performed internally before each peek.
-    ///
-    /// Traps on corrupt input (unrecognised bit pattern).
+    /// Returns `DECODE_ERROR` on corrupt input (unrecognised bit pattern).
+    /// The accumulator position is NOT advanced in the error case.
     public func decodeRaw(acc : BitAccumulator.BitAccumulator) : Nat {
       acc.refill();
       let v = table[acc.peekNat(max_bitwidth)];
       let w = v % 32; // bitwidth stored in low 5 bits
       if (w > max_bitwidth) {
-        Runtime.trap("Huffman.Decoder.decodeRaw: unrecognised bit pattern at bit " # debug_show (acc.bitPosition()));
+        return DECODE_ERROR;
       };
       acc.drop(w);
       v / 32 // symbol stored in high bits

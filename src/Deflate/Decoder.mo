@@ -1,124 +1,328 @@
-/// Deflate decoder.
+/// Deflate decoder — RFC 1951.
 ///
-/// Reads a deflate-compressed bitstream block by block, appending decoded
-/// bytes to an internal (or caller-supplied) List<Nat8>.
+/// Single-pass fused decoder: one tight loop per block, no per-symbol
+/// allocations, Nat64 bit accumulator, [var Nat8] output buffer.
 ///
-/// Key differences from edjcase original:
-///   - Buffer<Nat8> output → List.List<Nat8> (mo:core)
-///   - Recursive decode() → iterative label/loop (no recursion in Motoko async)
-///   - No `debug {}` wrapper (would swallow all logic in production)
+/// Public API:
+///   Decoder(inputBytes : [Nat8])
+///   decode() : Result<[Nat8], Text>
+///   bytesConsumed() : Nat   — bytes read from input (for Gzip footer parsing)
 
 import Array "mo:core/Array";
-import List "mo:core/List";
-import Option "mo:core/Option";
+import Nat8 "mo:core/Nat8";
+import Prim "mo:⛔";
 import Result "mo:core/Result";
-import BitReader "../internal/BitReader";
-import HuffmanCodec "HuffmanCodec";
-import LzssDecoder "../LZSS/Decoder";
-import Utils "../internal/utils";
+import Runtime "mo:core/Runtime";
+import BitAccumulator "../internal/BitAccumulator";
+import HuffmanDecoder "../Huffman/Decoder";
+import OutByteBuffer "../internal/OutByteBuffer";
+import Symbol "Symbol";
 
 module {
 
-  type BitReader = BitReader.BitReader;
   type Result<A, B> = Result.Result<A, B>;
+
+  // ── RFC 1951 length/distance decode tables ─────────────────────────────
+  // (base, extra_bits) indexed by (length_code - 257) and distance_code.
+  // Re-declared here to keep the new decoder self-contained.
+
+  let LENGTH_TABLE : [(Nat, Nat)] = [
+    (3, 0),
+    (4, 0),
+    (5, 0),
+    (6, 0),
+    (7, 0),
+    (8, 0),
+    (9, 0),
+    (10, 0),
+    (11, 1),
+    (13, 1),
+    (15, 1),
+    (17, 1),
+    (19, 2),
+    (23, 2),
+    (27, 2),
+    (31, 2),
+    (35, 3),
+    (43, 3),
+    (51, 3),
+    (59, 3),
+    (67, 4),
+    (83, 4),
+    (99, 4),
+    (115, 4),
+    (131, 5),
+    (163, 5),
+    (195, 5),
+    (227, 5),
+    (258, 0),
+  ];
+
+  let DISTANCE_TABLE : [(Nat, Nat)] = [
+    (1, 0),
+    (2, 0),
+    (3, 0),
+    (4, 0),
+    (5, 1),
+    (7, 1),
+    (9, 2),
+    (13, 2),
+    (17, 3),
+    (25, 3),
+    (33, 4),
+    (49, 4),
+    (65, 5),
+    (97, 5),
+    (129, 6),
+    (193, 6),
+    (257, 7),
+    (385, 7),
+    (513, 8),
+    (769, 8),
+    (1025, 9),
+    (1537, 9),
+    (2049, 10),
+    (3073, 10),
+    (4097, 11),
+    (6145, 11),
+    (8193, 12),
+    (12_289, 12),
+    (16_385, 13),
+    (24_577, 13),
+  ];
+
+  // ── Fixed Huffman table builders ───────────────────────────────────────
+  // Module-level private functions — bodies can use var/loops freely.
+  // Called from the Decoder class constructor (once per decode call).
+
+  func buildFixedLitDecoder() : HuffmanDecoder.Decoder {
+    // RFC 1951 §3.2.6 bitwidths:
+    //   0-143  → 8 bits    144-255 → 9 bits
+    //   256-279 → 7 bits   280-287 → 8 bits
+    let bws = Prim.Array_init<Nat>(288, 0);
+    var s = 0;
+    while (s <= 143) { bws[s] := 8; s += 1 };
+    while (s <= 255) { bws[s] := 9; s += 1 };
+    while (s <= 279) { bws[s] := 7; s += 1 };
+    while (s <= 287) { bws[s] := 8; s += 1 };
+    switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(bws))) {
+      case (#ok(d)) d;
+      case (#err(e)) Runtime.trap("buildFixedLitDecoder: " # e);
+    };
+  };
+
+  func buildFixedDistDecoder() : HuffmanDecoder.Decoder {
+    // RFC 1951 §3.2.6: all 30 distance codes have bitwidth 5.
+    let bws = Prim.Array_init<Nat>(30, 5);
+    switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(bws))) {
+      case (#ok(d)) d;
+      case (#err(e)) Runtime.trap("buildFixedDistDecoder: " # e);
+    };
+  };
 
   // ── Decoder class ──────────────────────────────────────────────────────
 
-  public class Decoder(bitreader : BitReader, output_buffer : ?List.List<Nat8>) {
+  public class Decoder(inputBytes : [Nat8]) {
 
-    var end_of_blocks : Bool = false;
-    let buffer = Option.get(output_buffer, List.empty<Nat8>());
-    let lzss = LzssDecoder.Decoder();
+    let acc = BitAccumulator.BitAccumulator(inputBytes);
+    var err : ?Text = null;
+    let fixedLit : HuffmanDecoder.Decoder = buildFixedLitDecoder();
+    let fixedDist : HuffmanDecoder.Decoder = buildFixedDistDecoder();
 
-    /// Reset decoder state so it can process a new stream.
-    public func clear() {
-      end_of_blocks := false;
-    };
+    // ── Public API ────────────────────────────────────────────────────────
 
-    /// Process deflate blocks until the final block or the stream is empty.
-    public func decode() : Result<(), Text> {
-      label _loop loop {
-        // Stop if the final block has been processed
-        if (end_of_blocks) break _loop;
-        // Stream ran out of bits before we saw BFINAL=1
-        if (bitreader.bitSize() == 0) {
-          return #err("Deflate: stream ended before final block");
+    /// Decompress the full deflate stream and return the decoded bytes.
+    public func decode() : Result<[Nat8], Text> {
+      let out = OutByteBuffer.OutByteBuffer(65536);
+      var bfinal = false;
+
+      label _blocks loop {
+        if (bfinal) break _blocks;
+
+        if (acc.bitsLeft() == 0) {
+          err := ?"Deflate: stream ended before final block";
+          break _blocks;
         };
 
-        end_of_blocks := bitreader.readBit(); // BFINAL
-        let block_type = bitreader.readBits(2); // BTYPE
+        bfinal := acc.readBit(); // BFINAL
+        let btype = acc.readBits(2); // BTYPE
 
-        let res : Result<(), Text> = if (block_type == 0) {
-          decodeNonCompressed();
-        } else if (block_type == 1) {
-          decodeCompressed(HuffmanCodec.FixedHuffmanCodec());
-        } else if (block_type == 2) {
-          decodeCompressed(HuffmanCodec.DynamicHuffmanCodec());
+        if (btype == 0) {
+          decodeStoredBlock(out);
+        } else if (btype == 1) {
+          decodeCompressedBlock(out, fixedLit, fixedDist);
+        } else if (btype == 2) {
+          switch (loadDynamicHeader()) {
+            case (#ok((ld, dd))) decodeCompressedBlock(out, ld, dd);
+            case (#err(msg)) { err := ?msg; break _blocks };
+          };
         } else {
-          #err("Deflate: invalid block type " # debug_show block_type);
+          err := ?"Deflate: invalid block type 3";
+          break _blocks;
         };
 
-        switch res {
-          case (#err(msg)) {
-            return #err(msg);
+        if (err != null) break _blocks;
+      };
+
+      switch err {
+        case (?msg) #err(msg);
+        case null #ok(out.toArray());
+      };
+    };
+
+    /// Number of input bytes consumed after decode().
+    /// Rounded up to the next byte boundary (callers use this to locate
+    /// the Gzip footer that follows the deflate data).
+    public func bytesConsumed() : Nat {
+      (acc.bitPosition() + 7) / 8;
+    };
+
+    // ── Stored block (type 0) ─────────────────────────────────────────────
+
+    func decodeStoredBlock(out : OutByteBuffer.OutByteBuffer) {
+      acc.byteAlign();
+      let len0 = Nat8.toNat(acc.readByte());
+      let len1 = Nat8.toNat(acc.readByte());
+      let size = len0 + len1 * 256;
+      let nlen0 = Nat8.toNat(acc.readByte());
+      let nlen1 = Nat8.toNat(acc.readByte());
+      let nlen = nlen0 + nlen1 * 256;
+      // RFC 1951: NLEN is one's complement of LEN ↔ nlen + size == 0xFFFF
+      if (nlen + size != 0xFFFF) {
+        err := ?"Deflate: LEN/NLEN mismatch in stored block";
+        return;
+      };
+      var i = 0;
+      while (i < size) { out.add(acc.readByte()); i += 1 };
+    };
+
+    // ── Compressed block (type 1 or 2) ────────────────────────────────────
+
+    func decodeCompressedBlock(
+      out : OutByteBuffer.OutByteBuffer,
+      litDec : HuffmanDecoder.Decoder,
+      distDec : HuffmanDecoder.Decoder,
+    ) {
+      label _syms loop {
+        let sym = litDec.decodeRaw(acc);
+        if (sym == HuffmanDecoder.DECODE_ERROR) {
+          err := ?("Deflate: invalid literal/length Huffman code");
+          break _syms;
+        };
+
+        if (sym < 256) {
+          out.add(Nat8.fromNat(sym));
+        } else if (sym == 256) {
+          break _syms; // end-of-block
+        } else {
+          // Length code 257..285
+          let lenIdx : Nat = sym - 257;
+          if (lenIdx >= 29) {
+            err := ?("Deflate: invalid length code " # debug_show sym);
+            break _syms;
           };
-          case (#ok(_)) {};
+          let (baseLen, lenExtra) = LENGTH_TABLE[lenIdx];
+          let length = if (lenExtra == 0) baseLen else baseLen + acc.readBits(lenExtra);
+
+          let dc = distDec.decodeRaw(acc);
+          if (dc == HuffmanDecoder.DECODE_ERROR) {
+            err := ?("Deflate: invalid distance Huffman code");
+            break _syms;
+          };
+          if (dc >= 30) {
+            err := ?("Deflate: invalid distance code " # debug_show dc);
+            break _syms;
+          };
+          let (baseDist, distExtra) = DISTANCE_TABLE[dc];
+          let distance = if (distExtra == 0) baseDist else baseDist + acc.readBits(distExtra);
+
+          out.copyMatch(distance, length);
         };
       };
-
-      return #ok();
     };
 
-    /// Decode a non-compressed (raw) block.
-    func decodeNonCompressed() : Result<(), Text> {
-      bitreader.byteAlign();
-      let size_bytes = bitreader.readBytes(2);
-      let size = Utils.leBytesToNat(size_bytes);
-      let nlen = Utils.leBytesToNat(bitreader.readBytes(2));
-      // Verify NLEN == one's complement of LEN
-      let expected_nlen = Utils.leBytesToNat(
-        Array.map<Nat8, Nat8>(size_bytes, func(b) { ^b })
-      );
-      if (nlen != expected_nlen) {
-        return #err("Deflate: LEN/NLEN mismatch in non-compressed block");
-      };
-      for (byte in bitreader.readBytes(size).vals()) {
-        List.add(buffer, byte);
-      };
-      #ok();
-    };
+    // ── Dynamic header (type 2) ───────────────────────────────────────────
 
-    /// Decode a Huffman-compressed block (fixed or dynamic).
-    func decodeCompressed(huffman : HuffmanCodec.HuffmanCodec) : Result<(), Text> {
-      let sym_dec = switch (huffman.load(bitreader)) {
+    func loadDynamicHeader() : Result<(HuffmanDecoder.Decoder, HuffmanDecoder.Decoder), Text> {
+      let lcc = acc.readBits(5) + 257; // HLIT  + 257 = literal/length code count
+      let dcc = acc.readBits(5) + 1; // HDIST + 1   = distance code count
+      let bwcc = acc.readBits(4) + 4; // HCLEN + 4   = code-length code count
+
+      if (lcc > 286) return #err("Deflate: HLIT too large: " # debug_show lcc);
+      if (dcc > 30) return #err("Deflate: HDIST too large: " # debug_show dcc);
+
+      // Read the meta code-length bitwidths (RFC 1951 §3.2.7 order).
+      let bwArr = Prim.Array_init<Nat>(19, 0);
+      var i = 0;
+      while (i < bwcc) {
+        bwArr[Symbol.BITWIDTH_CODE_ORDER[i]] := acc.readBits(3);
+        i += 1;
+      };
+
+      let metaDec = switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(bwArr))) {
         case (#ok(d)) d;
-        case (#err(msg)) {
-          return #err(msg);
+        case (#err(msg)) return #err("Deflate: meta-Huffman: " # msg);
+      };
+
+      // Expand literal/length bitwidths.
+      let litBws = Prim.Array_init<Nat>(lcc, 0);
+      var litPos = 0;
+      var lastBw : Nat = 0;
+      while (litPos < lcc) {
+        let code = metaDec.decodeRaw(acc);
+        if (code == HuffmanDecoder.DECODE_ERROR) return #err("Deflate: invalid meta-Huffman code in literal section");
+        let (bw, cnt) = expandBwCode(code, lastBw);
+        lastBw := bw;
+        var j = 0;
+        while (j < cnt and litPos < lcc) {
+          litBws[litPos] := bw;
+          litPos += 1;
+          j += 1;
         };
       };
-      label _loop loop {
-        let sym = switch (sym_dec.decode(bitreader)) {
-          case (#ok(s)) s;
-          case (#err(msg)) {
-            return #err(msg);
-          };
-        };
-        switch sym {
-          case (#EndOfBlock) break _loop;
-          case (#literal(lit)) lzss.decodeEntry(buffer, #literal(lit));
-          case (#pointer(back)) lzss.decodeEntry(buffer, #pointer(back));
+
+      // Expand distance bitwidths (lastBw carries over from literal section).
+      let distBws = Prim.Array_init<Nat>(dcc, 0);
+      var distPos = 0;
+      while (distPos < dcc) {
+        let code = metaDec.decodeRaw(acc);
+        if (code == HuffmanDecoder.DECODE_ERROR) return #err("Deflate: invalid meta-Huffman code in distance section");
+        let (bw, cnt) = expandBwCode(code, lastBw);
+        lastBw := bw;
+        var j = 0;
+        while (j < cnt and distPos < dcc) {
+          distBws[distPos] := bw;
+          distPos += 1;
+          j += 1;
         };
       };
-      return #ok();
+
+      let ld = switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(litBws))) {
+        case (#ok(d)) d;
+        case (#err(msg)) return #err("Deflate: literal decoder: " # msg);
+      };
+      let dd = switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(distBws))) {
+        case (#ok(d)) d;
+        case (#err(msg)) return #err("Deflate: distance decoder: " # msg);
+      };
+
+      #ok((ld, dd));
     };
 
-    /// Process any remaining data in the bitreader and return.
-    public func finish() : Result<(), Text> {
-      return decode();
+    // Expand one meta bitwidth code → (bitwidth, repeat_count).
+    //   16 = copy previous non-zero length 3+readBits(2) times
+    //   17 = produce zeros for 3+readBits(3) times
+    //   18 = produce zeros for 11+readBits(7) times
+    //   0-15 = literal bitwidth, count 1
+    func expandBwCode(code : Nat, lastBw : Nat) : (Nat, Nat) {
+      switch code {
+        case 16 { (lastBw, acc.readBits(2) + 3) };
+        case 17 { (0, acc.readBits(3) + 3) };
+        case 18 { (0, acc.readBits(7) + 11) };
+        case _ { (code, 1) };
+      };
     };
 
-    /// Return all decoded bytes as an immutable array.
-    public func toArray() : [Nat8] { List.toArray(buffer) };
   };
 
 };

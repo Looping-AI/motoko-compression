@@ -7,7 +7,7 @@
 /// `decode()` only accumulates bytes; all decompression work happens in
 /// `finish()`.  This avoids partial-block reads that would trap in BitReader.
 
-import List "mo:core/List";
+import Array "mo:core/Array";
 import Nat32 "mo:core/Nat32";
 import Result "mo:core/Result";
 
@@ -38,8 +38,6 @@ module {
   public class Decoder() {
 
     let reader = BitReader.BitReader();
-    let buffer = List.empty<Nat8>();
-    let deflate = DeflateDecoder.Decoder(reader, ?buffer);
 
     // ── Public API ──────────────────────────────────────────────────────────
 
@@ -55,27 +53,33 @@ module {
     ///
     /// Calls `clear()` on success before returning.
     public func finish() : Result<DecodedResponse, Text> {
-      // 1. Decode the Gzip header
+      // 1. Decode the Gzip header (uses BitReader for existing Header.decode API).
       let header = switch (Header.decode(reader)) {
         case (#err(msg)) return #err(msg);
         case (#ok(h)) h;
       };
 
-      // Free the header bytes from the reader buffer
+      // Drop the consumed header bytes; remaining bytes = deflate payload + footer.
       reader.clearRead();
+      let remaining = reader.readBytes(reader.byteSize());
 
-      // 2. Deflate-decompress the payload
-      switch (deflate.decode()) {
+      // 2. Deflate-decompress the payload.
+      let deflate = DeflateDecoder.Decoder(remaining);
+      let decodedBytes = switch (deflate.decode()) {
         case (#err(msg)) return #err(msg);
-        case (#ok(_)) {};
+        case (#ok(b)) b;
       };
 
-      // 3. Byte-align to reach the Gzip footer
-      reader.byteAlign();
+      // 3. Locate the Gzip footer (8 bytes) immediately after the deflate data.
+      let c = deflate.bytesConsumed();
+      if (c + 8 > remaining.size()) {
+        return #err("Gzip: stream truncated — no footer");
+      };
 
-      // 4. Read and verify CRC32 (4 bytes, LE)
-      let stored_crc32 = Nat32.fromNat(Utils.leBytesToNat(reader.readBytes(4)));
-      let actual_crc32 = CRC32.checksum(List.toArray(buffer));
+      // 4. Verify CRC32 (4 bytes, LE).
+      let crcSlice = Array.tabulate<Nat8>(4, func(k) { remaining[c + k] });
+      let stored_crc32 = Nat32.fromNat(Utils.leBytesToNat(crcSlice));
+      let actual_crc32 = CRC32.checksum(decodedBytes);
       if (stored_crc32 != actual_crc32) {
         return #err(
           "Gzip: CRC32 mismatch — stored "
@@ -85,9 +89,10 @@ module {
         );
       };
 
-      // 5. Read and verify ISIZE (4 bytes, LE, mod 2^32)
-      let stored_isize = Utils.leBytesToNat(reader.readBytes(4));
-      let actual_isize = List.size(buffer) % 4294967296;
+      // 5. Verify ISIZE (4 bytes, LE, mod 2^32).
+      let isizeSlice = Array.tabulate<Nat8>(4, func(k) { remaining[c + 4 + k] });
+      let stored_isize = Utils.leBytesToNat(isizeSlice);
+      let actual_isize = decodedBytes.size() % 4294967296;
       if (stored_isize != actual_isize) {
         return #err(
           "Gzip: ISIZE mismatch — stored "
@@ -99,7 +104,7 @@ module {
 
       let result : DecodedResponse = {
         header;
-        bytes = List.toArray(buffer);
+        bytes = decodedBytes;
       };
 
       clear();
@@ -109,8 +114,6 @@ module {
     /// Reset the decoder state so it can be reused for a new stream.
     public func clear() {
       reader.clear();
-      List.clear(buffer);
-      deflate.clear();
     };
   };
 

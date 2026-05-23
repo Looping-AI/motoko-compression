@@ -2,7 +2,6 @@ import { test; suite; expect } "mo:test";
 import Array "mo:core/Array";
 import Nat8 "mo:core/Nat8";
 import Runtime "mo:core/Runtime";
-import BitReader "../src/internal/BitReader";
 import DeflateDecoder "../src/Deflate/Decoder";
 import Symbol "../src/Deflate/Symbol";
 import Deflate "../src/Deflate/lib";
@@ -16,15 +15,11 @@ func roundTrip(data : [Nat8], options : Deflate.DeflateOptions) : [Nat8] {
   let bb = encoder.finish();
   let bytes = bb.getBytes(0, bb.byteSize());
 
-  let reader = BitReader.BitReader();
-  reader.addBytes(bytes);
-  let decoder = DeflateDecoder.Decoder(reader, null);
-  let res = decoder.finish();
-  switch res {
-    case (#ok(_)) {};
+  let decoder = DeflateDecoder.Decoder(bytes);
+  switch (decoder.decode()) {
+    case (#ok(result)) result;
     case (#err(msg)) Runtime.trap("Decode error: " # msg # " bytes=" # debug_show bytes);
   };
-  decoder.toArray();
 };
 
 let fixedOpts : Deflate.DeflateOptions = {
@@ -309,11 +304,9 @@ suite(
 // ── Suite: Decoder error paths ────────────────────────────────────────────
 
 func decodeBytes(bytes : [Nat8]) : { #ok : [Nat8]; #err : Text } {
-  let reader = BitReader.BitReader();
-  reader.addBytes(bytes);
-  let decoder = DeflateDecoder.Decoder(reader, null);
-  switch (decoder.finish()) {
-    case (#ok(_)) #ok(decoder.toArray());
+  let decoder = DeflateDecoder.Decoder(bytes);
+  switch (decoder.decode()) {
+    case (#ok(result)) #ok(result);
     case (#err(msg)) #err(msg);
   };
 };
