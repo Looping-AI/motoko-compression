@@ -95,7 +95,7 @@ module {
   // Module-level private functions — bodies can use var/loops freely.
   // Called from the Decoder class constructor (once per decode call).
 
-  func buildFixedLitDecoder() : HuffmanDecoder.Decoder {
+  func buildFixedLitDecoder() : HuffmanDecoder.FastDecoder {
     // RFC 1951 §3.2.6 bitwidths:
     //   0-143  → 8 bits    144-255 → 9 bits
     //   256-279 → 7 bits   280-287 → 8 bits
@@ -105,16 +105,16 @@ module {
     while (s <= 255) { bws[s] := 9; s += 1 };
     while (s <= 279) { bws[s] := 7; s += 1 };
     while (s <= 287) { bws[s] := 8; s += 1 };
-    switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(bws))) {
+    switch (HuffmanDecoder.fromBitwidthsFast(Array.fromVarArray(bws))) {
       case (#ok(d)) d;
       case (#err(e)) Runtime.trap("buildFixedLitDecoder: " # e);
     };
   };
 
-  func buildFixedDistDecoder() : HuffmanDecoder.Decoder {
+  func buildFixedDistDecoder() : HuffmanDecoder.FastDecoder {
     // RFC 1951 §3.2.6: all 30 distance codes have bitwidth 5.
     let bws = Prim.Array_init<Nat>(30, 5);
-    switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(bws))) {
+    switch (HuffmanDecoder.fromBitwidthsFast(Array.fromVarArray(bws))) {
       case (#ok(d)) d;
       case (#err(e)) Runtime.trap("buildFixedDistDecoder: " # e);
     };
@@ -126,8 +126,8 @@ module {
 
     let acc = BitAccumulator.BitAccumulator(inputBytes);
     var err : ?Text = null;
-    let fixedLit : HuffmanDecoder.Decoder = buildFixedLitDecoder();
-    let fixedDist : HuffmanDecoder.Decoder = buildFixedDistDecoder();
+    let fixedLit : HuffmanDecoder.FastDecoder = buildFixedLitDecoder();
+    let fixedDist : HuffmanDecoder.FastDecoder = buildFixedDistDecoder();
 
     // ── Public API ────────────────────────────────────────────────────────
 
@@ -200,8 +200,8 @@ module {
 
     func decodeCompressedBlock(
       out : OutByteBuffer.OutByteBuffer,
-      litDec : HuffmanDecoder.Decoder,
-      distDec : HuffmanDecoder.Decoder,
+      litDec : HuffmanDecoder.FastDecoder,
+      distDec : HuffmanDecoder.FastDecoder,
     ) {
       label _syms loop {
         let sym = litDec.decodeRaw(acc);
@@ -243,7 +243,7 @@ module {
 
     // ── Dynamic header (type 2) ───────────────────────────────────────────
 
-    func loadDynamicHeader() : Result<(HuffmanDecoder.Decoder, HuffmanDecoder.Decoder), Text> {
+    func loadDynamicHeader() : Result<(HuffmanDecoder.FastDecoder, HuffmanDecoder.FastDecoder), Text> {
       let lcc = acc.readBits(5) + 257; // HLIT  + 257 = literal/length code count
       let dcc = acc.readBits(5) + 1; // HDIST + 1   = distance code count
       let bwcc = acc.readBits(4) + 4; // HCLEN + 4   = code-length code count
@@ -259,7 +259,7 @@ module {
         i += 1;
       };
 
-      let metaDec = switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(bwArr))) {
+      let metaDec = switch (HuffmanDecoder.fromBitwidthsFast(Array.fromVarArray(bwArr))) {
         case (#ok(d)) d;
         case (#err(msg)) return #err("Deflate: meta-Huffman: " # msg);
       };
@@ -297,11 +297,11 @@ module {
         };
       };
 
-      let ld = switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(litBws))) {
+      let ld = switch (HuffmanDecoder.fromBitwidthsFast(Array.fromVarArray(litBws))) {
         case (#ok(d)) d;
         case (#err(msg)) return #err("Deflate: literal decoder: " # msg);
       };
-      let dd = switch (HuffmanDecoder.fromBitwidths(Array.fromVarArray(distBws))) {
+      let dd = switch (HuffmanDecoder.fromBitwidthsFast(Array.fromVarArray(distBws))) {
         case (#ok(d)) d;
         case (#err(msg)) return #err("Deflate: distance decoder: " # msg);
       };
