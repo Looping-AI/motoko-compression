@@ -42,7 +42,7 @@ module {
       if (needed <= cap) return;
       while (cap < needed) cap *= 2;
       let newBuf = Prim.Array_init<Nat8>(cap, (0 : Nat8));
-      let live = (writeBit + BYTE - 1) / BYTE;
+      let live : Nat = (writeBit + BYTE - 1) / BYTE;
       var i = 0;
       while (i < live) { newBuf[i] := buf[i]; i += 1 };
       buf := newBuf;
@@ -81,7 +81,8 @@ module {
       while (remaining > 0) {
         let byteIdx = writeBit / BYTE;
         let bitIdx = writeBit % BYTE;
-        let take = if (remaining < BYTE - bitIdx) remaining else BYTE - bitIdx;
+        let available : Nat = BYTE - bitIdx;
+        let take : Nat = if (remaining < available) remaining else available;
         let bits = Nat32.toNat8(v & MASKS32[take]);
         buf[byteIdx] := buf[byteIdx] | (bits << Nat8.fromNat(bitIdx));
         v := Nat32.bitshiftRight(v, Nat32.fromNat(take));
@@ -140,7 +141,8 @@ module {
       var bitIdx = abs % BYTE;
       var remaining = n;
       while (remaining > 0) {
-        let take = if (remaining < BYTE - bitIdx) remaining else BYTE - bitIdx;
+        let available : Nat = BYTE - bitIdx;
+        let take : Nat = if (remaining < available) remaining else available;
         let shifted = buf[byteIdx] >> Nat8.fromNat(bitIdx);
         let extracted = shifted & MASKS8[take];
         bits := bits | (Nat32.fromNat8(extracted) << accumulated);
@@ -161,9 +163,10 @@ module {
       // Fast path: byte-aligned and a full byte is available — single array read,
       // skipping the getBits loop and all Nat32↔Nat conversions.
       let abs = i + readBit;
-      if (abs % BYTE == 0 and avail - i >= BYTE) return buf[abs / BYTE];
+      let remaining_bits : Nat = avail - i;
+      if (abs % BYTE == 0 and remaining_bits >= BYTE) return buf[abs / BYTE];
 
-      let n = if (avail - i < BYTE) avail - i else BYTE;
+      let n : Nat = if (remaining_bits < BYTE) remaining_bits else BYTE;
       Nat8.fromNat(getBits(i, n));
     };
 
@@ -195,7 +198,7 @@ module {
 
     /// Reset the buffer to empty, zeroing the live region.
     public func clear() {
-      let live = (writeBit + BYTE - 1) / BYTE;
+      let live : Nat = (writeBit + BYTE - 1) / BYTE;
       var i = 0;
       while (i < live) { buf[i] := 0; i += 1 };
       writeBit := 0;

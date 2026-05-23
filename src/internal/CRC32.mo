@@ -54,7 +54,7 @@ module CRC32 {
       // the payload-shift loop entirely.
       if (payload_count == 0) {
         let leftover = n % 8;
-        let chunkEnd = n - leftover;
+        let chunkEnd : Nat = n - leftover;
         while (i < chunkEnd) {
           crc := singleSlicingUpdateFromData(data, i, crc);
           i += 8;

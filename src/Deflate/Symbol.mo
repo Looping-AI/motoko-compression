@@ -6,11 +6,8 @@
 
 import Nat8 "mo:core/Nat8";
 import Nat16 "mo:core/Nat16";
-import Result "mo:core/Result";
 import HuffmanEncoder "../Huffman/Encoder";
-import HuffmanDecoder "../Huffman/Decoder";
 import BitBuffer "../internal/BitBuffer";
-import BitReader "../internal/BitReader";
 
 module {
 
@@ -60,75 +57,6 @@ module {
   ];
 
   public let MAX_DISTANCE : Nat = 32_768;
-
-  // ── Decoder tables (RFC 1951) ──────────────────────────────────────────
-
-  /// (base_length, extra_bits) indexed by length_code - 257.
-  let LENGTH_TABLE : [(Nat, Nat)] = [
-    (3, 0),
-    (4, 0),
-    (5, 0),
-    (6, 0),
-    (7, 0),
-    (8, 0),
-    (9, 0),
-    (10, 0),
-    (11, 1),
-    (13, 1),
-    (15, 1),
-    (17, 1),
-    (19, 2),
-    (23, 2),
-    (27, 2),
-    (31, 2),
-    (35, 3),
-    (43, 3),
-    (51, 3),
-    (59, 3),
-    (67, 4),
-    (83, 4),
-    (99, 4),
-    (115, 4),
-    (131, 5),
-    (163, 5),
-    (195, 5),
-    (227, 5),
-    (258, 0),
-  ];
-
-  /// (base_distance, extra_bits) indexed by distance_code.
-  let DISTANCE_TABLE : [(Nat, Nat)] = [
-    (1, 0),
-    (2, 0),
-    (3, 0),
-    (4, 0),
-    (5, 1),
-    (7, 1),
-    (9, 2),
-    (13, 2),
-    (17, 3),
-    (25, 3),
-    (33, 4),
-    (49, 4),
-    (65, 5),
-    (97, 5),
-    (129, 6),
-    (193, 6),
-    (257, 7),
-    (385, 7),
-    (513, 8),
-    (769, 8),
-    (1025, 9),
-    (1537, 9),
-    (2049, 10),
-    (3073, 10),
-    (4097, 11),
-    (6145, 11),
-    (8193, 12),
-    (12_289, 12),
-    (16_385, 13),
-    (24_577, 13),
-  ];
 
   // ── Encode helpers (private) ─────────────────────────────────────────────
   //
@@ -258,59 +186,6 @@ module {
           };
         };
       };
-    };
-  };
-
-  // ── Decoder class ──────────────────────────────────────────────────────
-
-  public class Decoder(
-    literal_decoder : HuffmanDecoder.Decoder,
-    distance_decoder : HuffmanDecoder.Decoder,
-  ) {
-    /// Decode one symbol from `reader`.
-    public func decode(reader : BitReader.BitReader) : Result.Result<Symbol, Text> {
-      let sym_res = decodeLiteral(reader);
-      let #ok(sym) = sym_res else return sym_res;
-      // If it's a pointer, the distance is still 0 — we need to decode it.
-      switch sym {
-        case (#pointer(_, length)) {
-          switch (decodeDistance(reader)) {
-            case (#ok(dist)) #ok(#pointer(dist, length));
-            case (#err(msg)) #err(msg);
-          };
-        };
-        case other #ok(other);
-      };
-    };
-
-    func decodeLiteral(reader : BitReader.BitReader) : Result.Result<Symbol, Text> {
-      let val = switch (literal_decoder.decode(reader)) {
-        case (#ok(v)) v;
-        case (#err(msg)) return #err(msg);
-      };
-      if (val <= 255) {
-        #ok(#literal(Nat8.fromNat(val)));
-      } else if (val == 256) {
-        #ok(#EndOfBlock);
-      } else if (val >= 286) {
-        #err("Invalid deflate literal/length code " # debug_show val);
-      } else {
-        // val in [257, 285]
-        let (base, extra_bits) = LENGTH_TABLE[val - 257];
-        #ok(#pointer(0, base + reader.readBits(extra_bits)));
-      };
-    };
-
-    func decodeDistance(reader : BitReader.BitReader) : Result.Result<Nat, Text> {
-      let val = switch (distance_decoder.decode(reader)) {
-        case (#ok(v)) v;
-        case (#err(msg)) return #err(msg);
-      };
-      if (val >= DISTANCE_TABLE.size()) {
-        return #err("Invalid deflate distance code " # debug_show val);
-      };
-      let (base, extra_bits) = DISTANCE_TABLE[val];
-      #ok(base + reader.readBits(extra_bits));
     };
   };
 

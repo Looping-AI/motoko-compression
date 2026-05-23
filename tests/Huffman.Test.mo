@@ -9,7 +9,7 @@ import Common "../src/Huffman/Common";
 import Encoder "../src/Huffman/Encoder";
 import Decoder "../src/Huffman/Decoder";
 import BitBuffer "../src/internal/BitBuffer";
-import BitReader "../src/internal/BitReader";
+import BitAccumulator "../src/internal/BitAccumulator";
 
 // ── Common ────────────────────────────────────────────────────────────────
 
@@ -367,13 +367,13 @@ suite(
 // ── Decoder ───────────────────────────────────────────────────────────────
 
 suite(
-  "Decoder.fromBitwidths",
+  "Decoder.fromBitwidthsFast",
   func() {
 
     test(
       "empty bitwidths → #err",
       func() {
-        let result = Decoder.fromBitwidths([]);
+        let result = Decoder.fromBitwidthsFast([]);
         expect.bool(Result.isErr(result)).isTrue();
       },
     );
@@ -381,7 +381,7 @@ suite(
     test(
       "single symbol bitwidth=1 builds correctly",
       func() {
-        let result = Decoder.fromBitwidths([1]);
+        let result = Decoder.fromBitwidthsFast([1]);
         expect.bool(Result.isOk(result)).isTrue();
       },
     );
@@ -389,7 +389,7 @@ suite(
     test(
       "two-symbol table builds without error",
       func() {
-        let result = Decoder.fromBitwidths([1, 1]);
+        let result = Decoder.fromBitwidthsFast([1, 1]);
         expect.bool(Result.isOk(result)).isTrue();
       },
     );
@@ -398,48 +398,39 @@ suite(
 );
 
 suite(
-  "Decoder.decode",
+  "FastDecoder.decodeRaw",
   func() {
+
+    // Helper: encode `sym` using Encoder, then decode with FastDecoder.
+    // Both use the same bitwidths array so the tables agree.
+    func roundTrip(bws : [Nat], sym : Nat) : Nat {
+      let enc = switch (Encoder.fromBitwidths(bws)) {
+        case (#ok(e)) e;
+        case (#err(msg)) Runtime.trap("Encoder build failed: " # msg);
+      };
+      let dec = switch (Decoder.fromBitwidthsFast(bws)) {
+        case (#ok(d)) d;
+        case (#err(msg)) Runtime.trap("Decoder build failed: " # msg);
+      };
+      let buf = BitBuffer.BitBuffer(8);
+      enc.encode(buf, sym);
+      buf.byteAlign();
+      let bytes = buf.getBytes(0, buf.byteSize());
+      let acc = BitAccumulator.BitAccumulator(bytes);
+      dec.decodeRaw(acc);
+    };
 
     test(
       "decode single symbol round-trip (bitwidth=1)",
       func() {
-        let bws = [1, 1];
-        let enc_result = Encoder.fromBitwidths(bws);
-        let dec_result = Decoder.fromBitwidths(bws);
-        switch (enc_result, dec_result) {
-          case (#ok(enc), #ok(dec)) {
-            let buf = BitBuffer.BitBuffer(8);
-            enc.encode(buf, 0);
-            let reader = BitReader.fromBytes(buf.getBytes(0, buf.byteSize()));
-            switch (dec.decode(reader)) {
-              case (#ok(sym)) expect.nat(sym).equal(0);
-              case (#err(msg)) Runtime.trap("Decode failed: " # msg);
-            };
-          };
-          case _ Runtime.trap("Setup failed");
-        };
+        expect.nat(roundTrip([1, 1], 0)).equal(0);
       },
     );
 
     test(
       "decode second symbol round-trip (bitwidth=1)",
       func() {
-        let bws = [1, 1];
-        let enc_result = Encoder.fromBitwidths(bws);
-        let dec_result = Decoder.fromBitwidths(bws);
-        switch (enc_result, dec_result) {
-          case (#ok(enc), #ok(dec)) {
-            let buf = BitBuffer.BitBuffer(8);
-            enc.encode(buf, 1);
-            let reader = BitReader.fromBytes(buf.getBytes(0, buf.byteSize()));
-            switch (dec.decode(reader)) {
-              case (#ok(sym)) expect.nat(sym).equal(1);
-              case (#err(msg)) Runtime.trap("Decode failed: " # msg);
-            };
-          };
-          case _ Runtime.trap("Setup failed");
-        };
+        expect.nat(roundTrip([1, 1], 1)).equal(1);
       },
     );
 
@@ -447,25 +438,25 @@ suite(
       "multiple consecutive encodes and decodes",
       func() {
         let bws = [2, 2, 2, 2];
-        let enc_result = Encoder.fromBitwidths(bws);
-        let dec_result = Decoder.fromBitwidths(bws);
-        switch (enc_result, dec_result) {
-          case (#ok(enc), #ok(dec)) {
-            let buf = BitBuffer.BitBuffer(16);
-            enc.encode(buf, 0);
-            enc.encode(buf, 1);
-            enc.encode(buf, 2);
-            enc.encode(buf, 3);
-            buf.byteAlign();
-            let reader = BitReader.fromBytes(buf.getBytes(0, buf.byteSize()));
-            for (expected in [0, 1, 2, 3].vals()) {
-              switch (dec.decode(reader)) {
-                case (#ok(sym)) expect.nat(sym).equal(expected);
-                case (#err(msg)) Runtime.trap("Decode failed at symbol " # debug_show expected # ": " # msg);
-              };
-            };
-          };
-          case _ Runtime.trap("Setup failed");
+        let enc = switch (Encoder.fromBitwidths(bws)) {
+          case (#ok(e)) e;
+          case (#err(msg)) Runtime.trap("Encoder build failed: " # msg);
+        };
+        let dec = switch (Decoder.fromBitwidthsFast(bws)) {
+          case (#ok(d)) d;
+          case (#err(msg)) Runtime.trap("Decoder build failed: " # msg);
+        };
+        let buf = BitBuffer.BitBuffer(16);
+        enc.encode(buf, 0);
+        enc.encode(buf, 1);
+        enc.encode(buf, 2);
+        enc.encode(buf, 3);
+        buf.byteAlign();
+        let bytes = buf.getBytes(0, buf.byteSize());
+        let acc = BitAccumulator.BitAccumulator(bytes);
+        for (expected in [0, 1, 2, 3].vals()) {
+          let sym = dec.decodeRaw(acc);
+          expect.nat(sym).equal(expected);
         };
       },
     );
@@ -474,42 +465,55 @@ suite(
       "round-trip with fromFrequencies",
       func() {
         let freqs = [10, 20, 5, 30, 15];
-        let max_bw = 15;
-        let enc_result = Encoder.fromFrequencies(freqs, max_bw);
-        switch (enc_result) {
-          case (#ok(enc)) {
-            // collect bitwidths then build decoder
-            let bws_mut = Prim.Array_init<Nat>(freqs.size(), 0);
-            var idx = 0;
-            for (f in freqs.vals()) {
-              ignore f;
-              bws_mut[idx] := enc.lookup(idx).bitwidth;
-              idx += 1;
-            };
-            let bws = Array.fromVarArray(bws_mut);
-            let dec_result = Decoder.fromBitwidths(bws);
-            switch (dec_result) {
-              case (#ok(dec)) {
-                let buf = BitBuffer.BitBuffer(64);
-                for (sym in [0, 1, 2, 3, 4].vals()) {
-                  if (enc.lookup(sym).bitwidth > 0) enc.encode(buf, sym);
-                };
-                buf.byteAlign();
-                let reader = BitReader.fromBytes(buf.getBytes(0, buf.byteSize()));
-                for (sym in [0, 1, 2, 3, 4].vals()) {
-                  if (enc.lookup(sym).bitwidth > 0) {
-                    switch (dec.decode(reader)) {
-                      case (#ok(s)) expect.nat(s).equal(sym);
-                      case (#err(msg)) Runtime.trap("Decode failed: " # msg);
-                    };
-                  };
-                };
-              };
-              case (#err(msg)) Runtime.trap("Decoder build failed: " # msg);
-            };
-          };
+        let enc = switch (Encoder.fromFrequencies(freqs, 15)) {
+          case (#ok(e)) e;
           case (#err(msg)) Runtime.trap("Encoder build failed: " # msg);
         };
+        // collect bitwidths from encoder, then build fast decoder
+        let bws_mut = Prim.Array_init<Nat>(freqs.size(), 0);
+        var idx = 0;
+        for (f in freqs.vals()) {
+          ignore f;
+          bws_mut[idx] := enc.lookup(idx).bitwidth;
+          idx += 1;
+        };
+        let bws = Array.fromVarArray(bws_mut);
+        let dec = switch (Decoder.fromBitwidthsFast(bws)) {
+          case (#ok(d)) d;
+          case (#err(msg)) Runtime.trap("Decoder build failed: " # msg);
+        };
+        // encode each active symbol and verify round-trip
+        let buf = BitBuffer.BitBuffer(64);
+        let syms : [Nat] = [0, 1, 2, 3, 4];
+        for (sym in syms.vals()) {
+          if (enc.lookup(sym).bitwidth > 0) enc.encode(buf, sym);
+        };
+        buf.byteAlign();
+        let bytes = buf.getBytes(0, buf.byteSize());
+        let acc = BitAccumulator.BitAccumulator(bytes);
+        for (sym in syms.vals()) {
+          if (enc.lookup(sym).bitwidth > 0) {
+            let decoded = dec.decodeRaw(acc);
+            expect.nat(decoded).equal(sym);
+          };
+        };
+      },
+    );
+
+    test(
+      "corrupt input returns DECODE_ERROR",
+      func() {
+        // A 1-symbol decoder (only symbol 0 has bitwidth 1, code=0)
+        // Feeding bit 1 should return DECODE_ERROR since it's unused.
+        // With bws=[1,1], both bits are used — use bws=[1] (only sym 0).
+        let dec = switch (Decoder.fromBitwidthsFast([1])) {
+          case (#ok(d)) d;
+          case (#err(msg)) Runtime.trap("Decoder build failed: " # msg);
+        };
+        // bit 1 is unoccupied for a one-symbol tree
+        let acc = BitAccumulator.BitAccumulator([0xFF]);
+        let result = dec.decodeRaw(acc);
+        expect.nat(result).equal(Decoder.DECODE_ERROR);
       },
     );
 
