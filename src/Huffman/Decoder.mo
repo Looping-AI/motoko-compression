@@ -5,6 +5,9 @@ import Option "mo:core/Option";
 import Result "mo:core/Result";
 import Prim "mo:⛔";
 
+import Runtime "mo:core/Runtime";
+
+import BitAccumulator "../internal/BitAccumulator";
 import Common "Common";
 import BitReader "../internal/BitReader";
 
@@ -116,6 +119,24 @@ module {
 
       let decoded = value / 32; // == value >> 5
       #ok(decoded);
+    };
+
+    /// Decode one symbol using the fast path: single max_bitwidth peek into
+    /// the flat pre-filled table, no Result allocation, no peek-grow loop.
+    ///
+    /// The caller must use a `BitAccumulator` (not a `BitReader`). Refill is
+    /// performed internally before each peek.
+    ///
+    /// Traps on corrupt input (unrecognised bit pattern).
+    public func decodeRaw(acc : BitAccumulator.BitAccumulator) : Nat {
+      acc.refill();
+      let v = table[acc.peekNat(max_bitwidth)];
+      let w = v % 32; // bitwidth stored in low 5 bits
+      if (w > max_bitwidth) {
+        Runtime.trap("Huffman.Decoder.decodeRaw: unrecognised bit pattern at bit " # debug_show (acc.bitPosition()));
+      };
+      acc.drop(w);
+      v / 32 // symbol stored in high bits
     };
   };
 };
