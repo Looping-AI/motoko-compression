@@ -106,6 +106,25 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     Map.add(images, Text.compare, name, compressed);
   };
 
+  /// Begin a chunked upload.  Clears any buffered encoder state from a
+  /// previous (possibly incomplete) upload.
+  public func beginImageUpload() : async () {
+    gzip_encoder.clear();
+  };
+
+  /// Feed one raw chunk of image data to the encoder.
+  /// Each call must supply at most `IC_INPUT_CHUNK` bytes (≤ 2 MiB).
+  public func uploadImageChunk(chunk : [Nat8]) : async () {
+    gzip_encoder.encode(chunk);
+  };
+
+  /// Finalise compression and store the result under `name`.
+  /// Must be called after `beginImageUpload` + one or more `uploadImageChunk` calls.
+  public func finishImageUpload(name : Text) : async () {
+    let compressed = gzip_encoder.finish();
+    Map.add(images, Text.compare, name, compressed);
+  };
+
   /// Decompress and return the image stored under `name`.
   /// Returns null if no image is stored under that name.
   public func getImage(name : Text) : async ?[Nat8] {

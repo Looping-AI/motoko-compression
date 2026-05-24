@@ -106,6 +106,32 @@ describe("ImageStore canister", () => {
   }
 
   /**
+   * Upload a large image in 2 MiB chunks using the beginImageUpload /
+   * uploadImageChunk / finishImageUpload API.  Each chunk call is a separate
+   * PocketIC message, so we tick once per chunk.
+   */
+  async function storeImageChunked(
+    name: string,
+    data: number[],
+  ): Promise<void> {
+    await actor.beginImageUpload();
+
+    const CHUNK = 2 * 1024 * 1024;
+    for (let offset = 0; offset < data.length; offset += CHUNK) {
+      const chunk = data.slice(offset, Math.min(offset + CHUNK, data.length));
+      const promise = actor.uploadImageChunk(chunk);
+      await pic.advanceTime(10_000);
+      await pic.tick();
+      await promise;
+    }
+
+    const promise = actor.finishImageUpload(name);
+    await pic.advanceTime(10_000);
+    await pic.tick();
+    await promise;
+  }
+
+  /**
    * Dispatch isExactImage and advance PocketIC.
    * isExactImage calls getImage via an inter-canister self-call, so we need
    * enough ticks for the full chain: caller → isExactImage → getImage → decode.
@@ -187,13 +213,8 @@ describe("ImageStore canister", () => {
   }, 120_000);
 
   it("round-trips a near-limit image (1 MiB of pseudo-random bytes)", async () => {
-    // PocketIC's ingress limit is 2 MiB, so 1 MiB is the largest practical size
-    // for a single-call upload.  Pseudo-random data compresses poorly, giving the
-    // encoder a realistic workload.  Multi-chunk compression (input > 2 MiB) and
-    // multi-chunk decoding (#chunked compressed output > 2 MiB) cannot be
-    // triggered from TypeScript because storeImage accepts all bytes in one call;
-    // those paths are covered by the Gzip round-trip unit tests and the
-    // compress.mo integration tests (which generate data internally).
+    // 1 MiB fits in a single ingress call.  Pseudo-random data compresses
+    // poorly, giving the encoder a realistic workload.
     const SIZE = 1024 * 1024;
     const original = makeData(SIZE, 99);
 
@@ -202,4 +223,21 @@ describe("ImageStore canister", () => {
 
     expect(retrieved).toEqual(original);
   }, 180_000);
+
+  it("round-trips a 10 MiB image via chunked upload", async () => {
+    // 10 MiB exceeds PocketIC's 2 MiB ingress limit, so we stream the raw
+    // bytes in 2 MiB slices using beginImageUpload / uploadImageChunk /
+    // finishImageUpload.  Pseudo-random data compresses to roughly the same
+    // size, so the stored EncodedResponse is #chunked; getImage uses
+    // _decodeChunk self-calls to reassemble the decompressed output.
+    const SIZE = 10 * 1024 * 1024;
+    const original = makeData(SIZE, 100);
+
+    await storeImageChunked("large.png", original);
+
+    // ~10 MiB compressed → ~5 output chunks of 2 MiB each
+    const retrieved = await getImage("large.png", 5);
+
+    expect(retrieved).toEqual(original);
+  }, 600_000);
 });
