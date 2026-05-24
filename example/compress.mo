@@ -43,7 +43,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   // ── Transient state ───────────────────────────────────────────────────────
 
-  transient let gzip_encoder = Gzip.EncoderBuilder().outputChunkSize(IC_INPUT_CHUNK).build();
+  transient let gzip_encoder = Gzip.EncoderBuilder().outputChunkSize(IC_INPUT_CHUNK).singleThreshold(CHUNKING_THRESHOLD).build();
   transient let gzip_decoder = Gzip.Decoder();
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -112,7 +112,11 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Returns [] when `page` is past the end of the compressed data.
   public query func getCompressedData(page : Nat) : async [Nat8] {
     let ?compressed = _compressed else return [];
-    pageOf(Array.flatten<Nat8>(compressed.chunks), page);
+    let bytes = switch (compressed) {
+      case (#single data) data;
+      case (#chunked chunks) Array.flatten<Nat8>(chunks);
+    };
+    pageOf(bytes, page);
   };
 
   // ── Compression ───────────────────────────────────────────────────────────
@@ -161,18 +165,17 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     gzip_decoder.clear();
     let ?compressed = _compressed else return;
 
-    var totalSize = 0;
-    for (c in compressed.chunks.vals()) { totalSize += c.size() };
-    if (totalSize < CHUNKING_THRESHOLD) {
-      for (chunk in compressed.chunks.vals()) {
-        switch (gzip_decoder.decode(chunk)) {
+    switch (compressed) {
+      case (#single data) {
+        switch (gzip_decoder.decode(data)) {
           case (#err(msg)) Runtime.trap("decompressData: " # msg);
           case (#ok(_)) {};
         };
       };
-    } else {
-      for (chunk in compressed.chunks.vals()) {
-        await _decodeChunk(chunk);
+      case (#chunked chunks) {
+        for (chunk in chunks.vals()) {
+          await _decodeChunk(chunk);
+        };
       };
     };
     switch (gzip_decoder.finish()) {

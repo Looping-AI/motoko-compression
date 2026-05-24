@@ -6,10 +6,11 @@
 ///
 ///   let enc = Gzip.EncoderBuilder().lzss(#best).build();
 ///   enc.encodeText("Hello, world!");
-///   let resp = enc.finish();          // EncodedResponse
+///   let resp = enc.finish();          // EncodedResponse (#single or #chunked)
 ///
 ///   let dec = Gzip.Decoder();
-///   ignore dec.decode(resp.chunks[0]);
+///   let data = switch (resp) { case (#single d) d; case (#chunked { chunks }) chunks[0] };
+///   ignore dec.decode(data);
 ///   let result = dec.finish();        // Result<DecodedResponse, Text>
 
 import Header_ "Header";

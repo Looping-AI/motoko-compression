@@ -41,15 +41,21 @@ module {
   /// Sized to fit IC ingress and inter-canister response limits (≤ 2 MiB).
   let DEFAULT_OUTPUT_CHUNK_SIZE : Nat = 2_097_152; // 2 MiB
 
+  /// Default threshold below which `finish()` returns `#single` (flat array)
+  /// instead of `#chunked`. Matches the IC's practical single-message limit.
+  let DEFAULT_SINGLE_THRESHOLD : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
+
   // ── Public types ─────────────────────────────────────────────────────────
 
   /// The result of `Encoder.finish()`.
-  /// Each chunk contains one or more complete Deflate blocks (block-aligned),
-  /// so chunks can be fed to `Decoder.decode()` in separate canister calls.
+  /// `#single` is returned when the total compressed size is below the encoder's
+  /// `singleThreshold`; the bytes are merged into one flat array.
+  /// `#chunked` is returned for larger output; each chunk contains one or more
+  /// complete Deflate blocks (block-aligned) and can be fed to
+  /// `Decoder.decode()` in separate canister calls.
   public type EncodedResponse = {
-    /// One entry per Deflate block (plus gzip header on first / footer on last).
-    chunks : [[Nat8]];
-    total_size : Nat;
+    #single : [Nat8];
+    #chunked : [[Nat8]];
   };
 
   // ── EncoderBuilder ────────────────────────────────────────────────────────
@@ -66,6 +72,7 @@ module {
     };
 
     var _output_chunk_size : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
+    var _single_threshold : Nat = DEFAULT_SINGLE_THRESHOLD;
 
     /// Override the Gzip header fields.
     public func header(h : Header) : EncoderBuilder {
@@ -124,9 +131,17 @@ module {
       self;
     };
 
+    /// Set the threshold (bytes) below which `finish()` merges all chunks into
+    /// a single flat `#single` array instead of returning `#chunked`.
+    /// Default: 2 MiB (matches `outputChunkSize` default).
+    public func singleThreshold(size : Nat) : EncoderBuilder {
+      _single_threshold := size;
+      self;
+    };
+
     /// Build the configured `Encoder`.
     public func build() : Encoder {
-      Encoder(_header, _deflate_opts, _output_chunk_size);
+      Encoder(_header, _deflate_opts, _output_chunk_size, _single_threshold);
     };
   };
 
@@ -136,7 +151,7 @@ module {
   ///
   /// Call `encode(bytes)` one or more times, then `finish()` to retrieve
   /// the compressed `EncodedResponse`.
-  public class Encoder(header : Header, deflate_options : DeflateOptions, output_chunk_size : Nat) {
+  public class Encoder(header : Header, deflate_options : DeflateOptions, output_chunk_size : Nat, single_threshold : Nat) {
 
     var input_size = 0;
     let crc32 = CRC32.CRC32();
@@ -218,46 +233,50 @@ module {
       let total = bitbuffer.byteSize();
       let all = bitbuffer.getBytes(0, total);
 
-      // Slice `all` into output chunks.
-      //
-      // Each chunk holds one or more complete DEFLATE blocks (cuts snapped to
-      // DEFLATE boundaries so chunks are independently decodable). The final
-      // chunk carries the Gzip footer and may be up to ~16 B larger than
-      // `output_chunk_size` due to footer + last-block Huffman overhead.
-      //
-      // Degenerate case: if a single DEFLATE block exceeds `output_chunk_size`,
-      // it is emitted as its own oversized chunk rather than being split mid-block.
-      let ends = List.toArray(block_ends);
-      let n = ends.size();
-
-      let chunks : [[Nat8]] = if (n == 0) {
-        // encode() was never called — single chunk with header + empty Deflate + footer
-        [all];
+      let resp : EncodedResponse = if (total < single_threshold) {
+        #single all;
       } else {
-        let out = List.empty<[Nat8]>();
-        var chunk_lo = 0;
-        var prev_block_end = 0;
-        var blocks_in_chunk = 0;
+        // Slice `all` into output chunks.
+        //
+        // Each chunk holds one or more complete DEFLATE blocks (cuts snapped to
+        // DEFLATE boundaries so chunks are independently decodable). The final
+        // chunk carries the Gzip footer and may be up to ~16 B larger than
+        // `output_chunk_size` due to footer + last-block Huffman overhead.
+        //
+        // Degenerate case: if a single DEFLATE block exceeds `output_chunk_size`,
+        // it is emitted as its own oversized chunk rather than being split mid-block.
+        let ends = List.toArray(block_ends);
+        let n = ends.size();
 
-        for (block_end in ends.vals()) {
-          // Avoid Nat underflow: rewrite `block_end - chunk_lo > output_chunk_size`
-          // as `block_end > chunk_lo + output_chunk_size` (both are Nat, sum never wraps).
-          if (block_end > chunk_lo + output_chunk_size and blocks_in_chunk > 0) {
-            // Adding this block would exceed the limit; emit what we have.
-            List.add(out, Array.tabulate<Nat8>(prev_block_end - chunk_lo, func(j) { all[chunk_lo + j] }));
-            chunk_lo := prev_block_end;
-            blocks_in_chunk := 0;
+        let chunks : [[Nat8]] = if (n == 0) {
+          // encode() was never called — single chunk with header + empty Deflate + footer
+          [all];
+        } else {
+          let out = List.empty<[Nat8]>();
+          var chunk_lo = 0;
+          var prev_block_end = 0;
+          var blocks_in_chunk = 0;
+
+          for (block_end in ends.vals()) {
+            // Avoid Nat underflow: rewrite `block_end - chunk_lo > output_chunk_size`
+            // as `block_end > chunk_lo + output_chunk_size` (both are Nat, sum never wraps).
+            if (block_end > chunk_lo + output_chunk_size and blocks_in_chunk > 0) {
+              // Adding this block would exceed the limit; emit what we have.
+              List.add(out, Array.tabulate<Nat8>(prev_block_end - chunk_lo, func(j) { all[chunk_lo + j] }));
+              chunk_lo := prev_block_end;
+              blocks_in_chunk := 0;
+            };
+            prev_block_end := block_end;
+            blocks_in_chunk += 1;
           };
-          prev_block_end := block_end;
-          blocks_in_chunk += 1;
+
+          // Final chunk: from chunk_lo to end of buffer (includes Gzip footer).
+          List.add(out, Array.tabulate<Nat8>(total - chunk_lo, func(j) { all[chunk_lo + j] }));
+          List.toArray(out);
         };
 
-        // Final chunk: from chunk_lo to end of buffer (includes Gzip footer).
-        List.add(out, Array.tabulate<Nat8>(total - chunk_lo, func(j) { all[chunk_lo + j] }));
-        List.toArray(out);
+        #chunked chunks;
       };
-
-      let resp = { chunks; total_size = total };
       clear();
       resp;
     };

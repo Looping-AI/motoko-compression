@@ -77,8 +77,18 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   };
 
   func decodeImage(compressed : Gzip.EncodedResponse) : async* [Nat8] {
-    for (chunk in compressed.chunks.vals()) {
-      await _decodeChunk(chunk);
+    switch (compressed) {
+      case (#single data) {
+        switch (gzip_decoder.decode(data)) {
+          case (#err(msg)) Runtime.trap("decode_image: " # msg);
+          case (#ok(_)) {};
+        };
+      };
+      case (#chunked chunks) {
+        for (chunk in chunks.vals()) {
+          await _decodeChunk(chunk);
+        };
+      };
     };
     switch (gzip_decoder.finish()) {
       case (#err(msg)) Runtime.trap("decode_image: " # msg);
