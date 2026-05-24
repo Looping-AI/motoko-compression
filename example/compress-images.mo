@@ -8,9 +8,10 @@
 /// `stable` variable in `system func postupgrade`.
 ///
 /// Usage:
-///   - `store_image("logo.png", bytes)` — compress and store.
-///   - `getImage("logo.png")`          — decompress and return.
-///   - `is_exact_image("logo.png", bytes)` — verify stored contents match.
+///   - `compressImage(bytes)`              — compress; returns EncodedResponse.
+///   - `storeImage("logo.png", compressed)` — store an already-compressed image.
+///   - `getImage("logo.png")`              — decompress and return.
+///   - `isExactImage("logo.png", bytes)`   — verify stored contents match.
 import Array "mo:core/Array";
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
@@ -69,13 +70,6 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  func compressImage(data : [Nat8]) : async* Gzip.EncodedResponse {
-    for (chunk in chunks(data, IC_INPUT_CHUNK).vals()) {
-      await _compressChunk(chunk);
-    };
-    gzip_encoder.finish();
-  };
-
   func decodeImage(compressed : Gzip.EncodedResponse) : async* [Nat8] {
     switch (compressed) {
       case (#single data) {
@@ -98,9 +92,17 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
   // ── Public API ────────────────────────────────────────────────────────────
 
-  /// Compress `image` and store it under `name`.  Overwrites any existing entry.
-  public func storeImage(name : Text, image : [Nat8]) : async () {
-    let compressed = await* compressImage(image);
+  /// Compress `image` and return the encoded result without storing it.
+  /// Call this first, then pass the result to `storeImage`.
+  public func compressImage(data : [Nat8]) : async Gzip.EncodedResponse {
+    for (chunk in chunks(data, IC_INPUT_CHUNK).vals()) {
+      await _compressChunk(chunk);
+    };
+    gzip_encoder.finish();
+  };
+
+  /// Store an already-compressed image under `name`.  Overwrites any existing entry.
+  public func storeImage(name : Text, compressed : Gzip.EncodedResponse) : async () {
     Map.add(images, Text.compare, name, compressed);
   };
 

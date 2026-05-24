@@ -20,6 +20,11 @@ const BUILD_TARGETS = {
     sourceFile: join(process.cwd(), "example", "external-decompress.mo"),
     outputPrefix: "external-decompress",
   },
+  "image-compression": {
+    name: "image-compression canister",
+    sourceFile: join(process.cwd(), "example", "compress-images.mo"),
+    outputPrefix: "image-compression",
+  },
 } as const;
 
 async function getBuildEnvironment() {
@@ -100,6 +105,8 @@ async function buildAll() {
   await buildTarget("compression");
   console.log();
   await buildTarget("external-decompress");
+  console.log();
+  await buildTarget("image-compression");
   console.log();
   console.log("🎉 Build complete — artifacts in tests/integration/builds/");
 }
