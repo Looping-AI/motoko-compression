@@ -32,6 +32,9 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   transient let PAGE_SIZE = 2 * MB;
 
+  /// Data below this size is processed in a single message without self-calls.
+  transient let CHUNKING_THRESHOLD = 5 * MB;
+
   // ── Stable state ──────────────────────────────────────────────────────────
 
   var _data : ?[Nat8] = null;
@@ -122,12 +125,19 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     gzip_encoder.encode(chunk);
   };
 
-  /// Compress all stored data in IC_INPUT_CHUNK slices and persist the result.
-  /// Spreads work across ICP messages via self-calls.
+  /// Compress all stored data and persist the result.
+  /// For data < CHUNKING_THRESHOLD, processes in a single message.
+  /// For larger data, spreads work across ICP messages via self-calls.
   public func compressData() : async () {
     gzip_encoder.clear();
-    for (chunk in chunks(getData(), IC_INPUT_CHUNK).vals()) {
-      await _compressChunk(chunk);
+    let data = getData();
+
+    if (data.size() < CHUNKING_THRESHOLD) {
+      gzip_encoder.encode(data);
+    } else {
+      for (chunk in chunks(data, IC_INPUT_CHUNK).vals()) {
+        await _compressChunk(chunk);
+      };
     };
     _compressed := ?gzip_encoder.finish();
   };
@@ -145,11 +155,25 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   };
 
   /// Decompress the stored compressed data and cache the result in _decompressed.
+  /// For compressed data < CHUNKING_THRESHOLD, processes in a single message.
+  /// For larger data, spreads work across ICP messages via self-calls.
   public func decompressData() : async () {
     gzip_decoder.clear();
     let ?compressed = _compressed else return;
-    for (chunk in compressed.chunks.vals()) {
-      await _decodeChunk(chunk);
+
+    var totalSize = 0;
+    for (c in compressed.chunks.vals()) { totalSize += c.size() };
+    if (totalSize < CHUNKING_THRESHOLD) {
+      for (chunk in compressed.chunks.vals()) {
+        switch (gzip_decoder.decode(chunk)) {
+          case (#err(msg)) Runtime.trap("decompressData: " # msg);
+          case (#ok(_)) {};
+        };
+      };
+    } else {
+      for (chunk in compressed.chunks.vals()) {
+        await _decodeChunk(chunk);
+      };
     };
     switch (gzip_decoder.finish()) {
       case (#err(msg)) Runtime.trap("decompress_data: " # msg);

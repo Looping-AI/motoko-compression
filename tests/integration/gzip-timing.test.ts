@@ -66,12 +66,7 @@ describe("Gzip Timing", () => {
 
     // ── canister compress ─────────────────────────────────────────────────
     const actorStart = performance.now();
-    const compressPromise = actor.compressData();
-    for (let i = 0; i < Number(SIZE_MIB); i++) {
-      await pic.advanceTime(10_000);
-      await pic.tick();
-    }
-    await compressPromise;
+    await actor.compressData();
     const actorMs = performance.now() - actorStart;
 
     // ── node:zlib compress ────────────────────────────────────────────────
@@ -102,12 +97,7 @@ describe("Gzip Timing", () => {
 
     // ── canister decompress ───────────────────────────────────────────────
     const actorStart = performance.now();
-    const decompressPromise = actor.decompressData();
-    for (let i = 0; i < Number(SIZE_MIB); i++) {
-      await pic.advanceTime(10_000);
-      await pic.tick();
-    }
-    await decompressPromise;
+    await actor.decompressData();
     const actorMs = performance.now() - actorStart;
 
     // ── node:zlib decompress ──────────────────────────────────────────────
