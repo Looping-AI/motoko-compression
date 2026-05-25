@@ -1,7 +1,5 @@
-import List "mo:core/List";
 import Nat "mo:core/Nat";
 import Nat16 "mo:core/Nat16";
-import Order "mo:core/Order";
 import Result "mo:core/Result";
 import Prim "mo:⛔";
 
@@ -38,6 +36,7 @@ module {
 
   let SENTINEL : Nat = 16; // = MAX_BITWIDTH + 1 (inlined to keep static)
   let FAST_ROOT_BITS : Nat = 9;
+  let POW2 : [Nat] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
 
   public class FastDecoder(tbl : [var Nat], rootBits : Nat) {
 
@@ -93,37 +92,55 @@ module {
     };
 
     let rootBits = if (maxBw < FAST_ROOT_BITS) maxBw else FAST_ROOT_BITS;
-    let primary_size : Nat = 2 ** rootBits;
+    let primary_size : Nat = POW2[rootBits];
 
-    // Pass 2: collect (symbol, bw) pairs and sort by bw for canonical assignment.
-    let pairs = List.empty<(Nat, Nat)>();
+    // Pass 2: count non-zero entries, then collect and sort by bw.
+    var pairsSize : Nat = 0;
+    for (bw in bitwidths.vals()) {
+      if (bw > 0) pairsSize += 1;
+    };
+    let pairs = Prim.Array_init<(Nat, Nat)>(pairsSize, (0, 0));
+    var pIdx : Nat = 0;
     var i = 0;
     for (bw in bitwidths.vals()) {
-      if (bw > 0) List.add(pairs, (i, bw));
+      if (bw > 0) {
+        pairs[pIdx] := (i, bw);
+        pIdx += 1;
+      };
       i += 1;
     };
-    List.sortInPlace(
-      pairs,
-      func(a : (Nat, Nat), b : (Nat, Nat)) : Order.Order = Nat.compare(a.1, b.1),
-    );
+    // Insertion sort by bitwidth — max 288 elements, negligible cost.
+    var s = 1;
+    while (s < pairsSize) {
+      let tmp = pairs[s];
+      var j = s;
+      while (j > 0 and pairs[j - 1].1 > tmp.1) {
+        pairs[j] := pairs[j - 1];
+        j -= 1;
+      };
+      pairs[j] := tmp;
+      s += 1;
+    };
 
     // Pass 3: assign canonical codes; store reversed (LSB-first) bits.
     // entries: (symbol, bitwidth, reversed_bits_as_Nat)
-    let entries = List.empty<(Nat, Nat, Nat)>();
+    let entries = Prim.Array_init<(Nat, Nat, Nat)>(pairsSize, (0, 0, 0));
     var bits : Nat = 0;
     var prevBw : Nat = 0;
-    for ((sym, bw) in List.values(pairs)) {
-      bits *= 2 ** (bw - prevBw);
+    var eIdx : Nat = 0;
+    for ((sym, bw) in pairs.vals()) {
+      bits *= POW2[bw - prevBw];
       let code : Common.Code = { bitwidth = bw; bits = Nat16.fromNat(bits) };
       let beCode = Common.reverseCodeBits(code);
-      List.add(entries, (sym, bw, Nat16.toNat(beCode.bits)));
+      entries[eIdx] := (sym, bw, Nat16.toNat(beCode.bits));
+      eIdx += 1;
       prevBw := bw;
       bits += 1;
     };
 
     // Pass 4: per primary-prefix, find max code length of codes that overflow.
     let subMaxBw = Prim.Array_init<Nat>(primary_size, 0);
-    for ((_, bw, beBits) in List.values(entries)) {
+    for ((_, bw, beBits) in entries.vals()) {
       if (bw > rootBits) {
         let prefix = beBits % primary_size;
         if (bw > subMaxBw[prefix]) subMaxBw[prefix] := bw;
@@ -137,7 +154,7 @@ module {
     while (k < primary_size) {
       if (subMaxBw[k] > 0) {
         subOffset[k] := total;
-        total += 2 ** (subMaxBw[k] - rootBits);
+        total += POW2[subMaxBw[k] - rootBits];
       };
       k += 1;
     };
@@ -156,10 +173,10 @@ module {
     };
 
     // Pass 6b: fill direct entries (primary) and subtable entries.
-    for ((sym, bw, beBits) in List.values(entries)) {
+    for ((sym, bw, beBits) in entries.vals()) {
       if (bw <= rootBits) {
-        let step = 2 ** bw;
-        let padCount : Nat = 2 ** (rootBits - bw);
+        let step = POW2[bw];
+        let padCount : Nat = POW2[rootBits - bw];
         let value = sym * 32 + bw;
         var p = 0;
         while (p < padCount) {
@@ -170,10 +187,10 @@ module {
         let prefix = beBits % primary_size;
         let off = subOffset[prefix];
         let mbw = subMaxBw[prefix];
-        let extraBw : Nat = bw - rootBits; // bits to consume after primary drop
-        let extraBits = beBits / primary_size; // high bits beyond root
-        let step = 2 ** extraBw;
-        let padCount : Nat = 2 ** (mbw - bw);
+        let extraBw : Nat = bw - rootBits;
+        let extraBits = beBits / primary_size;
+        let step = POW2[extraBw];
+        let padCount : Nat = POW2[mbw - bw];
         let value = sym * 32 + extraBw;
         var p = 0;
         while (p < padCount) {
