@@ -1,5 +1,6 @@
 import Nat "mo:core/Nat";
 import Nat16 "mo:core/Nat16";
+import Nat64 "mo:core/Nat64";
 import Result "mo:core/Result";
 import Prim "mo:⛔";
 
@@ -18,7 +19,7 @@ module {
 
   // ── Two-level (zlib-style) fast decoder ────────────────────────────────
   //
-  // A single flat `[var Nat]` table whose first 2^root_bits entries form the
+  // A single flat `[var Nat64]` table whose first 2^root_bits entries form the
   // primary table and the rest are subtables.  Each entry packs two fields:
   //   value = (payload * 32) + tag        where 0 ≤ tag ≤ MAX_BITWIDTH
   //
@@ -34,11 +35,11 @@ module {
   // Sentinel `SENTINEL = MAX_BITWIDTH + 1` (= 16) marks uninitialised slots
   // and is detected as an error (tag > MAX_BITWIDTH).
 
-  let SENTINEL : Nat = 16; // = MAX_BITWIDTH + 1 (inlined to keep static)
+  let SENTINEL : Nat64 = 16; // = MAX_BITWIDTH + 1 (inlined to keep static)
   let FAST_ROOT_BITS : Nat = 9;
   let POW2 : [Nat] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
 
-  public class FastDecoder(tbl : [var Nat], rootBits : Nat) {
+  public class FastDecoder(tbl : [var Nat64], rootBits : Nat) {
 
     public let root_bits = rootBits;
     public let table = tbl;
@@ -50,21 +51,22 @@ module {
       acc.refill();
       let v = tbl[acc.peekNat(rootBits)];
       let w = v % 32;
-      if (w > MAX_BITWIDTH) return DECODE_ERROR; // sentinel
-      if (w <= rootBits) {
-        acc.drop(w);
-        return v / 32;
+      if (w > Nat64.fromNat(MAX_BITWIDTH)) return DECODE_ERROR; // sentinel
+      let wNat = Nat64.toNat(w);
+      if (wNat <= rootBits) {
+        acc.drop(wNat);
+        return Nat64.toNat(v / 32);
       };
       // Overflow path — w is the max code length of this subtable.
       acc.drop(rootBits);
-      let sub_bits : Nat = w - rootBits;
-      let sub_offset = v / 32;
+      let sub_bits : Nat = wNat - rootBits;
+      let sub_offset = Nat64.toNat(v / 32);
       acc.refill();
       let v2 = tbl[sub_offset + acc.peekNat(sub_bits)];
       let w2 = v2 % 32;
-      if (w2 > sub_bits) return DECODE_ERROR; // sentinel or overlong
-      acc.drop(w2);
-      v2 / 32;
+      if (Nat64.toNat(w2) > sub_bits) return DECODE_ERROR; // sentinel or overlong
+      acc.drop(Nat64.toNat(w2));
+      Nat64.toNat(v2 / 32);
     };
   };
 
@@ -88,7 +90,7 @@ module {
 
     // No codes at all (all-zero bitwidths) — return a sentinel-only decoder.
     if (maxBw == 0) {
-      let empty = Prim.Array_init<Nat>(2, SENTINEL);
+      let empty = Prim.Array_init<Nat64>(2, SENTINEL);
       return #ok(FastDecoder(empty, 1));
     };
 
@@ -160,7 +162,7 @@ module {
       k += 1;
     };
 
-    let tbl = Prim.Array_init<Nat>(total, SENTINEL);
+    let tbl = Prim.Array_init<Nat64>(total, SENTINEL);
 
     // Pass 6a: install primary overflow pointers.
     k := 0;
@@ -168,17 +170,17 @@ module {
       if (subMaxBw[k] > 0) {
         // tag = max_bw (> rootBits, ≤ MAX_BITWIDTH) — encodes "this is overflow"
         // AND the number of extra bits to peek (= tag - rootBits).
-        tbl[k] := subOffset[k] * 32 + subMaxBw[k];
+        tbl[k] := Nat64.fromNat(subOffset[k]) * 32 + Nat64.fromNat(subMaxBw[k]);
       };
       k += 1;
     };
 
     // Pass 6b: fill direct entries (primary) and subtable entries.
     for ((sym, bw, beBits) in entries.vals()) {
+      let value : Nat64 = Nat64.fromNat(sym) * 32 + Nat64.fromNat(bw);
       if (bw <= rootBits) {
         let step = POW2[bw];
         let padCount : Nat = POW2[rootBits - bw];
-        let value = sym * 32 + bw;
         var p = 0;
         while (p < padCount) {
           tbl[beBits + p * step] := value;
@@ -192,10 +194,10 @@ module {
         let extraBits = beBits / primary_size;
         let step = POW2[extraBw];
         let padCount : Nat = POW2[mbw - bw];
-        let value = sym * 32 + extraBw;
+        let value64 : Nat64 = Nat64.fromNat(sym) * 32 + Nat64.fromNat(extraBw);
         var p = 0;
         while (p < padCount) {
-          tbl[off + extraBits + p * step] := value;
+          tbl[off + extraBits + p * step] := value64;
           p += 1;
         };
       };

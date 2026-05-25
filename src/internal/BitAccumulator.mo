@@ -11,7 +11,6 @@
 /// All hot operations are Nat64 arithmetic — no heap allocation, no bignum.
 
 import Nat8 "mo:core/Nat8";
-import Nat32 "mo:core/Nat32";
 import Nat64 "mo:core/Nat64";
 import Runtime "mo:core/Runtime";
 
@@ -31,7 +30,7 @@ module {
     /// After refill, hold has at most 64 valid bits in its low-order positions.
     public func refill() {
       while (bits <= 56 and pos < srcLen) {
-        hold := hold | (Nat64.fromNat32(Nat32.fromNat8(src[pos])) << bits);
+        hold := hold | (Nat64.fromNat8(src[pos]) << bits);
         bits += 8;
         pos += 1;
       };
