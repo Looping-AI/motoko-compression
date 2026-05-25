@@ -101,6 +101,24 @@ module {
       };
     };
 
+    // ── Hot-path state access (for inlined decode loops) ─────────────────
+
+    /// Snapshot hold/bits/pos for transfer to function-local variables.
+    public func snapshotAcc() : (Nat64, Nat64, Nat) { (hold, bits, pos) };
+
+    /// Restore hold/bits/pos from function-local variables.
+    public func restoreAcc(h : Nat64, b : Nat64, p : Nat) {
+      hold := h;
+      bits := b;
+      pos := p;
+    };
+
+    /// Raw input bytes — used by inlined refill loops.
+    public func getBytes() : [Nat8] { src };
+
+    /// Length of raw input — used by inlined refill loops.
+    public func getBytesLen() : Nat { srcLen };
+
     // ── Size queries ──────────────────────────────────────────────────────
 
     /// Total bits remaining: bits in hold + bits still in input.

@@ -41,6 +41,7 @@ module {
   public class FastDecoder(tbl : [var Nat], rootBits : Nat) {
 
     public let root_bits = rootBits;
+    public let table = tbl;
 
     /// Decode one symbol from the bit accumulator.  Returns `DECODE_ERROR`
     /// on corrupt input (unrecognised pattern).  The accumulator state on

@@ -10,6 +10,8 @@
 
 import Array "mo:core/Array";
 import Nat8 "mo:core/Nat8";
+import Nat32 "mo:core/Nat32";
+import Nat64 "mo:core/Nat64";
 import Prim "mo:⛔";
 import Result "mo:core/Result";
 import Runtime "mo:core/Runtime";
@@ -198,18 +200,72 @@ module {
     };
 
     // ── Compressed block (type 1 or 2) ────────────────────────────────────
+    //
+    // The accumulator state (hold/bits/pos) is hoisted into Wasm-local var
+    // bindings for the duration of this block.  All refill/peek/drop logic
+    // is inlined so the hot path contains no cross-object method calls.
 
     func decodeCompressedBlock(
       out : OutByteBuffer.OutByteBuffer,
       litDec : HuffmanDecoder.FastDecoder,
       distDec : HuffmanDecoder.FastDecoder,
     ) {
+      // Pull accumulator state into locals.
+      let src = acc.getBytes();
+      let srcLen = acc.getBytesLen();
+      let (h0, b0, p0) = acc.snapshotAcc();
+      var hold : Nat64 = h0;
+      var bits : Nat64 = b0;
+      var pos : Nat = p0;
+
+      // Pre-compute decoder table references and primary masks.
+      let litTbl = litDec.table;
+      let litRootBits = litDec.root_bits;
+      let litMask : Nat64 = ((1 : Nat64) << Nat64.fromNat(litRootBits)) - 1;
+      let distTbl = distDec.table;
+      let distRootBits = distDec.root_bits;
+      let distMask : Nat64 = ((1 : Nat64) << Nat64.fromNat(distRootBits)) - 1;
+
       label _syms loop {
-        let sym = litDec.decodeRaw(acc);
-        if (sym == HuffmanDecoder.DECODE_ERROR) {
-          err := ?("Deflate: invalid literal/length Huffman code");
+        // ── Inline litDec.decodeRaw ──────────────────────────────────────
+        while (bits <= 56 and pos < srcLen) {
+          hold := hold | (Nat64.fromNat32(Nat32.fromNat8(src[pos])) << bits);
+          bits += 8;
+          pos += 1;
+        };
+        let lv = litTbl[Nat64.toNat(hold & litMask)];
+        let lw = lv % 32;
+        var sym : Nat = 0;
+        if (lw > 15) {
+          err := ?"Deflate: invalid literal/length Huffman code";
           break _syms;
         };
+        if (lw <= litRootBits) {
+          hold := hold >> Nat64.fromNat(lw);
+          bits -= Nat64.fromNat(lw);
+          sym := lv / 32;
+        } else {
+          // Overflow: consume root_bits, look up subtable.
+          hold := hold >> Nat64.fromNat(litRootBits);
+          bits -= Nat64.fromNat(litRootBits);
+          let lsub = lw - litRootBits;
+          let loff = lv / 32;
+          while (bits <= 56 and pos < srcLen) {
+            hold := hold | (Nat64.fromNat32(Nat32.fromNat8(src[pos])) << bits);
+            bits += 8;
+            pos += 1;
+          };
+          let lv2 = litTbl[loff + Nat64.toNat(hold & (((1 : Nat64) << Nat64.fromNat(lsub)) - 1))];
+          let lw2 = lv2 % 32;
+          if (lw2 > lsub) {
+            err := ?"Deflate: invalid literal/length Huffman code";
+            break _syms;
+          };
+          hold := hold >> Nat64.fromNat(lw2);
+          bits -= Nat64.fromNat(lw2);
+          sym := lv2 / 32;
+        };
+        // ────────────────────────────────────────────────────────────────
 
         if (sym < 256) {
           out.add(Nat8.fromNat(sym));
@@ -223,23 +279,82 @@ module {
             break _syms;
           };
           let (baseLen, lenExtra) = LENGTH_TABLE[lenIdx];
-          let length = if (lenExtra == 0) baseLen else baseLen + acc.readBits(lenExtra);
+          var length = baseLen;
+          if (lenExtra > 0) {
+            while (bits <= 56 and pos < srcLen) {
+              hold := hold | (Nat64.fromNat32(Nat32.fromNat8(src[pos])) << bits);
+              bits += 8;
+              pos += 1;
+            };
+            let lemask : Nat64 = ((1 : Nat64) << Nat64.fromNat(lenExtra)) - 1;
+            length += Nat64.toNat(hold & lemask);
+            hold := hold >> Nat64.fromNat(lenExtra);
+            bits -= Nat64.fromNat(lenExtra);
+          };
 
-          let dc = distDec.decodeRaw(acc);
-          if (dc == HuffmanDecoder.DECODE_ERROR) {
-            err := ?("Deflate: invalid distance Huffman code");
+          // ── Inline distDec.decodeRaw ─────────────────────────────────
+          while (bits <= 56 and pos < srcLen) {
+            hold := hold | (Nat64.fromNat32(Nat32.fromNat8(src[pos])) << bits);
+            bits += 8;
+            pos += 1;
+          };
+          let dv = distTbl[Nat64.toNat(hold & distMask)];
+          let dw = dv % 32;
+          var dc : Nat = 0;
+          if (dw > 15) {
+            err := ?"Deflate: invalid distance Huffman code";
             break _syms;
           };
+          if (dw <= distRootBits) {
+            hold := hold >> Nat64.fromNat(dw);
+            bits -= Nat64.fromNat(dw);
+            dc := dv / 32;
+          } else {
+            hold := hold >> Nat64.fromNat(distRootBits);
+            bits -= Nat64.fromNat(distRootBits);
+            let dsub = dw - distRootBits;
+            let doff = dv / 32;
+            while (bits <= 56 and pos < srcLen) {
+              hold := hold | (Nat64.fromNat32(Nat32.fromNat8(src[pos])) << bits);
+              bits += 8;
+              pos += 1;
+            };
+            let dv2 = distTbl[doff + Nat64.toNat(hold & (((1 : Nat64) << Nat64.fromNat(dsub)) - 1))];
+            let dw2 = dv2 % 32;
+            if (dw2 > dsub) {
+              err := ?"Deflate: invalid distance Huffman code";
+              break _syms;
+            };
+            hold := hold >> Nat64.fromNat(dw2);
+            bits -= Nat64.fromNat(dw2);
+            dc := dv2 / 32;
+          };
+          // ────────────────────────────────────────────────────────────
+
           if (dc >= 30) {
             err := ?("Deflate: invalid distance code " # debug_show dc);
             break _syms;
           };
           let (baseDist, distExtra) = DISTANCE_TABLE[dc];
-          let distance = if (distExtra == 0) baseDist else baseDist + acc.readBits(distExtra);
+          var distance = baseDist;
+          if (distExtra > 0) {
+            while (bits <= 56 and pos < srcLen) {
+              hold := hold | (Nat64.fromNat32(Nat32.fromNat8(src[pos])) << bits);
+              bits += 8;
+              pos += 1;
+            };
+            let demask : Nat64 = ((1 : Nat64) << Nat64.fromNat(distExtra)) - 1;
+            distance += Nat64.toNat(hold & demask);
+            hold := hold >> Nat64.fromNat(distExtra);
+            bits -= Nat64.fromNat(distExtra);
+          };
 
           out.copyMatch(distance, length);
         };
       };
+
+      // Sync locals back to the accumulator (covers all exit paths).
+      acc.restoreAcc(hold, bits, pos);
     };
 
     // ── Dynamic header (type 2) ───────────────────────────────────────────
