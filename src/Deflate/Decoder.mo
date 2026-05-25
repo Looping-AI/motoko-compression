@@ -164,10 +164,11 @@ module {
         if (err != null) break _blocks;
       };
 
-      switch err {
+      let resp = switch err {
         case (?msg) #err(msg);
         case null #ok(out.toArray());
       };
+      return resp;
     };
 
     /// Number of input bytes consumed after decode().

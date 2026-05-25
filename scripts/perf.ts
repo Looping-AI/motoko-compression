@@ -184,6 +184,29 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       funcs: ["checksum", "updateByte", "update", "finish", "reset"],
     },
   ],
+  decompress: [
+    {
+      file: "src/Gzip/Decoder.mo",
+      funcs: ["finish"],
+    },
+    {
+      file: "src/Deflate/Decoder.mo",
+      funcs: [
+        "decode",
+        "decodeStoredBlock",
+        "decodeCompressedBlock",
+        "loadDynamicHeader",
+      ],
+    },
+    {
+      file: "src/Huffman/Decoder.mo",
+      funcs: ["fromBitwidthsFast"],
+    },
+    {
+      file: "src/internal/OutByteBuffer.mo",
+      funcs: ["copyMatch", "grow", "toArray"],
+    },
+  ],
 };
 
 /**
@@ -201,6 +224,7 @@ const PAYLOAD_BYTES: Record<string, number> = {
   utils: 10 * 1024, // 10 KiB — fine-grained primitive
   bitreader: 10 * 1024, // 10 KiB — fine-grained primitive
   crc32: 10 * 1024, // 10 KiB — fine-grained primitive
+  decompress: 100 * 1024,
 };
 
 // ── CLI ────────────────────────────────────────────────────────────────────────
@@ -422,6 +446,28 @@ function findFuncClosingBrace(
   throw new Error(
     `findFuncClosingBrace: no matching closing brace from line ${openBraceLineIdx}`,
   );
+}
+
+/**
+ * Scan backward from the line before the closing brace to find the last
+ * meaningful line in the function body. Returns its line index if it looks
+ * like a plain implicit-return expression (i.e. does NOT start with `}` or
+ * a closing delimiter). Returns null if the last meaningful line is a block
+ * close or the body is empty.
+ */
+function findImplicitReturnLine(
+  lines: string[],
+  openBraceLineIdx: number,
+  closingBraceLineIdx: number,
+): number | null {
+  for (let i = closingBraceLineIdx - 1; i > openBraceLineIdx; i--) {
+    const trimmed = lines[i].trim();
+    if (trimmed === "" || trimmed.startsWith("//")) continue;
+    // Block-close or multiline-expression closing delimiter → not a simple expression.
+    if (trimmed.startsWith("}") || trimmed.startsWith(")")) return null;
+    return i;
+  }
+  return null;
 }
 
 // ── Return-site detection ──────────────────────────────────────────────────────
@@ -788,6 +834,26 @@ function patchSources(): void {
           });
         } else {
           unhandledReturnCount++;
+        }
+      }
+
+      // For non-unit functions with no explicit `return`, check whether the
+      // last meaningful line before the closing brace is a plain expression
+      // (e.g. `resp;`). If so, insert an :end mark just before it.
+      if (!funcReturnsUnit(lines, found.funcIdx, openBraceLineIdx)) {
+        const implicitLineIdx = findImplicitReturnLine(
+          lines,
+          openBraceLineIdx,
+          closingBraceLineIdx,
+        );
+        if (implicitLineIdx !== null) {
+          const implicitIndent =
+            lines[implicitLineIdx].match(/^(\s*)/)?.[1] ?? "";
+          ops.push({
+            kind: "insert",
+            afterLine: implicitLineIdx - 1,
+            text: `${implicitIndent}${endMarkBody}`,
+          });
         }
       }
     }

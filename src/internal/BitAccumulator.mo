@@ -11,6 +11,7 @@
 /// All hot operations are Nat64 arithmetic — no heap allocation, no bignum.
 
 import Nat8 "mo:core/Nat8";
+import Nat32 "mo:core/Nat32";
 import Nat64 "mo:core/Nat64";
 import Runtime "mo:core/Runtime";
 
@@ -18,7 +19,7 @@ module {
 
   public class BitAccumulator(inputBytes : [Nat8]) {
     var hold : Nat64 = 0; // bit accumulator (LSB-first)
-    var bits : Nat = 0; // number of valid bits currently in hold (0..63)
+    var bits : Nat64 = 0; // number of valid bits currently in hold (0..63)
     var pos : Nat = 0; // index of next byte to load from src
 
     let src : [Nat8] = inputBytes;
@@ -30,7 +31,7 @@ module {
     /// After refill, hold has at most 64 valid bits in its low-order positions.
     public func refill() {
       while (bits <= 56 and pos < srcLen) {
-        hold := hold | (Nat64.fromNat(Nat8.toNat(src[pos])) << Nat64.fromNat(bits));
+        hold := hold | (Nat64.fromNat32(Nat32.fromNat8(src[pos])) << bits);
         bits += 8;
         pos += 1;
       };
@@ -50,7 +51,7 @@ module {
     /// Consume `n` bits from hold. Must have bits ≥ n.
     public func drop(n : Nat) {
       hold := hold >> Nat64.fromNat(n);
-      bits -= n;
+      bits -= Nat64.fromNat(n);
     };
 
     // ── Composite reads ───────────────────────────────────────────────────
@@ -95,7 +96,7 @@ module {
     public func byteAlign() {
       let rem = bits % 8;
       if (rem != 0) {
-        hold := hold >> Nat64.fromNat(rem);
+        hold := hold >> rem;
         bits -= rem;
       };
     };
@@ -104,7 +105,7 @@ module {
 
     /// Total bits remaining: bits in hold + bits still in input.
     public func bitsLeft() : Nat {
-      bits + (srcLen - pos) * 8;
+      Nat64.toNat(bits) + (srcLen - pos) * 8;
     };
 
     /// Number of input bytes not yet loaded into hold.
@@ -115,7 +116,7 @@ module {
     /// Bit offset consumed so far, relative to the start of the input.
     /// Useful for error reporting.
     public func bitPosition() : Nat {
-      pos * 8 - bits;
+      pos * 8 - Nat64.toNat(bits);
     };
 
   };
