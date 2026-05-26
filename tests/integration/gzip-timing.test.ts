@@ -7,7 +7,7 @@
  * when running locally with PocketIC.
  *
  * Assertions:
- *   - canister compressData()   must be ≤ 100x slower than zlib (after discount)
+ *   - canister compressData()   must be ≤ 200x slower than zlib (after discount)
  *   - canister decompressData() must be ≤ 100x slower than zlib (after discount)
  */
 import { describe, it, beforeAll, afterAll, expect } from "bun:test";
@@ -22,8 +22,10 @@ const gunzip = promisify(zlibGunzip);
 /** 1-second discount applied to actor time to account for consensus/transport overhead. */
 const ACTOR_DISCOUNT_MS = 1_000;
 
-/** Actor must be at most 100x slower than zlib (after the discount). */
-const MAX_RATIO = 100;
+/** Actor must be at most 200x slower than zlib for compression (after the discount). */
+const MAX_COMPRESS_RATIO = 200;
+/** Actor must be at most 100x slower than zlib for decompression (after the discount). */
+const MAX_DECOMPRESS_RATIO = 100;
 
 const SIZE_MIB = 1n;
 
@@ -60,7 +62,7 @@ describe("Gzip Timing", () => {
     await server.stop();
   });
 
-  it("canister compressData() is within 1000x of node:zlib gzip (after 1s discount)", async () => {
+  it("canister compressData() is within 200x of node:zlib gzip (after 1s discount)", async () => {
     // Collect original bytes for the zlib comparison.
     const originalBytes = await readAllPages((p) => actor.getGeneratedData(p));
 
@@ -86,7 +88,7 @@ describe("Gzip Timing", () => {
     );
     expect(compressedBytes.length).toBeGreaterThan(0);
 
-    expect(ratio).toBeLessThanOrEqual(MAX_RATIO * 10);
+    expect(ratio).toBeLessThanOrEqual(MAX_COMPRESS_RATIO);
   }, 120_000);
 
   it("canister decompressData() is within 100x of node:zlib gunzip (after 1s discount)", async () => {
@@ -112,6 +114,6 @@ describe("Gzip Timing", () => {
       `decompress  |  actor: ${actorMs.toFixed(0)} ms  adjusted: ${adjustedActorMs.toFixed(0)} ms  zlib: ${zlibMs.toFixed(0)} ms  ratio: ${ratio.toFixed(2)}x`,
     );
 
-    expect(ratio).toBeLessThanOrEqual(MAX_RATIO);
+    expect(ratio).toBeLessThanOrEqual(MAX_DECOMPRESS_RATIO);
   }, 120_000);
 });
