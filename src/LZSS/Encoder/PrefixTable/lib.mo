@@ -2,18 +2,17 @@
 /// position where that prefix was seen in the input stream.
 ///
 /// Implementation: flat array of 65 536 buckets indexed by the first two bytes
-/// of the prefix (256 × 256 distinct two-byte pairs).  Each bucket is a
-/// lazily-allocated List that maps the third byte to the insertion index.
+/// of the prefix (256 × 256 distinct two-byte pairs).  Each bucket is a lazily-
+/// allocated [var Nat] of exactly 256 slots, indexed directly by the third byte.
+/// Positions are stored as `pos + 1`; 0 means "absent".
 ///
-/// Improvements over the original edjcase implementation:
-///   - Dropped the dead #small/HashValueTrieMap path (it was commented out).
-///   - Fixed LARGE_TABLE_SIZE: the original used 258^2 = 66 564 (incorrect);
-///     the correct value is 256 × 256 = 65 536 (all two-byte Nat8 pairs).
-///   - Uses mo:core/List instead of mo:base/Buffer.
+/// This replaces the previous List<(Nat8, Nat)> bucket design, which required
+/// a linear scan for the third byte and allocated a heap tuple on every new
+/// prefix.  The new design is O(1) per insert/lookup with no heap allocation
+/// in the hot path.
 
 import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
-import Runtime "mo:core/Runtime"; // used in unreachable() below
 import Prim "mo:⛔";
 
 module {
@@ -23,9 +22,12 @@ module {
     // Number of distinct ordered pairs (b0, b1) of Nat8 values: 256 × 256.
     let TABLE_SIZE : Nat = 65_536;
 
-    // Slot i holds a list of (third_byte, insertion_index) pairs for all
-    // 3-byte prefixes whose first two bytes hash to i.
-    let table : [var ?List.List<(Nat8, Nat)>] = Prim.Array_init<?List.List<(Nat8, Nat)>>(TABLE_SIZE, null);
+    // Each slot holds a lazily-allocated 256-element array indexed by b2.
+    // bucket[b2] = pos + 1  (0 = absent).
+    let table : [var ?([var Nat])] = Prim.Array_init<?([var Nat])>(TABLE_SIZE, null);
+
+    // Indices of slots that have been allocated, for O(used) clear().
+    let created = List.empty<Nat>();
 
     /// Insert a 3-byte prefix `(b0, b1, b2)` into the table and record
     /// `index` as its latest position.
@@ -33,46 +35,31 @@ module {
     /// Returns the previous insertion index for this exact prefix if one
     /// existed, or `null` if this is the first occurrence.
     public func insert(b0 : Nat8, b1 : Nat8, b2 : Nat8, index : Nat) : ?Nat {
-      // Two-byte big-endian index into the table.
-      let table_index : Nat = Nat8.toNat(b0) * 256 + Nat8.toNat(b1);
-      let third_byte = b2;
+      let ti : Nat = Nat8.toNat(b0) * 256 + Nat8.toNat(b1);
+      let b2i : Nat = Nat8.toNat(b2);
 
-      let bucket : List.List<(Nat8, Nat)> = switch (table[table_index]) {
+      let bucket : [var Nat] = switch (table[ti]) {
         case (?b) b;
         case null {
-          let b = List.empty<(Nat8, Nat)>();
-          table[table_index] := ?b;
+          let b = Prim.Array_init<Nat>(256, 0);
+          table[ti] := ?b;
+          List.add(created, ti);
           b;
         };
       };
 
-      // Search existing entries for a matching third byte.
-      let sz = List.size(bucket);
-      var i = 0;
-      while (i < sz) {
-        let (byte, prev_index) = switch (List.get(bucket, i)) {
-          case (?v) v;
-          case null Runtime.unreachable();
-        };
-        if (byte == third_byte) {
-          List.put(bucket, i, (byte, index));
-          return ?prev_index;
-        };
-        i += 1;
-      };
-
-      // No existing entry for this third byte: add a new one.
-      List.add(bucket, (third_byte, index));
-      null;
+      let prev = bucket[b2i];
+      bucket[b2i] := index + 1;
+      if (prev == 0) null else ?(prev - 1);
     };
 
     /// Reset the table, discarding all recorded prefix positions.
+    /// Only touches slots that were actually allocated.
     public func clear() {
-      var i = 0;
-      while (i < TABLE_SIZE) {
-        table[i] := null;
-        i += 1;
+      for (ti in List.values(created)) {
+        table[ti] := null;
       };
+      List.clear(created);
     };
 
   };
