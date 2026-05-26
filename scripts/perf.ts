@@ -91,8 +91,11 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       // Encoder: module-level encode wrapper + every class method and private helper.
       file: "src/LZSS/Encoder/lib.mo",
       funcs: [
-        "levelToWindowSize",
-        "encodeAsLiterals",
+        "hashAt",
+        "insertString",
+        "slideWindow",
+        "longestMatch",
+        "processOne",
         "encodeByte",
         "encode",
         "flush",
@@ -184,7 +187,14 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       // LZSS encoder — the byte-by-byte hot loop. `encode` is a thin for-loop
       // wrapper; omitted to avoid one mark pair per 10 KiB batch call.
       file: "src/LZSS/Encoder/lib.mo",
-      funcs: ["encodeByte", "encodeAsLiterals", "flush"],
+      funcs: [
+        "encodeByte",
+        "processOne",
+        "longestMatch",
+        "insertString",
+        "slideWindow",
+        "flush",
+      ],
     },
   ],
   decompress: [

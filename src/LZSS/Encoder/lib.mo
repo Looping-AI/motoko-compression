@@ -1,24 +1,23 @@
-/// LZSS encoder.
+/// LZSS encoder — zlib-style hash-chain implementation.
 ///
-/// Migrated from edjcase/motoko_compression, replacing mo:base + external
-/// packages with mo:core only.
+/// Replaces the prior CircularBuffer + 65 536-bucket prefix-table design with:
+///   - A single flat byte window of size 2 * window_size (history + lookahead).
+///   - `head[hash]` : Nat32  — most recent window position for each 3-byte hash
+///                              (stored as position + 1, 0 = none).
+///   - `prev[pos & WMASK]` : Nat32 — previous occurrence of the same hash
+///                                    (same +1 encoding).
+///   - Bounded chain walk in `longestMatch` (depth = `max_chain`,
+///     #fast = 8, #balance = 32, #best = 256).
 ///
-/// Key changes from original:
-///   - Encoder(opt_window_size : ?Nat) → Encoder(level : CompressionLevel),
-///     mapping #fast → 1 024, #balance → 8 192, #best → 32 768.
-///   - mo:buffer-deque/BufferDeque (byte_buffer) → CircularBuffer + popFront().
-///   - mo:circular-buffer (search_buffer) → CircularBuffer; cache_buffer → two ?Nat8 scalars.
-///   - Hot Itertools.range loops → direct while loops.
-///   - Prelude.unreachable() → Runtime.unreachable().
-///   - Dead code removed: encode_v1, longest_prefix_length.
+/// Public Sink-based API is preserved for back-compat; Phase D will replace
+/// it with a direct callback interface.
+///
+/// References: zlib's `deflate.c` (`fill_window`, `longest_match`, `deflate_slow`).
 
 import List "mo:core/List";
-import Option "mo:core/Option";
 import Nat8 "mo:core/Nat8";
 import Nat32 "mo:core/Nat32";
 import Prim "mo:⛔";
-import Runtime "mo:core/Runtime";
-import CircularBuffer "../../internal/CircularBuffer";
 import Common "../Common";
 
 module {
@@ -30,7 +29,7 @@ module {
     add : (entry : LzssEntry) -> ();
   };
 
-  // ── Window size per compression level ──────────────────────────────────
+  // ── Per-level tuning ───────────────────────────────────────────────────
 
   func levelToWindowSize(level : Common.CompressionLevel) : Nat {
     switch level {
@@ -40,12 +39,31 @@ module {
     };
   };
 
-  // ── Public API ──────────────────────────────────────────────────────────
+  func levelToMaxChain(level : Common.CompressionLevel) : Nat {
+    switch level {
+      case (#fast) 8;
+      case (#balance) 32;
+      case (#best) 256;
+    };
+  };
 
-  /// Create an encoder at the best (highest ratio) compression level.
+  // ── Constants ──────────────────────────────────────────────────────────
+
+  let MIN_MATCH : Nat = 3;
+  let MAX_MATCH : Nat = Common.MATCH_MAX_SIZE; // 258
+  // Bytes of lookahead required before steady-state matching can run.
+  // Matches zlib's MIN_LOOKAHEAD = MAX_MATCH + MIN_MATCH + 1.
+  // (Literal because module-level lets can't combine other lets statically.)
+  let MIN_LOOKAHEAD : Nat = 262;
+
+  let HASH_SIZE : Nat = 32_768; // 2^15
+  let HASH_MASK : Nat32 = 0x7FFF;
+  let HASH_SHIFT : Nat32 = 5;
+
+  // ── Module-level convenience API ───────────────────────────────────────
+
   public func default() : Encoder { Encoder(#best) };
 
-  /// Encode `bytes` at the best compression level and return the entry list.
   public func encode(bytes : [Nat8]) : List.List<LzssEntry> {
     let lzss = default();
     let buffer = List.empty<LzssEntry>();
@@ -55,204 +73,202 @@ module {
     buffer;
   };
 
-  // ── Encoder class ───────────────────────────────────────────────────────
+  // ── Encoder class ──────────────────────────────────────────────────────
 
   public class Encoder(level : Common.CompressionLevel) {
 
-    let window_size : Nat = levelToWindowSize(level);
+    // Window: history + lookahead. All level choices use power-of-2 sizes,
+    // so WMASK = WSIZE - 1 is a valid mask.
+    let WSIZE : Nat = levelToWindowSize(level);
+    let WPHYS : Nat = 2 * WSIZE;
+    let MAX_CHAIN : Nat = levelToMaxChain(level);
+    // WSIZE is always a power of 2, so `p % WSIZE` is the same as `p & (WSIZE-1)`.
+    // Motoko's Nat has no bitwise ops; we use modulo.
+    let WMASK32 : Nat32 = Nat32.fromNat(WSIZE - 1);
 
-    // Sliding back-reference window (oldest element evicted on overflow).
-    let search_buffer = CircularBuffer.CircularBuffer(window_size);
-
-    // 3-byte prefix index: flat 65 536-slot array (indexed by b0*256+b1), each
-    // bucket lazily allocated as [var Nat] of 256 slots indexed by b2.
-    // Stored as (pos + 1); 0 = absent.  Inlined from PrefixTable to eliminate
-    // object dispatch and ?Nat return-value boxing on every insert call.
-    let pt_table : [var ?([var Nat])] = Prim.Array_init<?([var Nat])>(65_536, null);
-    let pt_created = List.empty<Nat>();
-
-    // Insert prefix (b0,b1,b2) at position `index`.
-    // Returns raw previous slot value: 0 = no prior entry, n+1 = prior index n.
-    // Returning Nat instead of ?Nat avoids Option heap allocation on every hit.
-    func pt_insert(b0 : Nat8, b1 : Nat8, b2 : Nat8, index : Nat) : Nat {
-      let ti : Nat = Nat8.toNat(b0) * 256 + Nat8.toNat(b1);
-      let bucket : [var Nat] = switch (pt_table[ti]) {
-        case (?b) b;
-        case null {
-          let b = Prim.Array_init<Nat>(256, 0);
-          pt_table[ti] := ?b;
-          List.add(pt_created, ti);
-          b;
-        };
-      };
-      let b2i : Nat = Nat8.toNat(b2);
-      let prev = bucket[b2i];
-      bucket[b2i] := index + 1;
-      prev;
+    // Fast `p mod WSIZE` for positions guaranteed to fit in Nat32 (WPHYS < 2^17).
+    func pmod(p : Nat) : Nat {
+      Nat32.toNat(Nat32.bitand(Nat32.fromNat(p), WMASK32));
     };
 
-    // Lookahead buffer: holds the next up-to-MATCH_MAX_SIZE unprocessed bytes.
-    // Capacity is MATCH_MAX_SIZE + 1; the encoder always emits before reaching
-    // that limit, so push never actually overwrites.
-    // 512 is the next power of 2 above MATCH_MAX_SIZE+1 (259), required by
-    // CircularBuffer's bitmask optimisation. The buffer is never filled beyond
-    // MATCH_MAX_SIZE elements, so the extra capacity is never used.
-    let byte_buffer = CircularBuffer.CircularBuffer(512);
+    let window : [var Nat8] = Prim.Array_init<Nat8>(WPHYS, 0);
+    let head : [var Nat32] = Prim.Array_init<Nat32>(HASH_SIZE, 0);
+    let prev : [var Nat32] = Prim.Array_init<Nat32>(WSIZE, 0);
 
-    // Tracks the last 1-2 emitted bytes for prefix-table seeding after a match.
-    // Two scalar slots; push-on-full evicts the oldest (keeps last 2 bytes).
-    var cache0 : ?Nat8 = null; // oldest cached byte, null if cache is empty
-    var cache1 : ?Nat8 = null; // newest cached byte, null if ≤1 entry
+    // Current scan position in `window`.
+    var strstart : Nat = 0;
+    // Bytes available ahead of `strstart` (i.e. window[strstart..strstart+lookahead-1] valid).
+    var lookahead : Nat = 0;
 
-    var match_index : ?Nat = null;
-    var input_size : Nat = 0;
+    // ── Internal helpers ─────────────────────────────────────────────────
 
-    // ── Internals ──────────────────────────────────────────────────────────
+    // 3-byte hash at window position `p`. Requires p+2 < WPHYS and the
+    // three bytes to be valid (i.e. p+2 < strstart + lookahead).
+    func hashAt(p : Nat) : Nat {
+      let b0 = Nat8.toNat32(window[p]);
+      let b1 = Nat8.toNat32(window[p + 1]);
+      let b2 = Nat8.toNat32(window[p + 2]);
+      let h = (((b0 << HASH_SHIFT) ^ b1) << HASH_SHIFT) ^ b2;
+      Nat32.toNat(h & HASH_MASK);
+    };
 
-    /// Emit `n` bytes from the front of byte_buffer as literals.
-    func encodeAsLiterals(n : Nat, sink : Sink) {
-      var emitted = 0;
-      while (emitted < n) {
-        let byte = byte_buffer.popFrontUnchecked();
-        search_buffer.push(byte);
-        sink.add(#literal(byte));
-        input_size += 1;
-        emitted += 1;
+    // Insert the 3-byte string at position `p` into the hash chain.
+    // Returns the previous head value (0 = no prior, else prior pos + 1).
+    func insertString(p : Nat) : Nat32 {
+      let h = hashAt(p);
+      let priorHead = head[h];
+      prev[pmod(p)] := priorHead;
+      head[h] := Nat32.fromNat(p + 1);
+      priorHead;
+    };
+
+    // Slide window: discard the oldest WSIZE bytes, shift the back half to the
+    // front half, and decrement all hash entries. O(WSIZE + HASH_SIZE).
+    func slideWindow() {
+      var i = 0;
+      while (i < WSIZE) { window[i] := window[WSIZE + i]; i += 1 };
+      strstart -= WSIZE;
+      let cut = Nat32.fromNat(WSIZE);
+      i := 0;
+      while (i < HASH_SIZE) {
+        let v = head[i];
+        head[i] := if (v > cut) v - cut else 0;
+        i += 1;
+      };
+      i := 0;
+      while (i < WSIZE) {
+        let v = prev[i];
+        prev[i] := if (v > cut) v - cut else 0;
+        i += 1;
       };
     };
 
-    // ── Public encoding interface ──────────────────────────────────────────
+    // Find the longest match for window[strstart..] starting from window
+    // position `startMatch`. Walks the prev[] chain up to MAX_CHAIN steps.
+    // `maxLen` bounds the match length (= min(lookahead, MAX_MATCH)).
+    // Returns (bestLen, bestDist); bestLen = 0 means no match >= MIN_MATCH.
+    func longestMatch(startMatch : Nat, maxLen : Nat) : (Nat, Nat) {
+      var bestLen : Nat = MIN_MATCH - 1; // require strictly greater
+      var bestPos : Nat = 0;
+      var cur : Nat = startMatch;
+      var chainLen : Nat = MAX_CHAIN;
+      let scanStart = strstart;
+      // Earliest legal match position (distance must be <= WSIZE).
+      let limit : Int = (scanStart : Int) - WSIZE + 1;
 
-    /// Feed one future byte into the streaming encoder.
-    public func encodeByte(future_byte : Nat8, sink : Sink) {
-      byte_buffer.push(future_byte);
-
-      // Seed the prefix table using bytes recently emitted during a match.
-      // cache_buffer holds the last 1-2 emitted bytes; combined with the
-      // front of byte_buffer they form new 3-byte prefixes to record.
-      switch (cache0, cache1) {
-        case (?c0, ?c1) {
-          ignore pt_insert(c0, c1, byte_buffer.getUnchecked(0), input_size - 2);
-          cache0 := ?c1;
-          cache1 := null;
-        };
-        case (?c0, null) {
-          if (byte_buffer.size() >= 2) {
-            ignore pt_insert(c0, byte_buffer.getUnchecked(0), byte_buffer.getUnchecked(1), input_size - 1);
-            cache0 := null;
+      label chain loop {
+        // Quick reject: the bestLen'th and 0th/1st bytes must match.
+        if (
+          window[cur + bestLen] == window[scanStart + bestLen] and window[cur] == window[scanStart] and window[cur + 1] == window[scanStart + 1]
+        ) {
+          // Compare bytes from offset 2 onwards.
+          var k : Nat = 2;
+          while (k < maxLen and window[cur + k] == window[scanStart + k]) {
+            k += 1;
+          };
+          if (k > bestLen) {
+            bestLen := k;
+            bestPos := cur;
+            if (k >= maxLen) break chain;
           };
         };
-        case _ {};
+        chainLen -= 1;
+        if (chainLen == 0) break chain;
+        let p = prev[pmod(cur)];
+        if (p == 0) break chain;
+        let nextPos : Nat = Nat32.toNat(p) - 1;
+        if (nextPos : Int < limit) break chain;
+        cur := nextPos;
       };
 
-      if (byte_buffer.size() < 3) return;
-
-      if (byte_buffer.size() == 3) {
-        // Try to start a new match at the current lookahead position.
-        // pt_insert returns 0 (no prior entry) or prev+1 (prior index = prev-1).
-        let prev3 = pt_insert(
-          byte_buffer.getUnchecked(0),
-          byte_buffer.getUnchecked(1),
-          byte_buffer.getUnchecked(2),
-          input_size,
-        );
-        if (prev3 > 0) {
-          let prefix_index = prev3 - 1;
-          let backward_offset = (input_size - prefix_index) : Nat;
-          if (backward_offset > search_buffer.size()) {
-            // The match is outside the current window; emit literal instead.
-            encodeAsLiterals(1, sink);
-            match_index := null;
-          } else {
-            match_index := ?prefix_index;
-          };
-        } else {
-          encodeAsLiterals(1, sink);
-          match_index := null;
-        };
+      if (bestLen >= MIN_MATCH) {
+        (bestLen, scanStart - bestPos);
       } else {
-        // byte_buffer.size() > 3: we are extending an existing match.
-        let ?prefix_index = match_index else Runtime.unreachable();
-        let backward_offset = (input_size - prefix_index) : Nat;
-        let start_index = (search_buffer.size() - backward_offset) : Nat;
-        let future_byte_index = start_index + (byte_buffer.size() - 1) : Nat;
-
-        let mismatch = future_byte_index >= search_buffer.size() or future_byte != search_buffer.getUnchecked(Nat32.fromNat(future_byte_index));
-        let too_long = byte_buffer.size() >= Common.MATCH_MAX_SIZE;
-
-        if (mismatch or too_long) {
-          // Emit the accumulated match (all but the last buffered byte).
-          let len = (byte_buffer.size() - 1) : Nat;
-
-          var emitted = 0;
-          while (emitted < len) {
-            // While 3+ bytes remain, record the current 3-byte prefix.
-            if (byte_buffer.size() >= 3) {
-              ignore pt_insert(
-                byte_buffer.getUnchecked(0),
-                byte_buffer.getUnchecked(1),
-                byte_buffer.getUnchecked(2),
-                emitted + input_size,
-              );
-            };
-            let byte = byte_buffer.popFrontUnchecked();
-            search_buffer.push(byte);
-            // When fewer than 3 bytes remain, seed cache for the next
-            // encodeByte call to complete the prefix table entry.
-            if (byte_buffer.size() < 3) {
-              switch (cache0, cache1) {
-                case (_, ?_) { cache0 := cache1; cache1 := ?byte };
-                case (?_, null) { cache1 := ?byte };
-                case _ { cache0 := ?byte };
-              };
-            };
-            emitted += 1;
-          };
-
-          sink.add(#pointer(backward_offset, len));
-          input_size += len;
-          match_index := null;
-        };
+        (0, 0);
       };
     };
 
-    /// Encode all of `bytes` by feeding them one at a time.
+    // Process exactly one symbol (literal or pointer) at strstart.
+    // Caller guarantees lookahead >= MIN_MATCH so that hashAt is safe.
+    // `tailMode = true` means we're in flush; match length is bounded by
+    // remaining lookahead instead of MAX_MATCH.
+    func processOne(sink : Sink, tailMode : Bool) {
+      // Insert the current 3-byte string and look up the chain head.
+      let priorHead = insertString(strstart);
+      var emitted = false;
+      if (priorHead != 0) {
+        let curMatch : Nat = Nat32.toNat(priorHead) - 1;
+        let maxLen = if (tailMode and lookahead < MAX_MATCH) lookahead else MAX_MATCH;
+        let (bestLen, bestDist) = longestMatch(curMatch, maxLen);
+        if (bestLen >= MIN_MATCH) {
+          sink.add(#pointer(bestDist, bestLen));
+          // Insert hashes for positions skipped by the match (so future
+          // matches see them). Skip positions whose 3-byte window would
+          // run past the current valid lookahead.
+          let endLookahead = strstart + lookahead;
+          var k : Nat = 1;
+          while (k < bestLen) {
+            let p = strstart + k;
+            if (p + MIN_MATCH <= endLookahead) {
+              ignore insertString(p);
+            };
+            k += 1;
+          };
+          strstart += bestLen;
+          lookahead -= bestLen;
+          emitted := true;
+        };
+      };
+      if (not emitted) {
+        sink.add(#literal(window[strstart]));
+        strstart += 1;
+        lookahead -= 1;
+      };
+    };
+
+    // ── Public encoding interface ────────────────────────────────────────
+
+    /// Feed one byte. May emit zero or more entries once enough lookahead is buffered.
+    public func encodeByte(future_byte : Nat8, sink : Sink) {
+      // Make room in window if we're about to overflow.
+      if (strstart + lookahead == WPHYS) slideWindow();
+      window[strstart + lookahead] := future_byte;
+      lookahead += 1;
+      // In steady state, process exactly one symbol once we have full lookahead.
+      while (lookahead >= MIN_LOOKAHEAD) {
+        processOne(sink, false);
+      };
+    };
+
+    /// Encode `bytes` by feeding them one at a time.
     public func encode(bytes : [Nat8], sink : Sink) {
       for (byte in bytes.vals()) {
         encodeByte(byte, sink);
       };
     };
 
-    /// Flush any bytes remaining in the lookahead buffer.
-    /// Must be called after `encode` to emit the final entries.
+    /// Drain any bytes still in the lookahead. Must be called once at EOF.
     public func flush(sink : Sink) {
-      let len = byte_buffer.size();
-      if (len == 0) return;
-
-      if (Option.isSome(match_index) and len >= 3) {
-        let ?prefix_index = match_index else Runtime.unreachable();
-        let backward_offset = (input_size - prefix_index) : Nat;
-        sink.add(#pointer(backward_offset, len));
-      } else {
-        var emitted = 0;
-        while (emitted < len) {
-          let byte = byte_buffer.popFrontUnchecked();
-          sink.add(#literal(byte));
-          emitted += 1;
-        };
+      // Tail: lookahead < MIN_LOOKAHEAD. Emit one symbol at a time until empty.
+      while (lookahead >= MIN_MATCH) {
+        processOne(sink, true);
+      };
+      // Remaining 0..2 bytes can only be literals.
+      while (lookahead > 0) {
+        sink.add(#literal(window[strstart]));
+        strstart += 1;
+        lookahead -= 1;
       };
     };
 
-    /// Reset the encoder to its initial state without emitting anything.
+    /// Reset to initial state.
     public func clear() {
-      search_buffer.clear();
-      for (ti in List.values(pt_created)) { pt_table[ti] := null };
-      List.clear(pt_created);
-      byte_buffer.clear();
-      cache0 := null;
-      cache1 := null;
-      input_size := 0;
-      match_index := null;
+      var i = 0;
+      while (i < HASH_SIZE) { head[i] := 0; i += 1 };
+      i := 0;
+      while (i < WSIZE) { prev[i] := 0; i += 1 };
+      strstart := 0;
+      lookahead := 0;
     };
 
   }; // end class Encoder
