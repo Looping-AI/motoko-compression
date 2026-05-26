@@ -405,13 +405,53 @@ Update these numbers each time a new baseline is established.
 
 ---
 
+## Migration-from-edjcase speedup summary (Phases B–E)
+
+End-to-end `gzip-timing.test.ts` compress ratio vs. `node:zlib` on 1 MiB random data (1 s actor
+discount applied). Lower is better.
+
+| Phase | Description                                          | Compress ratio | Perf report                                                  |
+| ----- | ---------------------------------------------------- | -------------- | ------------------------------------------------------------ |
+| A     | Baseline (`main` before migration)                   | ~458×          | `scripts/output/baseline-A.json`                             |
+| B     | `BitBuffer` Nat64 accumulator (`bi_buf` pattern)     | included in C  | —                                                            |
+| C     | Hash-chain LZSS encoder (flat window + head/prev)    | ~204×          | `scripts/output/perf-compress-2026-05-26T21-55-11-336Z.json` |
+| D     | `MatchSink` direct callbacks — eliminate `LzssEntry` | ~156×          | `scripts/output/perf-compress-2026-05-26T22-10-32-328Z.json` |
+| E     | Symbol-emit fusion (`addBits2` + precomputed tables) | ~152×          | `scripts/output/perf-compress-2026-05-26T22-34-58-202Z.json` |
+
+**Cumulative speedup: ~3.0× end-to-end (458× → 152×).**
+
+### Phase E per-function costs (10 KiB workload, `component=compress`)
+
+| Function                    |  Calls | Inc avg instrs | Exc avg instrs | Inc heap avg |
+| --------------------------- | -----: | -------------: | -------------: | -----------: |
+| `lzss_encoder:encodeByte`   | 10 240 |        160 554 |         58 491 |      9 772 B |
+| `lzss_encoder:processOne`   |  3 697 |        284 572 |        243 500 |     17 421 B |
+| `lzss_encoder:insertString` | 10 238 |         43 559 |         43 559 |      2 662 B |
+| `lzss_encoder:flush`        |      1 |      7 051 413 |        114 416 |    431 504 B |
+
+The LZSS encoder (`processOne` + `insertString` + chain walk) accounts for ≥ 92% of total
+instruction cost. The symbol-emission loop in `Block.flush` (now using `addBits2` + precomputed
+Huffman arrays) is a small fraction of the remaining budget.
+
+### What's left
+
+The dominant remaining bottleneck is `processOne` / `longestMatch` in the hash-chain LZSS
+encoder. Further gains would require:
+
+- Lazy matching (`deflate_slow` style) — ~1–3% compression ratio improvement, some speed gain
+- Reduced hash collision rate (better hash function for the input distribution)
+- Instruction-level micro-optimisation inside `longestMatch`'s inner comparison loop
+
+---
+
 ## Completed optimizations log
 
-| Date       | Component | File                                                    | Change                                                                                                                                                                                 | Δ instrs/call                                                                       | Δ heap/call                                | Δ total heap (10 KiB)   | Commit |
-| ---------- | --------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------- | ------ |
-| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`                             | Inline `getPos` at 2 call sites                                                                                                                                                        | −58 034 (−32%) on `getByte`/`getBits`                                               | −3 464 B (−32%)                            | −37 MB                  | —      |
-| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files                   | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites                                                                                                                  | −48 133 per `range` call (×11 201 calls)                                            | −2 684 B per call                          | ~−30 MB                 | —      |
-| 2026-05-21 | bitreader | `src/internal/BitReader.mo`                             | Cache `available` field; inline `isValid` bounds check at all 5 call sites                                                                                                             | −59% total workload instrs; `peekBits` −59% instrs, `skipBits` −59% instrs          | `peekBits` −60% heap, `skipBits` −60% heap | −90 MB (161 MB → 71 MB) | —      |
-| 2026-05-21 | crc32     | `src/internal/CRC32.mo`                                 | Rewrite `update` to process `[Nat8]` in direct 8-byte strides; remove `updateByte` + dead fields                                                                                       | −93% total instrs (697M → 47M); `updateByte` 20 480 calls → 0                       | 2 106 B/byte → ~0                          | −35 MB (48 MB → 13 MB)  | —      |
-| 2026-05-22 | deflate   | `src/Deflate/Symbol.mo` + `src/Deflate/HuffmanCodec.mo` | Inline `Encoder.encode` hot path with `var` accumulator + while-loop; add `lengthMarker`/`distanceMarker` scalars; remove tuple allocation from `lengthCode`/`distanceCode` call sites | `deflate:encode` −61.5% (30.1B → 11.6B); `deflate:flush` avg −99.1% (3.59B → 31.6M) | −99.98% flush heap (215 MB → 50 KB avg)    | —                       | —      |
-| 2026-05-21 | lzss      | `src/LZSS/Encoder/lib.mo`                               | `cache_buffer: CircularBuffer(2)` → two `?Nat8` scalar fields; removes object dispatch for 2-byte post-match cache                                                                     | −33 instrs/call (−0.012%)                                                           | −18 B/call                                 | −184 KB (10 KiB run)    | —      |
+| Date       | Component | File                                                                                                              | Change                                                                                                                                                                                                               | Δ instrs/call                                                                                | Δ heap/call                                | Δ total heap (10 KiB)   | Commit |
+| ---------- | --------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------- | ------ |
+| 2026-05-20 | bitbuffer | `src/internal/BitBuffer.mo`                                                                                       | Inline `getPos` at 2 call sites                                                                                                                                                                                      | −58 034 (−32%) on `getByte`/`getBits`                                                        | −3 464 B (−32%)                            | −37 MB                  | —      |
+| 2026-05-21 | utils     | `src/internal/utils.mo` + 8 src files                                                                             | Remove `range`/`revRange`; inline `while` loops at all 20+ call sites                                                                                                                                                | −48 133 per `range` call (×11 201 calls)                                                     | −2 684 B per call                          | ~−30 MB                 | —      |
+| 2026-05-21 | bitreader | `src/internal/BitReader.mo`                                                                                       | Cache `available` field; inline `isValid` bounds check at all 5 call sites                                                                                                                                           | −59% total workload instrs; `peekBits` −59% instrs, `skipBits` −59% instrs                   | `peekBits` −60% heap, `skipBits` −60% heap | −90 MB (161 MB → 71 MB) | —      |
+| 2026-05-21 | crc32     | `src/internal/CRC32.mo`                                                                                           | Rewrite `update` to process `[Nat8]` in direct 8-byte strides; remove `updateByte` + dead fields                                                                                                                     | −93% total instrs (697M → 47M); `updateByte` 20 480 calls → 0                                | 2 106 B/byte → ~0                          | −35 MB (48 MB → 13 MB)  | —      |
+| 2026-05-22 | deflate   | `src/Deflate/Symbol.mo` + `src/Deflate/HuffmanCodec.mo`                                                           | Inline `Encoder.encode` hot path with `var` accumulator + while-loop; add `lengthMarker`/`distanceMarker` scalars; remove tuple allocation from `lengthCode`/`distanceCode` call sites                               | `deflate:encode` −61.5% (30.1B → 11.6B); `deflate:flush` avg −99.1% (3.59B → 31.6M)          | −99.98% flush heap (215 MB → 50 KB avg)    | —                       | —      |
+| 2026-05-26 | compress  | `src/LZSS/Common.mo`, `src/LZSS/Encoder/lib.mo`, `src/LZSS/Decoder.mo`, `src/LZSS/lib.mo`, `src/Deflate/Block.mo` | Drop `LzssEntry` variant + list-based `LZSS.encode/decode`; encoder/Block use `MatchSink {onLiteral; onPointer}` direct callbacks; Decoder rewritten as class with `literal`/`pointer` methods                       | `encodeByte` exc: ~58 K instrs (−~40% from D-eliminating switch); compress ratio 204× → 156× | −~7 KB/call (no LzssEntry alloc)           | —                       | —      |
+| 2026-05-26 | compress  | `src/internal/BitBuffer.mo`, `src/Huffman/Encoder.mo`, `src/Deflate/Block.mo`                                     | `BitBuffer.addBits2` fuses two adjacent bit writes; `HuffmanEncoder` precomputes parallel `bitwidths`/`bits` arrays; `Block.flush` emit loop uses 2 array reads + `addBits` for literals, 2× `addBits2` for pointers | Symbol-emit cost eliminated from loop; compress ratio 156× → ~152×                           | Minimal (no new allocs)                    | —                       | —      |

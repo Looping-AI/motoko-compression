@@ -124,12 +124,20 @@ module {
       };
 
       // Encode symbols directly from flat arrays — no Symbol variant construction.
+      // Hoist the precomputed Huffman code tables out of the inner loop so
+      // emission is a pair of indexed reads + a fused `addBits2` per pointer.
+      let lit_bw = symbol_encoder.literal.bitwidths;
+      let lit_bv = symbol_encoder.literal.bits;
+      let dist_bw = symbol_encoder.distance.bitwidths;
+      let dist_bv = symbol_encoder.distance.bits;
+
       var i = 0;
       while (i < sym_count) {
         let len = sym_v2[i];
         if (len == 0) {
-          // Literal
-          symbol_encoder.literal.encode(bitbuffer, sym_v1[i]);
+          // Literal — inline of symbol_encoder.literal.encode.
+          let s = sym_v1[i];
+          bitbuffer.addBits(lit_bw[s], lit_bv[s]);
         } else {
           // Pointer: sym_v1[i] = backward_offset, sym_v2[i] = length
           let dist = sym_v1[i];
@@ -162,26 +170,31 @@ module {
           } else {
             lCode := 285;
           };
-          symbol_encoder.literal.encode(bitbuffer, lCode);
-          if (lBits > 0) { bitbuffer.addBits(lBits, lVal) };
+          // Fused literal-code + length-extra emit.
+          bitbuffer.addBits2(lit_bw[lCode], lit_bv[lCode], lBits, lVal);
+
           // ── Distance code (RFC 1951, inlined — no variant alloc) ────────
+          var dCode : Nat = 0;
+          var dBits : Nat = 0;
+          var dExtra : Nat = 0;
           if (dist <= 4) {
-            symbol_encoder.distance.encode(bitbuffer, dist - 1);
+            dCode := dist - 1;
           } else {
-            var dBits = 1;
-            var dBase = 4;
-            while (dBase * 2 < dist) { dBits += 1; dBase *= 2 };
-            let dHalf = dBase / 2;
-            symbol_encoder.distance.encode(bitbuffer, 2 * dBits + 2 + (if (dist < dBase + dHalf + 1) 0 else 1));
-            if (dBits > 0) {
-              bitbuffer.addBits(dBits, (dist - dBase - 1) % dHalf);
-            };
+            var b = 1;
+            var base = 4;
+            while (base * 2 < dist) { b += 1; base *= 2 };
+            let half = base / 2;
+            dCode := 2 * b + 2 + (if (dist < base + half + 1) 0 else 1);
+            dBits := b;
+            dExtra := (dist - base - 1) % half;
           };
+          // Fused distance-code + distance-extra emit.
+          bitbuffer.addBits2(dist_bw[dCode], dist_bv[dCode], dBits, dExtra);
         };
         i += 1;
       };
-      // End-of-block marker (code 256)
-      symbol_encoder.literal.encode(bitbuffer, 256);
+      // End-of-block marker (code 256) — inline.
+      bitbuffer.addBits(lit_bw[256], lit_bv[256]);
 
       // Reset state for next block
       input_size := 0;

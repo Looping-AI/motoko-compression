@@ -73,6 +73,21 @@ module {
 
   public class Encoder(table : [var Code]) {
 
+    // Parallel flat arrays for the hot symbol-emit path.  These mirror
+    // `table` but use raw `Nat` values so callers can do two indexed reads
+    // and feed `BitBuffer.addBits` / `addBits2` directly — avoiding the
+    // `Code` record lookup and per-symbol `Nat16.toNat` conversion that
+    // `encode` performs.
+    let _n : Nat = table.size();
+    public let bitwidths : [var Nat] = Prim.Array_init<Nat>(_n, 0);
+    public let bits : [var Nat] = Prim.Array_init<Nat>(_n, 0);
+    var _initI : Nat = 0;
+    while (_initI < _n) {
+      bitwidths[_initI] := table[_initI].bitwidth;
+      bits[_initI] := Nat16.toNat(table[_initI].bits);
+      _initI += 1;
+    };
+
     public func encode(bitbuffer : BitBuffer, symbol : Nat) {
       let code = table[symbol];
       assert code.bitwidth != 0;
