@@ -2,67 +2,6 @@ import { test; suite; expect } "mo:test";
 import Nat8 "mo:core/Nat8";
 import BitBuffer "../../src/internal/BitBuffer";
 
-// ── addBit / getBit ────────────────────────────────────────────────────────
-
-suite(
-  "BitBuffer.addBit / getBit",
-  func() {
-
-    test(
-      "single true bit",
-      func() {
-        let b = BitBuffer.BitBuffer(8);
-        b.addBit(true);
-        expect.bool(b.getBit(0)).isTrue();
-        expect.nat(b.bitSize()).equal(1);
-      },
-    );
-
-    test(
-      "single false bit",
-      func() {
-        let b = BitBuffer.BitBuffer(8);
-        b.addBit(false);
-        expect.bool(b.getBit(0)).isFalse();
-        expect.nat(b.bitSize()).equal(1);
-      },
-    );
-
-    test(
-      "8 bits fill one byte, all positions correct",
-      func() {
-        let b = BitBuffer.BitBuffer(8);
-        let pattern = [true, false, true, true, false, false, true, false];
-        for (bit in pattern.vals()) b.addBit(bit);
-        var i = 0;
-        for (expected in pattern.vals()) {
-          expect.bool(b.getBit(i)).equal(expected);
-          i += 1;
-        };
-        expect.nat(b.bitSize()).equal(8);
-        expect.nat(b.byteSize()).equal(1);
-      },
-    );
-
-    test(
-      "bits span two bytes",
-      func() {
-        let b = BitBuffer.BitBuffer(8);
-        var _j = 0;
-        while (_j < 9) { b.addBit(true); _j += 1 };
-        expect.nat(b.bitSize()).equal(9);
-        expect.nat(b.byteSize()).equal(2);
-        var i = 0;
-        while (i < 9) {
-          expect.bool(b.getBit(i)).isTrue();
-          i += 1;
-        };
-      },
-    );
-
-  },
-);
-
 // ── addBits / getBits ──────────────────────────────────────────────────────
 
 suite(

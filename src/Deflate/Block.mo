@@ -85,24 +85,21 @@ module {
     let lit_freqs : [var Nat] = Prim.Array_init<Nat>(286, 0);
     let dist_freqs : [var Nat] = Prim.Array_init<Nat>(30, 0);
 
-    let sink : LzssEncoder.Sink = {
-      add = func(entry : LzssCommon.LzssEntry) {
-        switch entry {
-          case (#literal(b)) {
-            let bnat = Nat8.toNat(b);
-            sym_v1[sym_count] := bnat;
-            sym_v2[sym_count] := 0; // literal sentinel
-            sym_count += 1;
-            lit_freqs[bnat] += 1;
-          };
-          case (#pointer(offset, len)) {
-            sym_v1[sym_count] := offset;
-            sym_v2[sym_count] := len; // len >= 3, never 0
-            sym_count += 1;
-            lit_freqs[Symbol.lenCode(len)] += 1;
-            dist_freqs[Symbol.distCode(offset)] += 1;
-          };
-        };
+    // Direct callbacks — no LzssEntry variant alloc per symbol.
+    let sink : LzssCommon.MatchSink = {
+      onLiteral = func(b : Nat8) {
+        let bnat = Nat8.toNat(b);
+        sym_v1[sym_count] := bnat;
+        sym_v2[sym_count] := 0; // literal sentinel
+        sym_count += 1;
+        lit_freqs[bnat] += 1;
+      };
+      onPointer = func(offset : Nat, len : Nat) {
+        sym_v1[sym_count] := offset;
+        sym_v2[sym_count] := len; // len >= 3, never 0
+        sym_count += 1;
+        lit_freqs[Symbol.lenCode(len)] += 1;
+        dist_freqs[Symbol.distCode(offset)] += 1;
       };
     };
 

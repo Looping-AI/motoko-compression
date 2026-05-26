@@ -9,12 +9,11 @@
 ///   - Bounded chain walk in `longestMatch` (depth = `max_chain`,
 ///     #fast = 8, #balance = 32, #best = 256).
 ///
-/// Public Sink-based API is preserved for back-compat; Phase D will replace
-/// it with a direct callback interface.
+/// Output is delivered through a `MatchSink { onLiteral; onPointer }` callback
+/// pair — no `LzssEntry` variant is ever allocated.
 ///
 /// References: zlib's `deflate.c` (`fill_window`, `longest_match`, `deflate_slow`).
 
-import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
 import Nat32 "mo:core/Nat32";
 import Prim "mo:⛔";
@@ -22,12 +21,7 @@ import Common "../Common";
 
 module {
 
-  type LzssEntry = Common.LzssEntry;
-
-  /// Caller-supplied consumer for encoded entries.
-  public type Sink = {
-    add : (entry : LzssEntry) -> ();
-  };
+  public type MatchSink = Common.MatchSink;
 
   // ── Per-level tuning ───────────────────────────────────────────────────
 
@@ -63,15 +57,6 @@ module {
   // ── Module-level convenience API ───────────────────────────────────────
 
   public func default() : Encoder { Encoder(#best) };
-
-  public func encode(bytes : [Nat8]) : List.List<LzssEntry> {
-    let lzss = default();
-    let buffer = List.empty<LzssEntry>();
-    let sink : Sink = { add = func(e) { List.add(buffer, e) } };
-    lzss.encode(bytes, sink);
-    lzss.flush(sink);
-    buffer;
-  };
 
   // ── Encoder class ──────────────────────────────────────────────────────
 
@@ -192,7 +177,7 @@ module {
     // Caller guarantees lookahead >= MIN_MATCH so that hashAt is safe.
     // `tailMode = true` means we're in flush; match length is bounded by
     // remaining lookahead instead of MAX_MATCH.
-    func processOne(sink : Sink, tailMode : Bool) {
+    func processOne(sink : MatchSink, tailMode : Bool) {
       // Insert the current 3-byte string and look up the chain head.
       let priorHead = insertString(strstart);
       var emitted = false;
@@ -201,7 +186,7 @@ module {
         let maxLen = if (tailMode and lookahead < MAX_MATCH) lookahead else MAX_MATCH;
         let (bestLen, bestDist) = longestMatch(curMatch, maxLen);
         if (bestLen >= MIN_MATCH) {
-          sink.add(#pointer(bestDist, bestLen));
+          sink.onPointer(bestDist, bestLen);
           // Insert hashes for positions skipped by the match (so future
           // matches see them). Skip positions whose 3-byte window would
           // run past the current valid lookahead.
@@ -220,7 +205,7 @@ module {
         };
       };
       if (not emitted) {
-        sink.add(#literal(window[strstart]));
+        sink.onLiteral(window[strstart]);
         strstart += 1;
         lookahead -= 1;
       };
@@ -229,7 +214,7 @@ module {
     // ── Public encoding interface ────────────────────────────────────────
 
     /// Feed one byte. May emit zero or more entries once enough lookahead is buffered.
-    public func encodeByte(future_byte : Nat8, sink : Sink) {
+    public func encodeByte(future_byte : Nat8, sink : MatchSink) {
       // Make room in window if we're about to overflow.
       if (strstart + lookahead == WPHYS) slideWindow();
       window[strstart + lookahead] := future_byte;
@@ -241,21 +226,21 @@ module {
     };
 
     /// Encode `bytes` by feeding them one at a time.
-    public func encode(bytes : [Nat8], sink : Sink) {
+    public func encode(bytes : [Nat8], sink : MatchSink) {
       for (byte in bytes.vals()) {
         encodeByte(byte, sink);
       };
     };
 
     /// Drain any bytes still in the lookahead. Must be called once at EOF.
-    public func flush(sink : Sink) {
+    public func flush(sink : MatchSink) {
       // Tail: lookahead < MIN_LOOKAHEAD. Emit one symbol at a time until empty.
       while (lookahead >= MIN_MATCH) {
         processOne(sink, true);
       };
       // Remaining 0..2 bytes can only be literals.
       while (lookahead > 0) {
-        sink.add(#literal(window[strstart]));
+        sink.onLiteral(window[strstart]);
         strstart += 1;
         lookahead -= 1;
       };

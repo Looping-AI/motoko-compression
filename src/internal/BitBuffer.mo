@@ -77,9 +77,6 @@ module {
 
     // ── Write operations ─────────────────────────────────────────────────
 
-    /// Append a single bit (true = 1, false = 0).
-    public func addBit(bit : Bool) { addBits(1, if (bit) 1 else 0) };
-
     /// Append the low `n` bits of `value`, LSB first.
     /// E.g. addBits(3, 5) writes bits [1, 0, 1] (5 = binary 101).
     /// High bits of `value` above bit `n-1` are masked off.

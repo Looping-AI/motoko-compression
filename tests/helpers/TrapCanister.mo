@@ -32,9 +32,9 @@ persistent actor class TrapCanister() {
   };
 
   public func decodeBadOffset() : async () {
-    let entries = List.empty<LZSS.LzssEntry>();
-    List.add(entries, #pointer(5, 3)); // backward_offset=5 > output.size()=0
-    ignore LZSS.decode(entries);
+    let dec = LZSS.Decoder.Decoder();
+    let out = List.empty<Nat8>();
+    dec.pointer(out, 5, 3); // traps: backward_offset=5 > output.size()=0
   };
 
 };

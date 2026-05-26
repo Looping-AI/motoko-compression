@@ -106,16 +106,9 @@ module {
     let has_extra = header.extra_fields.size() > 0;
     let has_filename = Option.isSome(header.filename);
     let has_comment = Option.isSome(header.comment);
-    // FLG: bit0=FTEXT, bit1=FHCRC, bit2=FEXTRA, bit3=FNAME, bit4=FCOMMENT
-    bitbuffer.addBit(header.is_text);
-    bitbuffer.addBit(header.is_verified);
-    bitbuffer.addBit(has_extra);
-    bitbuffer.addBit(has_filename);
-    bitbuffer.addBit(has_comment);
-    // Reserved bits 5-7
-    bitbuffer.addBit(false);
-    bitbuffer.addBit(false);
-    bitbuffer.addBit(false);
+    // FLG: bit0=FTEXT, bit1=FHCRC, bit2=FEXTRA, bit3=FNAME, bit4=FCOMMENT, bits5-7 reserved
+    let flg = (if (header.is_text) 0x01 else 0) + (if (header.is_verified) 0x02 else 0) + (if (has_extra) 0x04 else 0) + (if (has_filename) 0x08 else 0) + (if (has_comment) 0x10 else 0);
+    bitbuffer.addBits(8, flg);
 
     // Modification time (4 bytes LE, 0 if not set)
     let mtime = if (header.modification_time > 0) header.modification_time else 0;

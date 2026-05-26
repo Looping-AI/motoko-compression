@@ -1,12 +1,18 @@
+import Nat8 "mo:core/Nat8";
+
 module {
 
-  /// A single entry produced by LZSS encoding.
-  public type LzssEntry = {
+  /// Direct callback consumer for LZSS encoder output.
+  ///
+  /// Replaces the prior `LzssEntry` variant + `Sink.add(entry)` design:
+  /// emitting a literal or pointer no longer allocates a heap variant cell.
+  /// This is the only encoder→consumer interface.
+  public type MatchSink = {
     /// A byte that had no match in the look-back window.
-    #literal : Nat8;
-    /// A back-reference: (backward_offset, match_length).
-    /// backward_offset ∈ [1, MATCH_WINDOW_SIZE], length ∈ [3, MATCH_MAX_SIZE].
-    #pointer : (Nat, Nat);
+    onLiteral : (byte : Nat8) -> ();
+    /// A back-reference. `backward_offset` ∈ [1, MATCH_WINDOW_SIZE],
+    /// `length` ∈ [3, MATCH_MAX_SIZE].
+    onPointer : (backward_offset : Nat, length : Nat) -> ();
   };
 
   /// Controls the size of the search window and thus the speed/ratio trade-off.

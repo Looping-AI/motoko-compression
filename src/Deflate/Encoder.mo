@@ -68,7 +68,7 @@ module {
 
     /// Flush the current block.
     public func flush(is_final : Bool) {
-      bitbuffer.addBit(is_final); // BFINAL
+      bitbuffer.addBits(1, if (is_final) 1 else 0); // BFINAL
       bitbuffer.addBits(2, Block.blockToNat(block_type)); // BTYPE
       block.flush(bitbuffer, is_final);
       switch (on_block_flushed) {
