@@ -2,11 +2,9 @@ import { test; suite; expect } "mo:test";
 import Array "mo:core/Array";
 import Iter "mo:core/Iter";
 import List "mo:core/List";
-import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
 
 import Common "../src/LZSS/Common";
-import PrefixTable "../src/LZSS/Encoder/PrefixTable/lib";
 import EncoderLib "../src/LZSS/Encoder/lib";
 import Decoder "../src/LZSS/Decoder";
 import LZSS "../src/LZSS/lib";
@@ -26,69 +24,6 @@ func entryEqual(a : LzssEntry, b : LzssEntry) : Bool {
     case _ false;
   };
 };
-
-// ── PrefixTable ───────────────────────────────────────────────────────────
-
-suite(
-  "PrefixTable",
-  func() {
-
-    test(
-      "first insert returns null (new prefix)",
-      func() {
-        let pt = PrefixTable.PrefixTable();
-        let result = pt.insert(0x41, 0x42, 0x43, 0);
-        expect.option(result, Nat.toText, Nat.equal).isNull();
-      },
-    );
-
-    test(
-      "second insert with same prefix returns prev index",
-      func() {
-        let pt = PrefixTable.PrefixTable();
-        ignore pt.insert(0x41, 0x42, 0x43, 0);
-        let result = pt.insert(0x41, 0x42, 0x43, 10);
-        expect.option(result, Nat.toText, Nat.equal).equal(?0);
-      },
-    );
-
-    test(
-      "different third byte gives different slots",
-      func() {
-        let pt = PrefixTable.PrefixTable();
-        ignore pt.insert(0x41, 0x42, 0x43, 0);
-        // Same first two bytes, different third byte → different slot
-        let result = pt.insert(0x41, 0x42, 0x44, 5);
-        expect.option(result, Nat.toText, Nat.equal).isNull();
-      },
-    );
-
-    test(
-      "clear resets all entries",
-      func() {
-        let pt = PrefixTable.PrefixTable();
-        ignore pt.insert(0x41, 0x42, 0x43, 42);
-        pt.clear();
-        // After clear the prefix is unknown again → returns null
-        let result = pt.insert(0x41, 0x42, 0x43, 99);
-        expect.option(result, Nat.toText, Nat.equal).isNull();
-      },
-    );
-
-    test(
-      "consecutive inserts track latest index",
-      func() {
-        let pt = PrefixTable.PrefixTable();
-        ignore pt.insert(0x01, 0x02, 0x03, 0);
-        ignore pt.insert(0x01, 0x02, 0x03, 5);
-        // Third insert should return 5 (the second index)
-        let result = pt.insert(0x01, 0x02, 0x03, 10);
-        expect.option(result, Nat.toText, Nat.equal).equal(?5);
-      },
-    );
-
-  },
-);
 
 // ── Encoder ───────────────────────────────────────────────────────────────
 

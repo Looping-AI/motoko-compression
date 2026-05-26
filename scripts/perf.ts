@@ -99,11 +99,6 @@ const REGISTRY: Record<string, PatchTarget[]> = {
         "clear",
       ],
     },
-    {
-      // PrefixTable: the 65 536-bucket hash table — primary suspect.
-      file: "src/LZSS/Encoder/PrefixTable/lib.mo",
-      funcs: ["insert", "clear"],
-    },
   ],
   bitbuffer: [
     {
@@ -191,11 +186,6 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       file: "src/LZSS/Encoder/lib.mo",
       funcs: ["encodeByte", "encodeAsLiterals", "flush"],
     },
-    {
-      // PrefixTable — O(1) 3-byte prefix hash table, called on every input byte.
-      file: "src/LZSS/Encoder/PrefixTable/lib.mo",
-      funcs: ["insert"],
-    },
   ],
   decompress: [
     {
@@ -281,7 +271,6 @@ const OUTPUT_DIR = resolve(ROOT, "scripts", "output");
  *   src/Deflate/Encoder.mo         → deflate_encoder
  *   src/Deflate/HuffmanCodec.mo    → deflate_huffman_codec
  *   src/LZSS/Encoder/lib.mo        → lzss_encoder
- *   src/LZSS/Encoder/PrefixTable/lib.mo → lzss_encoder_prefix_table
  *   src/internal/BitBuffer.mo      → bit_buffer
  *   src/internal/CRC32.mo          → crc32
  */

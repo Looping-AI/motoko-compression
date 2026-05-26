@@ -16,10 +16,10 @@ import List "mo:core/List";
 import Option "mo:core/Option";
 import Nat8 "mo:core/Nat8";
 import Nat32 "mo:core/Nat32";
+import Prim "mo:⛔";
 import Runtime "mo:core/Runtime";
 import CircularBuffer "../../internal/CircularBuffer";
 import Common "../Common";
-import PrefixTable "PrefixTable/lib";
 
 module {
 
@@ -64,8 +64,32 @@ module {
     // Sliding back-reference window (oldest element evicted on overflow).
     let search_buffer = CircularBuffer.CircularBuffer(window_size);
 
-    // 3-byte prefix index for fast match lookup.
-    let prefix_table = PrefixTable.PrefixTable();
+    // 3-byte prefix index: flat 65 536-slot array (indexed by b0*256+b1), each
+    // bucket lazily allocated as [var Nat] of 256 slots indexed by b2.
+    // Stored as (pos + 1); 0 = absent.  Inlined from PrefixTable to eliminate
+    // object dispatch and ?Nat return-value boxing on every insert call.
+    let pt_table : [var ?([var Nat])] = Prim.Array_init<?([var Nat])>(65_536, null);
+    let pt_created = List.empty<Nat>();
+
+    // Insert prefix (b0,b1,b2) at position `index`.
+    // Returns raw previous slot value: 0 = no prior entry, n+1 = prior index n.
+    // Returning Nat instead of ?Nat avoids Option heap allocation on every hit.
+    func pt_insert(b0 : Nat8, b1 : Nat8, b2 : Nat8, index : Nat) : Nat {
+      let ti : Nat = Nat8.toNat(b0) * 256 + Nat8.toNat(b1);
+      let bucket : [var Nat] = switch (pt_table[ti]) {
+        case (?b) b;
+        case null {
+          let b = Prim.Array_init<Nat>(256, 0);
+          pt_table[ti] := ?b;
+          List.add(pt_created, ti);
+          b;
+        };
+      };
+      let b2i : Nat = Nat8.toNat(b2);
+      let prev = bucket[b2i];
+      bucket[b2i] := index + 1;
+      prev;
+    };
 
     // Lookahead buffer: holds the next up-to-MATCH_MAX_SIZE unprocessed bytes.
     // Capacity is MATCH_MAX_SIZE + 1; the encoder always emits before reaching
@@ -108,13 +132,13 @@ module {
       // front of byte_buffer they form new 3-byte prefixes to record.
       switch (cache0, cache1) {
         case (?c0, ?c1) {
-          ignore prefix_table.insert(c0, c1, byte_buffer.getUnchecked(0), input_size - 2);
+          ignore pt_insert(c0, c1, byte_buffer.getUnchecked(0), input_size - 2);
           cache0 := ?c1;
           cache1 := null;
         };
         case (?c0, null) {
           if (byte_buffer.size() >= 2) {
-            ignore prefix_table.insert(c0, byte_buffer.getUnchecked(0), byte_buffer.getUnchecked(1), input_size - 1);
+            ignore pt_insert(c0, byte_buffer.getUnchecked(0), byte_buffer.getUnchecked(1), input_size - 1);
             cache0 := null;
           };
         };
@@ -125,27 +149,26 @@ module {
 
       if (byte_buffer.size() == 3) {
         // Try to start a new match at the current lookahead position.
-        let opt_prefix_index = prefix_table.insert(
+        // pt_insert returns 0 (no prior entry) or prev+1 (prior index = prev-1).
+        let prev3 = pt_insert(
           byte_buffer.getUnchecked(0),
           byte_buffer.getUnchecked(1),
           byte_buffer.getUnchecked(2),
           input_size,
         );
-        switch (opt_prefix_index) {
-          case (null) {
+        if (prev3 > 0) {
+          let prefix_index = prev3 - 1;
+          let backward_offset = (input_size - prefix_index) : Nat;
+          if (backward_offset > search_buffer.size()) {
+            // The match is outside the current window; emit literal instead.
             encodeAsLiterals(1, sink);
             match_index := null;
+          } else {
+            match_index := ?prefix_index;
           };
-          case (?prefix_index) {
-            let backward_offset = (input_size - prefix_index) : Nat;
-            if (backward_offset > search_buffer.size()) {
-              // The match is outside the current window; emit literal instead.
-              encodeAsLiterals(1, sink);
-              match_index := null;
-            } else {
-              match_index := opt_prefix_index;
-            };
-          };
+        } else {
+          encodeAsLiterals(1, sink);
+          match_index := null;
         };
       } else {
         // byte_buffer.size() > 3: we are extending an existing match.
@@ -165,7 +188,7 @@ module {
           while (emitted < len) {
             // While 3+ bytes remain, record the current 3-byte prefix.
             if (byte_buffer.size() >= 3) {
-              ignore prefix_table.insert(
+              ignore pt_insert(
                 byte_buffer.getUnchecked(0),
                 byte_buffer.getUnchecked(1),
                 byte_buffer.getUnchecked(2),
@@ -223,7 +246,8 @@ module {
     /// Reset the encoder to its initial state without emitting anything.
     public func clear() {
       search_buffer.clear();
-      prefix_table.clear();
+      for (ti in List.values(pt_created)) { pt_table[ti] := null };
+      List.clear(pt_created);
       byte_buffer.clear();
       cache0 := null;
       cache1 := null;
