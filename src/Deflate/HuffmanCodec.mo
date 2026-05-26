@@ -30,6 +30,12 @@ module {
   /// Common interface for fixed and dynamic Huffman codecs.
   public type HuffmanCodec = {
     build : ({ next : () -> ?Symbol.Symbol }) -> Result<Symbol.Encoder, Text>;
+    /// Build an encoder from pre-accumulated frequency arrays instead of
+    /// iterating over the symbol list a second time.
+    /// lit_freqs : length 286, dist_freqs : length 30.
+    /// NOTE: the function is allowed to mutate these arrays (e.g. to apply
+    /// the EndOfBlock fixup); the caller must reset them after use.
+    buildFromFreqs : ([var Nat], [var Nat]) -> Result<Symbol.Encoder, Text>;
     save : (BitBuffer, Symbol.Encoder) -> Result<(), Text>;
   };
 
@@ -68,6 +74,26 @@ module {
         };
       };
 
+      return #ok(Symbol.Encoder(le, de));
+    };
+
+    public func buildFromFreqs(lit_freqs : [var Nat], dist_freqs : [var Nat]) : Result<Symbol.Encoder, Text> {
+      // EndOfBlock is always emitted; apply to the caller's array (caller resets after flush).
+      lit_freqs[256] += 1;
+      // Ensure at least one distance code is present.
+      var has_distance = false;
+      var k = 0;
+      while (k < 30) { if (dist_freqs[k] > 0) has_distance := true; k += 1 };
+      if (not has_distance) dist_freqs[0] := 1;
+
+      let le = switch (HuffmanEncoder.fromFrequencies(Array.fromVarArray(lit_freqs), 15)) {
+        case (#ok(e)) e;
+        case (#err(msg)) return #err("DynamicHuffmanCodec buildFromFreqs literal: " # msg);
+      };
+      let de = switch (HuffmanEncoder.fromFrequencies(Array.fromVarArray(dist_freqs), 15)) {
+        case (#ok(e)) e;
+        case (#err(msg)) return #err("DynamicHuffmanCodec buildFromFreqs distance: " # msg);
+      };
       return #ok(Symbol.Encoder(le, de));
     };
 
@@ -241,6 +267,10 @@ module {
       };
 
       return #ok(Symbol.Encoder(le, db.build()));
+    };
+
+    public func buildFromFreqs(_ : [var Nat], _ : [var Nat]) : Result<Symbol.Encoder, Text> {
+      build({ next = func() { null } });
     };
 
     public func save(_ : BitBuffer, _ : Symbol.Encoder) : Result<(), Text> {

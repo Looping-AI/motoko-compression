@@ -4,6 +4,7 @@
 /// Buffer<Symbol> → mo:core/List.
 
 import List "mo:core/List";
+import Prim "mo:⛔";
 import Runtime "mo:core/Runtime";
 import BitBuffer "../internal/BitBuffer";
 import LzssCommon "../LZSS/Common";
@@ -65,9 +66,17 @@ module {
     var input_size : Nat = 0;
     let compressed = List.empty<Symbol.Symbol>();
 
+    // Frequency tables accumulated incrementally in the sink so that
+    // buildFromFreqs can skip a full second pass over `compressed`.
+    let lit_freqs : [var Nat] = Prim.Array_init<Nat>(286, 0);
+    let dist_freqs : [var Nat] = Prim.Array_init<Nat>(30, 0);
+
     let sink : LzssEncoder.Sink = {
       add = func(entry : LzssCommon.LzssEntry) {
         List.add(compressed, entry);
+        lit_freqs[Symbol.lengthMarker(entry)] += 1;
+        let dm = Symbol.distanceMarker(entry);
+        if (dm != Symbol.NO_DISTANCE) dist_freqs[dm] += 1;
       };
     };
 
@@ -85,8 +94,10 @@ module {
       // decoder maintains a single 32 KB sliding window across all blocks).
       if (is_final) lzss.flush(sink);
 
-      // Build the Huffman codec for the symbols collected so far
-      let symbol_encoder = switch (huffman.build(List.values(compressed))) {
+      // Build the Huffman codec using pre-accumulated frequencies (no second
+      // pass over `compressed`). buildFromFreqs mutates lit_freqs/dist_freqs
+      // to apply the EndOfBlock fixup; we reset them below.
+      let symbol_encoder = switch (huffman.buildFromFreqs(lit_freqs, dist_freqs)) {
         case (#ok(e)) e;
         case (#err(msg)) Runtime.trap("Deflate.Compress.flush: build failed: " # msg);
       };
@@ -107,12 +118,20 @@ module {
       // Reset state for next block
       input_size := 0;
       List.clear(compressed);
+      var k = 0;
+      while (k < 286) { lit_freqs[k] := 0; k += 1 };
+      k := 0;
+      while (k < 30) { dist_freqs[k] := 0; k += 1 };
     };
 
     public func clear() {
       lzss.clear();
       List.clear(compressed);
       input_size := 0;
+      var k = 0;
+      while (k < 286) { lit_freqs[k] := 0; k += 1 };
+      k := 0;
+      while (k < 30) { dist_freqs[k] := 0; k += 1 };
     };
   };
 
