@@ -15,6 +15,7 @@
 import List "mo:core/List";
 import Option "mo:core/Option";
 import Nat8 "mo:core/Nat8";
+import Nat32 "mo:core/Nat32";
 import Runtime "mo:core/Runtime";
 import CircularBuffer "../../internal/CircularBuffer";
 import Common "../Common";
@@ -69,7 +70,10 @@ module {
     // Lookahead buffer: holds the next up-to-MATCH_MAX_SIZE unprocessed bytes.
     // Capacity is MATCH_MAX_SIZE + 1; the encoder always emits before reaching
     // that limit, so push never actually overwrites.
-    let byte_buffer = CircularBuffer.CircularBuffer(Common.MATCH_MAX_SIZE + 1);
+    // 512 is the next power of 2 above MATCH_MAX_SIZE+1 (259), required by
+    // CircularBuffer's bitmask optimisation. The buffer is never filled beyond
+    // MATCH_MAX_SIZE elements, so the extra capacity is never used.
+    let byte_buffer = CircularBuffer.CircularBuffer(512);
 
     // Tracks the last 1-2 emitted bytes for prefix-table seeding after a match.
     // Two scalar slots; push-on-full evicts the oldest (keeps last 2 bytes).
@@ -150,7 +154,7 @@ module {
         let start_index = (search_buffer.size() - backward_offset) : Nat;
         let future_byte_index = start_index + (byte_buffer.size() - 1) : Nat;
 
-        let mismatch = future_byte_index >= search_buffer.size() or future_byte != search_buffer.getUnchecked(future_byte_index);
+        let mismatch = future_byte_index >= search_buffer.size() or future_byte != search_buffer.getUnchecked(Nat32.fromNat(future_byte_index));
         let too_long = byte_buffer.size() >= Common.MATCH_MAX_SIZE;
 
         if (mismatch or too_long) {

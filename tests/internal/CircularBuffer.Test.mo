@@ -1,6 +1,7 @@
 import { test; suite; expect } "mo:test";
 import Array "mo:core/Array";
 import Nat8 "mo:core/Nat8";
+import Nat32 "mo:core/Nat32";
 import CircularBuffer "../../src/internal/CircularBuffer";
 
 // ── helpers ───────────────────────────────────────────────────────────────
@@ -10,7 +11,7 @@ func toArray(buf : CircularBuffer.CircularBuffer) : [Nat8] {
   Array.tabulate<Nat8>(
     buf.size(),
     func(i) {
-      buf.getUnchecked(i);
+      buf.getUnchecked(Nat32.fromNat(i));
     },
   );
 };
@@ -148,31 +149,32 @@ suite(
     test(
       "sequential eviction: each new push evicts the next oldest",
       func() {
-        let b = CircularBuffer.CircularBuffer(3);
+        let b = CircularBuffer.CircularBuffer(4);
         b.push(10);
         b.push(20);
-        b.push(30); // full: [10,20,30]
-        b.push(40); // evicts 10 → [20,30,40]
-        expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([20, 30, 40]);
-        b.push(50); // evicts 20 → [30,40,50]
-        expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([30, 40, 50]);
-        b.push(60); // evicts 30 → [40,50,60]
-        expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([40, 50, 60]);
+        b.push(30);
+        b.push(40); // full: [10,20,30,40]
+        b.push(50); // evicts 10 → [20,30,40,50]
+        expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([20, 30, 40, 50]);
+        b.push(60); // evicts 20 → [30,40,50,60]
+        expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([30, 40, 50, 60]);
+        b.push(70); // evicts 30 → [40,50,60,70]
+        expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([40, 50, 60, 70]);
       },
     );
 
     test(
       "wrap-around: push 2*cap elements, last cap retained",
       func() {
-        let cap = 5;
+        let cap = 8;
         let b = CircularBuffer.CircularBuffer(cap);
-        // push 0..9; last 5 are [5,6,7,8,9]
+        // push 0..15; last 8 are [8,9,10,11,12,13,14,15]
         var i = 0;
-        while (i < 10) { b.push(Nat8.fromNat(i)); i += 1 };
+        while (i < 16) { b.push(Nat8.fromNat(i)); i += 1 };
         expect.nat(b.size()).equal(cap);
         var j = 0;
         while (j < cap) {
-          expect.nat8(b.getUnchecked(j)).equal(Nat8.fromNat(5 + j));
+          expect.nat8(b.getUnchecked(Nat32.fromNat(j))).equal(Nat8.fromNat(8 + j));
           j += 1;
         };
       },
@@ -241,16 +243,18 @@ suite(
     test(
       "clear after overflow then refill works correctly",
       func() {
-        let b = CircularBuffer.CircularBuffer(3);
+        let b = CircularBuffer.CircularBuffer(4);
         b.push(1);
         b.push(2);
         b.push(3);
-        b.push(4); // overflow once
+        b.push(4);
+        b.push(5); // overflow once
         b.clear();
         b.push(0xAA);
         b.push(0xBB);
         b.push(0xCC);
-        expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([0xAA, 0xBB, 0xCC]);
+        b.push(0xDD);
+        expect.array(toArray(b), Nat8.toText, Nat8.equal).equal([0xAA, 0xBB, 0xCC, 0xDD]);
       },
     );
 
