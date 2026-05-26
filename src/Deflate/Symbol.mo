@@ -67,7 +67,7 @@ module {
   // fully inlines the equivalent code with local `var` variables.
 
   // Helpers used by lengthMarker/distanceMarker and the inlined Encoder.encode.
-  func lenCode(length : Nat) : Nat {
+  public func lenCode(length : Nat) : Nat {
     if (length <= 10) { 257 + (length - 3) } else if (length <= 18) {
       265 + (length - 11) / 2;
     } else if (length <= 34) { 269 + (length - 19) / 4 } else if (length <= 66) {
@@ -76,7 +76,7 @@ module {
       281 + (length - 131) / 32;
     } else { 285 } // length == 258
   };
-  func distCode(distance : Nat) : Nat {
+  public func distCode(distance : Nat) : Nat {
     if (distance <= 4) { distance - 1 } else {
       var extra_bits = 1;
       var base = 4;
