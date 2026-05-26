@@ -5,7 +5,7 @@
  * Usage:
  *   bun run scripts/perf.ts component=<name>
  *
- * Available components: huffman, deflate, gzip, lzss
+ * Available components: huffman, deflate, gzip, lzss, compress
  *
  * The script:
  *   1. Validates that every registered function exists in its source file.
@@ -184,6 +184,38 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       funcs: ["checksum", "updateByte", "update", "finish", "reset"],
     },
   ],
+  compress: [
+    {
+      // Top-level gzip encoder — encode() feeds bytes, finish() writes the footer.
+      file: "src/Gzip/Encoder.mo",
+      funcs: ["encode", "finish"],
+    },
+    {
+      // Deflate encoder — drives block management and coordinates with LZSS.
+      file: "src/Deflate/Encoder.mo",
+      funcs: ["encodeByte", "encode", "flush", "finish"],
+    },
+    {
+      // Deflate block — accumulates LZSS output and drives Huffman flush.
+      file: "src/Deflate/Block.mo",
+      funcs: ["add", "flush"],
+    },
+    {
+      // Huffman codec — build() counts frequencies, save() writes dynamic header.
+      file: "src/Deflate/HuffmanCodec.mo",
+      funcs: ["build", "save", "buildBitwidthCodes"],
+    },
+    {
+      // LZSS encoder — the byte-by-byte compression loop.
+      file: "src/LZSS/Encoder/lib.mo",
+      funcs: ["encodeByte", "encode", "encodeAsLiterals", "flush"],
+    },
+    {
+      // PrefixTable — 3-byte prefix hash table, called on every input byte.
+      file: "src/LZSS/Encoder/PrefixTable/lib.mo",
+      funcs: ["insert"],
+    },
+  ],
   decompress: [
     {
       file: "src/Gzip/Decoder.mo",
@@ -224,6 +256,7 @@ const PAYLOAD_BYTES: Record<string, number> = {
   utils: 10 * 1024, // 10 KiB — fine-grained primitive
   bitreader: 10 * 1024, // 10 KiB — fine-grained primitive
   crc32: 10 * 1024, // 10 KiB — fine-grained primitive
+  compress: 10 * 1024,
   decompress: 100 * 1024,
 };
 
@@ -249,6 +282,40 @@ const ROOT = process.cwd();
 const PERF_MO = resolve(ROOT, "src", "internal", "Perf.mo");
 const BUILDS_DIR = resolve(ROOT, "scripts", "builds");
 const OUTPUT_DIR = resolve(ROOT, "scripts", "output");
+
+// ── Module label derivation ────────────────────────────────────────────────────
+
+/**
+ * Derive a short, unique module label from a source file path so that
+ * functions with the same name in different files produce distinct mark tags.
+ *
+ * Rules (applied to the path relative to src/, without the .mo extension):
+ *   - Strip a leading "internal/" segment (it adds no disambiguation).
+ *   - If the last segment is "lib", drop it and use the parent directory name.
+ *   - Convert each remaining CamelCase segment to snake_case.
+ *   - Join segments with "_".
+ *
+ * Examples:
+ *   src/Gzip/Encoder.mo            → gzip_encoder
+ *   src/Deflate/Encoder.mo         → deflate_encoder
+ *   src/Deflate/HuffmanCodec.mo    → deflate_huffman_codec
+ *   src/LZSS/Encoder/lib.mo        → lzss_encoder
+ *   src/LZSS/Encoder/PrefixTable/lib.mo → lzss_encoder_prefix_table
+ *   src/internal/BitBuffer.mo      → bit_buffer
+ *   src/internal/CRC32.mo          → crc32
+ */
+function fileToLabel(file: string): string {
+  const normalized = file.replace(/^src\//, "").replace(/\.mo$/, "");
+  let parts = normalized.split("/");
+  if (parts[0] === "internal") parts = parts.slice(1);
+  if (parts[parts.length - 1] === "lib") parts = parts.slice(0, -1);
+  const toSnake = (s: string) =>
+    s
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2") // ABCDef → ABC_Def
+      .replace(/([a-z])([A-Z])/g, "$1_$2") //  aB  → a_B
+      .toLowerCase();
+  return parts.map(toSnake).join("_");
+}
 
 // ── Source patching ────────────────────────────────────────────────────────────
 
@@ -724,6 +791,11 @@ function patchSources(): void {
     const original = readFileSync(absFile, "utf8");
     patchRecords.push({ file: absFile, original });
 
+    // Derive a per-file module label so marks are self-identifying regardless
+    // of which component registry is active (e.g. "gzip_encoder:encode:start"
+    // instead of "compress:encode:start").
+    const moduleLabel = fileToLabel(file);
+
     const lines = original.split("\n");
     const ops: PatchOp[] = [];
 
@@ -738,8 +810,8 @@ function patchSources(): void {
 
       const declIndent = lines[found.funcIdx].match(/^(\s*)/)?.[1] ?? "";
       const bodyIndent = declIndent + "  ";
-      const startMark = `${bodyIndent}Perf.mark("${component}:${func}:start"); // [PERF]`;
-      const endMarkBody = `Perf.mark("${component}:${func}:end"); // [PERF]`;
+      const startMark = `${bodyIndent}Perf.mark("${moduleLabel}:${func}:start"); // [PERF]`;
+      const endMarkBody = `Perf.mark("${moduleLabel}:${func}:end"); // [PERF]`;
 
       // Special case: single-line function body (opening and closing brace on
       // the same line). Expand to multi-line so :start/:end fit inside the body.
@@ -897,12 +969,13 @@ function patchSources(): void {
       const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const nStart = (
         patchedSrc.match(
-          new RegExp(esc(`"${component}:${func}:start"`), "g"),
+          new RegExp(esc(`"${moduleLabel}:${func}:start"`), "g"),
         ) ?? []
       ).length;
       const nEnd = (
-        patchedSrc.match(new RegExp(esc(`"${component}:${func}:end"`), "g")) ??
-        []
+        patchedSrc.match(
+          new RegExp(esc(`"${moduleLabel}:${func}:end"`), "g"),
+        ) ?? []
       ).length;
       if (nStart !== nEnd) {
         patchWarnings.push(
