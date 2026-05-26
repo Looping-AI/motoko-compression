@@ -186,32 +186,13 @@ const REGISTRY: Record<string, PatchTarget[]> = {
   ],
   compress: [
     {
-      // Top-level gzip encoder — encode() feeds bytes, finish() writes the footer.
-      file: "src/Gzip/Encoder.mo",
-      funcs: ["encode", "finish"],
-    },
-    {
-      // Deflate encoder — drives block management and coordinates with LZSS.
-      file: "src/Deflate/Encoder.mo",
-      funcs: ["encodeByte", "encode", "flush", "finish"],
-    },
-    {
-      // Deflate block — accumulates LZSS output and drives Huffman flush.
-      file: "src/Deflate/Block.mo",
-      funcs: ["add", "flush"],
-    },
-    {
-      // Huffman codec — build() counts frequencies, save() writes dynamic header.
-      file: "src/Deflate/HuffmanCodec.mo",
-      funcs: ["build", "save", "buildBitwidthCodes"],
-    },
-    {
-      // LZSS encoder — the byte-by-byte compression loop.
+      // LZSS encoder — the byte-by-byte hot loop. `encode` is a thin for-loop
+      // wrapper; omitted to avoid one mark pair per 10 KiB batch call.
       file: "src/LZSS/Encoder/lib.mo",
-      funcs: ["encodeByte", "encode", "encodeAsLiterals", "flush"],
+      funcs: ["encodeByte", "encodeAsLiterals", "flush"],
     },
     {
-      // PrefixTable — 3-byte prefix hash table, called on every input byte.
+      // PrefixTable — O(1) 3-byte prefix hash table, called on every input byte.
       file: "src/LZSS/Encoder/PrefixTable/lib.mo",
       funcs: ["insert"],
     },
