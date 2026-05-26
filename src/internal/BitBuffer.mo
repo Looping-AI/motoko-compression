@@ -4,9 +4,15 @@
 ///   addBits(3, 5)  --  value 5 = binary 101, writes bits [1, 0, 1]
 ///                      into positions [0, 1, 2] of the current byte.
 ///
-/// Write position: tracked by `writeBit` (total bits appended).
+/// Write position: tracked by `writeBit` (total logical bits appended).
 /// Read  position: tracked by `readBit`  (bits dropped from the front).
 /// `bitSize() = writeBit - readBit`.
+///
+/// Implementation uses a Nat64 shift-register accumulator (zlib bi_buf pattern).
+/// Bits accumulate in `acc`; complete bytes are drained to `buf` in one pass,
+/// and the partial byte is written to `buf` immediately so reads are always valid.
+/// This eliminates per-iteration `writeBit/8` and `writeBit%8` div/mod in the
+/// DEFLATE symbol-emission hot path.
 ///
 /// The backing array never shrinks; it doubles in capacity when full.
 
@@ -14,16 +20,16 @@ import Prim "mo:⛔";
 import Runtime "mo:core/Runtime";
 import Nat8 "mo:core/Nat8";
 import Nat32 "mo:core/Nat32";
+import Nat64 "mo:core/Nat64";
 import Array "mo:core/Array";
 
 module {
 
   let BYTE : Nat = 8;
 
-  // Precomputed bit masks — MASKS8[k] / MASKS32[k] = 2^k − 1 for k in 0..8.
-  // Used to avoid bignum `2 ** k` exponentiation in the inner read/write loops.
+  // Precomputed bit masks — MASKS8[k] = 2^k − 1 for k in 0..8.
+  // Used by the read path (getBits / getByte).
   let MASKS8 : [Nat8] = [0, 1, 3, 7, 15, 31, 63, 127, 255];
-  let MASKS32 : [Nat32] = [0, 1, 3, 7, 15, 31, 63, 127, 255];
 
   public class BitBuffer(initCapacity : Nat) {
 
@@ -31,20 +37,33 @@ module {
     var cap : Nat = if (initCapacity == 0) 8 else initCapacity;
     var buf : [var Nat8] = Prim.Array_init<Nat8>(cap, (0 : Nat8));
 
-    var writeBit : Nat = 0; // total bits written
+    // `writeBit`: total logical bits appended (same semantics as before).
+    // `acc`:      Nat64 shift register accumulating bits for the current
+    //             partial byte.  `acc`'s low `(writeBit % 8)` bits hold the
+    //             pending partial byte; higher bits are always 0.
+    //             The partial byte is also written to `buf[writeBit/8]`
+    //             immediately after every addBits call, so reads are always
+    //             valid without any flush step.
+    var writeBit : Nat = 0;
+    var acc : Nat64 = 0;
+
     var readBit : Nat = 0; // logical bits dropped from front
 
     // ── Internal helpers ─────────────────────────────────────────────────
 
     // Grow `buf` so that it can hold at least `needed` bytes.
-    // Copies only the live bytes (0 .. ceil(writeBit/8)).
+    // Copies only the live bytes (0 .. min(ceil(writeBit/8), oldCap)).
+    // oldCap bounds the copy because callers may increment `writeBit` before
+    // calling ensureCapacity, making ceil(writeBit/8) exceed the old buf size.
     func ensureCapacity(needed : Nat) {
       if (needed <= cap) return;
+      let oldCap = cap;
       while (cap < needed) cap *= 2;
       let newBuf = Prim.Array_init<Nat8>(cap, (0 : Nat8));
       let live : Nat = (writeBit + BYTE - 1) / BYTE;
+      let toCopy = if (live < oldCap) live else oldCap;
       var i = 0;
-      while (i < live) { newBuf[i] := buf[i]; i += 1 };
+      while (i < toCopy) { newBuf[i] := buf[i]; i += 1 };
       buf := newBuf;
     };
 
@@ -59,35 +78,54 @@ module {
     // ── Write operations ─────────────────────────────────────────────────
 
     /// Append a single bit (true = 1, false = 0).
-    public func addBit(bit : Bool) {
-      let byteIdx = writeBit / BYTE;
-      let bitIdx = writeBit % BYTE;
-      ensureCapacity(byteIdx + 1);
-      if (bit) buf[byteIdx] := Nat8.bitset(buf[byteIdx], bitIdx);
-      writeBit += 1;
-    };
+    public func addBit(bit : Bool) { addBits(1, if (bit) 1 else 0) };
 
     /// Append the low `n` bits of `value`, LSB first.
     /// E.g. addBits(3, 5) writes bits [1, 0, 1] (5 = binary 101).
-    /// High bits of `value` above bit `n-1` are ignored.
+    /// High bits of `value` above bit `n-1` are masked off.
+    ///
+    /// Algorithm (zlib bi_buf pattern):
+    ///   1. Mask `value` to `n` bits and merge into `acc` at the current
+    ///      bit offset within the partial byte.
+    ///   2. Drain complete bytes from `acc` to `buf` in a single loop.
+    ///   3. Write the residual partial byte (if any) to `buf[writeBit/8]`
+    ///      so that read operations always see up-to-date data.
     public func addBits(n : Nat, value : Nat) {
       if (n == 0) return;
-      // Pre-grow once for the entire write instead of once per byte-boundary.
-      ensureCapacity((writeBit + n - 1) / BYTE + 1);
-      var remaining = n;
-      // Nat32 avoids bignum `2**take`, `v % 2**take`, `v /= 2**take` on every
-      // iteration. Safe for all practical n (max DEFLATE symbol ≤ 29 bits).
-      var v : Nat32 = Nat32.fromNat(value);
-      while (remaining > 0) {
-        let byteIdx = writeBit / BYTE;
-        let bitIdx = writeBit % BYTE;
-        let available : Nat = BYTE - bitIdx;
-        let take : Nat = if (remaining < available) remaining else available;
-        let bits = Nat32.toNat8(v & MASKS32[take]);
-        buf[byteIdx] := buf[byteIdx] | (bits << Nat8.fromNat(bitIdx));
-        v := Nat32.bitshiftRight(v, Nat32.fromNat(take));
-        writeBit += take;
-        remaining -= take;
+      let bitOff = writeBit % BYTE; // bit position within current byte
+      let physByte = writeBit / BYTE; // index of current partial byte in buf
+
+      // Mask to low n bits and merge into accumulator.
+      let mask : Nat64 = Nat64.bitshiftLeft((1 : Nat64), Nat64.fromNat(n)) - 1;
+      let v : Nat64 = Nat64.bitand(Nat64.fromNat(value), mask);
+      acc := Nat64.bitor(acc, Nat64.bitshiftLeft(v, Nat64.fromNat(bitOff)));
+
+      writeBit += n;
+
+      // How many complete bytes did we produce (and must drain from acc)?
+      // = (bitOff + n) / 8  — computed before updating writeBit would be cleaner,
+      // but using the updated writeBit: completeBytes = writeBit/8 - physByte.
+      // To avoid Nat underflow the compiler would flag, derive from (bitOff + n).
+      let totalInAcc = bitOff + n; // bits now in acc (may span multiple bytes)
+      let completeBytes = totalInAcc / BYTE;
+      let newPartial = totalInAcc % BYTE; // bits remaining in acc after drain
+      // Total bytes to allocate: complete drained bytes + 1 for residual partial byte
+      // (written so reads always see up-to-date data).
+      let needBytes = completeBytes + (if (newPartial != 0) 1 else 0);
+
+      ensureCapacity(physByte + needBytes);
+
+      // Drain complete bytes from acc to buf.
+      var i = 0;
+      while (i < completeBytes) {
+        buf[physByte + i] := Nat64.toNat8(Nat64.bitand(acc, 255));
+        acc := Nat64.bitshiftRight(acc, 8);
+        i += 1;
+      };
+
+      // Write residual partial byte to buf (acc still holds its low bits).
+      if (newPartial != 0) {
+        buf[physByte + completeBytes] := Nat64.toNat8(Nat64.bitand(acc, 255));
       };
     };
 
@@ -96,12 +134,12 @@ module {
 
     /// Append an array of bytes.
     ///
-    /// Fast path: when the write position is byte-aligned (the common case —
-    /// buffer is fresh, or after `byteAlign()`), bytes are copied directly into
-    /// `buf` with a single `ensureCapacity` call and no bit-packing arithmetic.
+    /// Fast path: when the write position is byte-aligned (`acc == 0`), bytes
+    /// are copied directly into `buf` with a single `ensureCapacity` call and
+    /// no bit-packing arithmetic.
     ///
-    /// Slow path: unaligned write position — pre-sizes once so that all inner
-    /// `ensureCapacity` calls inside the per-byte loop are no-ops.
+    /// Slow path: pending partial bits in acc — pre-sizes once so inner
+    /// addByte calls never trigger ensureCapacity.
     public func addBytes(bs : [Nat8]) {
       let n = bs.size();
       if (n == 0) return;
@@ -183,10 +221,14 @@ module {
     // ── Control operations ────────────────────────────────────────────────
 
     /// Pad to the next byte boundary by advancing `writeBit`.
-    /// Bits in the partial byte beyond the current `writeBit` are already 0.
+    /// The partial accumulator byte (already written to buf) is zero-padded
+    /// in the high bits; acc is cleared so the next write starts fresh.
     public func byteAlign() {
       let offset = writeBit % BYTE;
-      if (offset != 0) writeBit += BYTE - offset;
+      if (offset != 0) {
+        writeBit += BYTE - offset;
+        acc := 0;
+      };
     };
 
     /// Discard the first `n` bits from the logical read position.
@@ -203,6 +245,7 @@ module {
       while (i < live) { buf[i] := 0; i += 1 };
       writeBit := 0;
       readBit := 0;
+      acc := 0;
     };
 
   }; // end class BitBuffer
