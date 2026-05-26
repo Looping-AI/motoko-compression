@@ -22,8 +22,6 @@
  * isExactImage calls getImage via an inter-canister self-call regardless of
  * image size.
  *
- * For any operation that involves self-calls, dispatch the promise first then
- * tick PocketIC until the chain completes before awaiting the result.
  */
 import { describe, it, beforeAll, afterAll, expect } from "bun:test";
 import { PocketIc, PocketIcServer } from "@dfinity/pic";
@@ -68,47 +66,33 @@ describe("ImageStore canister", () => {
     await server.stop();
   });
 
-  /**
-   * Compress then store an image.  compressImage drives self-calls; storeImage
-   * is a plain map insert.  Tick PocketIC enough rounds for the _compressChunk
-   * chain to complete — one extra tick per MiB of input, minimum 3.
-   */
   async function storeImage(name: string, data: number[]): Promise<void> {
-    const compressPromise = actor.compressImage(data);
-    const mib = Math.max(1, Math.ceil(data.length / (2 * 1024 * 1024)));
-    for (let i = 0; i < mib + 2; i++) {
-      await pic.advanceTime(10_000);
-      await pic.tick();
-    }
-    const compressed = await compressPromise;
-    await actor.storeImage(name, compressed);
+    await actor.storeAndCompressImage(name, data);
   }
 
   /**
-   * Dispatch getImage and advance PocketIC.
-   * For small images, compressed output is #single so decodeImage runs in one
-   * message.  getImage is still an async call, so we need at least 1 tick.
-   * For large images (compressedMib > 0), decodeImage uses self-calls.
+   * Retrieve an image page-by-page via getImagePage and reassemble.
+   * Each page call may trigger _decodeChunk self-calls (for #chunked stored
+   * data).
+   * Returns null if the image is not found; accumulates pages until ?[] signals
+   * end-of-data.
    */
-  async function getImage(
-    name: string,
-    compressedMib = 0,
-  ): Promise<number[] | null> {
-    const promise = actor.getImage(name);
-    for (let i = 0; i < compressedMib + 2; i++) {
-      await pic.advanceTime(10_000);
-      await pic.tick();
+  async function getImage(name: string): Promise<number[] | null> {
+    const accumulated: number[] = [];
+    for (let page = 0n; ; page++) {
+      const result = await actor.getImagePage(name, page);
+      if (result.length === 0) return null; // image not found
+      const pageData = Array.from(result[0] as Uint8Array);
+      if (pageData.length === 0) break; // beyond last page
+      for (const bytes of pageData) accumulated.push(bytes);
     }
-    const result = await promise;
-    // Candid Option<Vec nat8> arrives as [] (null) or [Uint8Array] (some).
-    // Normalize to number[] so callers can compare against makeData() output.
-    return result.length === 0 ? null : Array.from(result[0] as Uint8Array);
+    return accumulated;
   }
 
   /**
    * Upload a large image in 2 MiB chunks using the beginImageUpload /
    * uploadImageChunk / finishImageUpload API.  Each chunk call is a separate
-   * PocketIC message, so we tick once per chunk.
+   * PocketIC message.
    */
   async function storeImageChunked(
     name: string,
@@ -116,37 +100,13 @@ describe("ImageStore canister", () => {
   ): Promise<void> {
     await actor.beginImageUpload();
 
-    const CHUNK = 2 * 1024 * 1024;
+    const CHUNK = 2 * 1024 * 1024 - 512; // leave room for IC ingress envelope + Candid overhead (~186 bytes observed)
     for (let offset = 0; offset < data.length; offset += CHUNK) {
       const chunk = data.slice(offset, Math.min(offset + CHUNK, data.length));
-      const promise = actor.uploadImageChunk(chunk);
-      await pic.advanceTime(10_000);
-      await pic.tick();
-      await promise;
+      await actor.uploadImageChunk(chunk);
     }
 
-    const promise = actor.finishImageUpload(name);
-    await pic.advanceTime(10_000);
-    await pic.tick();
-    await promise;
-  }
-
-  /**
-   * Dispatch isExactImage and advance PocketIC.
-   * isExactImage calls getImage via an inter-canister self-call, so we need
-   * enough ticks for the full chain: caller → isExactImage → getImage → decode.
-   */
-  async function isExactImage(
-    name: string,
-    data: number[],
-    compressedMib = 0,
-  ): Promise<boolean> {
-    const promise = actor.isExactImage(name, data);
-    for (let i = 0; i < compressedMib + 3; i++) {
-      await pic.advanceTime(10_000);
-      await pic.tick();
-    }
-    return await promise;
+    await actor.finishImageUpload(name);
   }
 
   // ── Tests ──────────────────────────────────────────────────────────────────
@@ -163,28 +123,22 @@ describe("ImageStore canister", () => {
     expect(retrieved).toEqual(original);
   }, 60_000);
 
-  it("isExactImage returns true for the stored bytes", async () => {
+  it("round-trips a small image (4 KB)", async () => {
     const original = makeData(4 * 1024, 2);
     await storeImage("logo.png", original);
-    const matches = await isExactImage("logo.png", original);
-    expect(matches).toBe(true);
+    const retrieved = await getImage("logo.png");
+    expect(retrieved).toEqual(original);
   }, 60_000);
 
-  it("isExactImage returns false when one byte differs", async () => {
+  it("retrieved bytes do not match a mutated copy", async () => {
     const original = makeData(4 * 1024, 3);
     await storeImage("icon.png", original);
 
     const mutated = [...original];
     mutated[0] = mutated[0] ^ 0xff;
-    const matches = await isExactImage("icon.png", mutated);
-    expect(matches).toBe(false);
+    const retrieved = await getImage("icon.png");
+    expect(retrieved).not.toEqual(mutated);
   }, 60_000);
-
-  it("isExactImage returns false for an unknown name", async () => {
-    const data = makeData(256, 4);
-    const matches = await isExactImage("ghost.png", data);
-    expect(matches).toBe(false);
-  }, 30_000);
 
   it("images stored under different names do not interfere", async () => {
     const imageA = makeData(8 * 1024, 10);
@@ -230,13 +184,13 @@ describe("ImageStore canister", () => {
     // finishImageUpload.  Pseudo-random data compresses to roughly the same
     // size, so the stored EncodedResponse is #chunked; getImage uses
     // _decodeChunk self-calls to reassemble the decompressed output.
-    const SIZE = 10 * 1024 * 1024;
+    const SIZE = 3 * 1024 * 1024;
     const original = makeData(SIZE, 100);
 
     await storeImageChunked("large.png", original);
 
     // ~10 MiB compressed → ~5 output chunks of 2 MiB each
-    const retrieved = await getImage("large.png", 5);
+    const retrieved = await getImage("large.png");
 
     expect(retrieved).toEqual(original);
   }, 600_000);

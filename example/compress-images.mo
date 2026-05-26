@@ -8,11 +8,12 @@
 /// `stable` variable in `system func postupgrade`.
 ///
 /// Usage:
-///   - `compressImage(bytes)`              — compress; returns EncodedResponse.
-///   - `storeImage("logo.png", compressed)` — store an already-compressed image.
-///   - `getImage("logo.png")`              — decompress and return.
-///   - `isExactImage("logo.png", bytes)`   — verify stored contents match.
+///   - `storeAndCompressImage("logo.png", bytes)` — compress and store.
+///   - `getImagePage("logo.png", page)`           — retrieve decompressed page.
+///   - `getImage("logo.png")`                     — retrieve full image (< 2 MiB).
+///   - For images > 2 MiB: beginImageUpload / uploadImageChunk / finishImageUpload.
 import Array "mo:core/Array";
+import Debug "mo:core/Debug";
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
 import Principal "mo:core/Principal";
@@ -26,42 +27,32 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
   // Not stable — loses contents on canister upgrade.
   transient let images = Map.empty<Text, Gzip.EncodedResponse>();
+  transient let decoded_cache = Map.empty<Text, [Nat8]>();
 
   transient let gzip_encoder = Gzip.EncoderBuilder().build();
   transient let gzip_decoder = Gzip.Decoder();
 
-  /// Max bytes fed to the encoder per ICP self-call (matches output chunk size).
-  transient let IC_INPUT_CHUNK = gzip_encoder.outputChunkSize();
-
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  func chunks(data : [Nat8], size : Nat) : [[Nat8]] {
+  transient let MB : Nat = 1_024 * 1_024;
+  transient let PAGE_SIZE : Nat = 2 * MB - 512;
+
+  func pageOf(data : [Nat8], page : Nat) : [Nat8] {
+    let lo = page * PAGE_SIZE;
     let n = data.size();
-    if (n == 0 or size == 0) return [data];
-    let count = n / size + (if (n % size != 0) 1 else 0);
-    Array.tabulate<[Nat8]>(
-      count,
-      func(i) {
-        let lo = i * size;
-        let hi = Nat.min(lo + size, n);
-        Array.tabulate<Nat8>(hi - lo, func(j) { data[lo + j] });
-      },
-    );
+    if (lo >= n) return [];
+    let hi = Nat.min(lo + PAGE_SIZE, n);
+    Array.tabulate<Nat8>(hi - lo, func(i) { data[lo + i] });
   };
 
   func canisterId() : Principal { Principal.fromActor(self) };
 
   // ── Internal chunk handlers ───────────────────────────────────────────────
 
-  /// Internal: encode one chunk (self-call for instruction-limit management).
-  public shared ({ caller }) func _compressChunk(chunk : [Nat8]) : async () {
-    assert caller == canisterId();
-    gzip_encoder.encode(chunk);
-  };
-
   /// Internal: decode one chunk (self-call for instruction-limit management).
   public shared ({ caller }) func _decodeChunk(chunk : [Nat8]) : async () {
     assert caller == canisterId();
+    Debug.print("_decodeChunk: chunk=" # Nat.toText(chunk.size()) # "B");
     switch (gzip_decoder.decode(chunk)) {
       case (#err(msg)) Runtime.trap("_decode_chunk: " # msg);
       case (#ok(_)) {};
@@ -70,7 +61,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  func decodeImage(compressed : Gzip.EncodedResponse) : async* [Nat8] {
+  func decodeImage(compressed : Gzip.EncodedResponse) : async [Nat8] {
     switch (compressed) {
       case (#single data) {
         switch (gzip_decoder.decode(data)) {
@@ -90,21 +81,41 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     };
   };
 
+  func cachedDecode(name : Text, stored : Gzip.EncodedResponse) : async [Nat8] {
+    switch (Map.get(decoded_cache, Text.compare, name)) {
+      case (?cached) cached;
+      case null {
+        gzip_decoder.clear();
+        let data = await decodeImage(stored);
+        Map.add(decoded_cache, Text.compare, name, data);
+        data;
+      };
+    };
+  };
+
   // ── Public API ────────────────────────────────────────────────────────────
 
-  /// Compress `image` and return the encoded result without storing it.
-  /// Call this first, then pass the result to `storeImage`.
-  public func compressImage(data : [Nat8]) : async Gzip.EncodedResponse {
-    for (chunk in chunks(data, IC_INPUT_CHUNK).vals()) {
-      await _compressChunk(chunk);
-    };
-    gzip_encoder.finish();
+  // <2 MiB Images
+
+  /// Compress `data` and store the result under `name`.  Overwrites any existing entry.
+  /// For images larger than ~2 MiB use beginImageUpload / uploadImageChunk / finishImageUpload.
+  public func storeAndCompressImage(name : Text, data : [Nat8]) : async () {
+    gzip_encoder.encode(data);
+    let compressed = gzip_encoder.finish();
+    Map.add(images, Text.compare, name, compressed);
+    ignore Map.delete(decoded_cache, Text.compare, name);
   };
 
-  /// Store an already-compressed image under `name`.  Overwrites any existing entry.
-  public func storeImage(name : Text, compressed : Gzip.EncodedResponse) : async () {
-    Map.add(images, Text.compare, name, compressed);
+  /// Decompress and return the image stored under `name`.
+  /// Returns null if no image is stored under that name.
+  public func getImage(name : Text) : async ?[Nat8] {
+    switch (Map.get(images, Text.compare, name)) {
+      case null null;
+      case (?stored) ?(await cachedDecode(name, stored));
+    };
   };
+
+  // >2 MiB Images
 
   /// Begin a chunked upload.  Clears any buffered encoder state from a
   /// previous (possibly incomplete) upload.
@@ -118,27 +129,20 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     gzip_encoder.encode(chunk);
   };
 
-  /// Finalise compression and store the result under `name`.
+  /// Finalize compression and store the result under `name`.
   /// Must be called after `beginImageUpload` + one or more `uploadImageChunk` calls.
   public func finishImageUpload(name : Text) : async () {
     let compressed = gzip_encoder.finish();
     Map.add(images, Text.compare, name, compressed);
+    ignore Map.delete(decoded_cache, Text.compare, name);
   };
 
-  /// Decompress and return the image stored under `name`.
-  /// Returns null if no image is stored under that name.
-  public func getImage(name : Text) : async ?[Nat8] {
+  /// Decompress and return one page of the image stored under `name`.
+  /// Returns null if image not found, ?[] when page is beyond the last byte.
+  public func getImagePage(name : Text, page : Nat) : async ?[Nat8] {
     switch (Map.get(images, Text.compare, name)) {
       case null null;
-      case (?stored) ?(await* decodeImage(stored));
-    };
-  };
-
-  /// Return true if the bytes stored under `name` match `new_image` exactly.
-  public func isExactImage(name : Text, new_image : [Nat8]) : async Bool {
-    switch (await getImage(name)) {
-      case null false;
-      case (?stored_image) stored_image == new_image;
+      case (?stored) ?(pageOf(await cachedDecode(name, stored), page));
     };
   };
 

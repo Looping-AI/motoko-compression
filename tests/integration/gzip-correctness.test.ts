@@ -57,26 +57,16 @@ describe("Gzip Correctness", () => {
     // 1. Generate sizeMib MiB of pseudo-random data (seeded, deterministic).
     await actor.generateBytes(sizeMib * 1024n * 1024n);
 
-    // 2. Compress — dispatch without awaiting, then tick once per MiB to process self-calls.
-    const compressPromise = actor.compressData();
-    for (let i = 0; i < Number(sizeMib); i++) {
-      await pic.advanceTime(10_000);
-      await pic.tick();
-    }
-    await compressPromise;
+    // 2. Compress — dispatch without awaiting.
+    await actor.compressData();
 
     // 3. Collect compressed bytes.
     const compressedBytes = await readAllPages((p) =>
       actor.getCompressedData(p),
     );
 
-    // 4. Decompress — dispatch without awaiting, then tick once per MiB to process self-calls.
-    const decompressPromise = actor.decompressData();
-    for (let i = 0; i < Number(sizeMib); i++) {
-      await pic.advanceTime(10_000);
-      await pic.tick();
-    }
-    await decompressPromise;
+    // 4. Decompress — dispatch without awaiting.
+    await actor.decompressData();
 
     // 5. Collect decompressed and original bytes.
     const [decompressedBytes, originalBytes] = await Promise.all([

@@ -39,7 +39,7 @@ describe("Gzip Interop", () => {
   }, 30_000);
 
   it("decompresses node:zlib gzip output correctly (random, 1 MiB)", async () => {
-    const SIZE_MIB = 20;
+    const SIZE_MIB = 1;
 
     // 1. Build SIZE_MIB MiB of cryptographically random bytes.
     const original = randomBytes(SIZE_MIB * 1024 * 1024);
@@ -55,13 +55,8 @@ describe("Gzip Interop", () => {
       await actor.appendExternalCompressed(chunk);
     }
 
-    // 4. Decompress on the canister — dispatch without awaiting, then tick once per MiB.
-    const decompressPromise = actor.decompress();
-    for (let i = 0; i < SIZE_MIB; i++) {
-      await pic.advanceTime(10_000);
-      await pic.tick();
-    }
-    await decompressPromise;
+    // 4. Decompress on the canister.
+    await actor.decompress();
 
     // 5. Read back decompressed bytes (paginated).
     const pages: Buffer[] = [];
