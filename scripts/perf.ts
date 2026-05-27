@@ -79,7 +79,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
   ],
   gzip: [
     { file: "src/Gzip/Encoder.mo", funcs: ["encode", "finish"] },
-    { file: "src/Gzip/Decoder.mo", funcs: ["decode"] },
+    { file: "src/Gzip/Decoder.mo", funcs: ["decode", "finish"] },
   ],
   lzss: [
     {

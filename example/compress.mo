@@ -10,6 +10,7 @@
 ///   3. Call `decompress_data()` to decompress and retrieve the bytes.
 ///   4. Compare with `get_generated_data()` to verify the round-trip.
 import Array "mo:core/Array";
+import List "mo:core/List";
 import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
 import Nat64 "mo:core/Nat64";
@@ -39,6 +40,14 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Bytes per self-call — derived from the encoder so both stay in sync.
   transient let ENCODE_CHUNK_SIZE : Nat = gzip_encoder.outputChunkSize();
   transient let gzip_decoder = Gzip.Decoder();
+
+  /// Compressed chunks to decompress per self-call.
+  /// At ~8.6B instructions per 6 MiB chunk, 3 chunks ≈ 25.8B — safely under the 40B limit.
+  transient let DECODE_BATCH_SIZE : Nat = 3;
+
+  /// Accumulates decompressed bytes across `_decompressBatch` self-calls.
+  /// Cleared at the start of each `decompressData()` invocation.
+  transient var _decompress_buf = List.empty<Nat8>();
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -123,37 +132,57 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     gzip_encoder.encode(chunk);
   };
 
+  /// Internal: flush the final DEFLATE block, build output chunks, and persist the result.
+  /// Isolated in a self-call so its instruction cost (proportional to total compressed size)
+  /// gets a fresh budget, independent of the preceding encode calls.
+  public shared ({ caller }) func _finishCompression() : async () {
+    assert caller == canisterId();
+    _compressed := ?gzip_encoder.finish();
+  };
+
   /// Compress all stored data and persist the result.
-  /// For data < ENCODE_CHUNK_SIZE, processes in a single message.
-  /// For larger data, spreads work across ICP messages via self-calls.
+  /// For data < ENCODE_CHUNK_SIZE, encodes in a single message then finalizes via self-call.
+  /// For larger data, spreads encode work across ICP messages via self-calls.
   public func compressData() : async () {
     gzip_encoder.clear();
     let data = getData();
 
     if (data.size() < ENCODE_CHUNK_SIZE) {
       gzip_encoder.encode(data);
+      _compressed := ?gzip_encoder.finish();
     } else {
       for (chunk in chunks(data, ENCODE_CHUNK_SIZE).vals()) {
         await _compressChunk(chunk);
       };
+      await _finishCompression();
     };
-    _compressed := ?gzip_encoder.finish();
   };
 
   // ── Decompression ─────────────────────────────────────────────────────────
 
-  /// Internal: accumulate one compressed chunk.
-  /// Guarded so only this canister may call it.
-  public shared ({ caller }) func _decodeChunk(chunk : [Nat8]) : async () {
+  /// Internal: decompress a batch of compressed chunks (each a complete gzip stream) and
+  /// append results to `_decompress_buf`. Batching up to DECODE_BATCH_SIZE chunks per
+  /// self-call reduces inter-message round-trips while staying within the 40B limit.
+  /// Guarded so only this canister may call it — each await gives a fresh instruction budget.
+  public shared ({ caller }) func _decompressBatch(batch : [[Nat8]]) : async () {
     assert caller == canisterId();
-    switch (gzip_decoder.decode(chunk)) {
-      case (#err(msg)) Runtime.trap("_decode_chunk: " # msg);
-      case (#ok(_)) {};
+    for (chunk in batch.vals()) {
+      switch (gzip_decoder.decode(chunk)) {
+        case (#err(msg)) Runtime.trap("_decompressBatch decode: " # msg);
+        case (#ok(_)) {};
+      };
+      switch (gzip_decoder.finish()) {
+        case (#err(msg)) Runtime.trap("_decompressBatch finish: " # msg);
+        case (#ok(result)) List.addAll(_decompress_buf, result.bytes.vals());
+      };
     };
   };
 
   /// Decompress the stored compressed data and cache the result in _decompressed.
-  /// Each `#chunked` chunk is decoded in its own self-call for instruction budget.
+  /// For `#single` output: decode + finish inline (≤ 1 chunk, always fits in one message).
+  /// For `#chunked` output: self-calls process DECODE_BATCH_SIZE chunks each, each with a
+  /// fresh instruction budget. Results accumulate in `_decompress_buf` and are converted
+  /// to `[Nat8]` in a single O(N) pass via `List.toArray` after all batches complete.
   public func decompressData() : async () {
     gzip_decoder.clear();
     let ?compressed = _compressed else return;
@@ -161,19 +190,26 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     switch (compressed) {
       case (#single data) {
         switch (gzip_decoder.decode(data)) {
-          case (#err(msg)) Runtime.trap("decompressData: " # msg);
+          case (#err(msg)) Runtime.trap("decompressData decode: " # msg);
           case (#ok(_)) {};
         };
-      };
-      case (#chunked chunks) {
-        for (chunk in chunks.vals()) {
-          await _decodeChunk(chunk);
+        switch (gzip_decoder.finish()) {
+          case (#err(msg)) Runtime.trap("decompressData finish: " # msg);
+          case (#ok(result)) _decompressed := ?result.bytes;
         };
       };
-    };
-    switch (gzip_decoder.finish()) {
-      case (#err(msg)) Runtime.trap("decompress_data: " # msg);
-      case (#ok(result)) _decompressed := ?result.bytes;
+      case (#chunked cs) {
+        List.clear(_decompress_buf);
+        let n = cs.size();
+        var i = 0;
+        while (i < n) {
+          let hi = Nat.min(i + DECODE_BATCH_SIZE, n);
+          let batch = Array.tabulate<[Nat8]>(hi - i, func(j) { cs[i + j] });
+          await _decompressBatch(batch);
+          i := hi;
+        };
+        _decompressed := ?List.toArray(_decompress_buf);
+      };
     };
   };
 
