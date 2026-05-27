@@ -230,7 +230,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
 const PAYLOAD_BYTES: Record<string, number> = {
   huffman: 100 * 1024,
   deflate: 100 * 1024,
-  gzip: 100 * 1024,
+  gzip: 9.5 * 1024 * 1024,
   lzss: 10 * 1024,
   bitbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   circularbuffer: 10 * 1024, // 10 KiB — fine-grained primitive

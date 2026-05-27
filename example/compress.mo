@@ -24,16 +24,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   transient let MB = 1_024 * 1_024;
 
-  /// Max bytes fed to the encoder per ICP self-call.
-  /// Each call receives a fresh instruction budget. Sized to stay well within
-  /// the IC inter-canister ingress limit (2 MiB) so the payload fits in one
-  /// message and produces at most one output chunk.
-  transient let IC_INPUT_CHUNK = 2 * MB;
-
   transient let PAGE_SIZE : Nat = 2 * MB - 512;
-
-  /// Data below this size is processed in a single message without self-calls.
-  transient let CHUNKING_THRESHOLD = 5 * MB;
 
   // ── Stable state ──────────────────────────────────────────────────────────
 
@@ -43,7 +34,10 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   // ── Transient state ───────────────────────────────────────────────────────
 
-  transient let gzip_encoder = Gzip.EncoderBuilder().outputChunkSize(IC_INPUT_CHUNK).singleThreshold(CHUNKING_THRESHOLD).build();
+  transient let gzip_encoder = Gzip.EncoderBuilder().build();
+
+  /// Bytes per self-call — derived from the encoder so both stay in sync.
+  transient let ENCODE_CHUNK_SIZE : Nat = gzip_encoder.outputChunkSize();
   transient let gzip_decoder = Gzip.Decoder();
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -130,16 +124,16 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   };
 
   /// Compress all stored data and persist the result.
-  /// For data < CHUNKING_THRESHOLD, processes in a single message.
+  /// For data < ENCODE_CHUNK_SIZE, processes in a single message.
   /// For larger data, spreads work across ICP messages via self-calls.
   public func compressData() : async () {
     gzip_encoder.clear();
     let data = getData();
 
-    if (data.size() < CHUNKING_THRESHOLD) {
+    if (data.size() < ENCODE_CHUNK_SIZE) {
       gzip_encoder.encode(data);
     } else {
-      for (chunk in chunks(data, IC_INPUT_CHUNK).vals()) {
+      for (chunk in chunks(data, ENCODE_CHUNK_SIZE).vals()) {
         await _compressChunk(chunk);
       };
     };
@@ -159,8 +153,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   };
 
   /// Decompress the stored compressed data and cache the result in _decompressed.
-  /// For compressed data < CHUNKING_THRESHOLD, processes in a single message.
-  /// For larger data, spreads work across ICP messages via self-calls.
+  /// Each `#chunked` chunk is decoded in its own self-call for instruction budget.
   public func decompressData() : async () {
     gzip_decoder.clear();
     let ?compressed = _compressed else return;

@@ -38,18 +38,15 @@ module {
 
   /// Default output chunk size (bytes). Each output chunk holds one or more
   /// complete DEFLATE blocks and can be fed to `Decoder.decode()` independently.
-  /// Sized to fit IC ingress and inter-canister response limits (≤ 2 MiB).
-  let DEFAULT_OUTPUT_CHUNK_SIZE : Nat = 2_097_152; // 2 MiB
-
-  /// Default threshold below which `finish()` returns `#single` (flat array)
-  /// instead of `#chunked`. Matches the IC's practical single-message limit.
-  let DEFAULT_SINGLE_THRESHOLD : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
+  /// Sized to stay safely within the 40B-instruction per-call limit on ICP with
+  /// standard parameters (#balance LZSS, 32 KiB deflate block size).
+  let DEFAULT_OUTPUT_CHUNK_SIZE : Nat = 6_291_456; // 6 MiB
 
   // ── Public types ─────────────────────────────────────────────────────────
 
   /// The result of `Encoder.finish()`.
-  /// `#single` is returned when the total compressed size is below the encoder's
-  /// `singleThreshold`; the bytes are merged into one flat array.
+  /// `#single` is returned when the total compressed size fits within one output
+  /// chunk (`outputChunkSize`); the bytes are merged into one flat array.
   /// `#chunked` is returned for larger output; each chunk contains one or more
   /// complete Deflate blocks (block-aligned) and can be fed to
   /// `Decoder.decode()` in separate canister calls.
@@ -72,7 +69,6 @@ module {
     };
 
     var _output_chunk_size : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
-    var _single_threshold : Nat = DEFAULT_SINGLE_THRESHOLD;
 
     /// Override the Gzip header fields.
     public func header(h : Header) : EncoderBuilder {
@@ -121,27 +117,18 @@ module {
     /// If a single DEFLATE block already exceeds this size, it will be emitted
     /// as its own (oversized) chunk — set `deflateBlockSize` ≤ `outputChunkSize`.
     ///
-    /// Default: 2 MiB (fits IC ingress and inter-canister response limits).
-    ///
-    /// This value is also a sensible upper bound for the input slice you feed
-    /// per self-call when spreading compression across ICP messages, since each
-    /// call's compressed output will then be at most one chunk.
+    /// Default: 6 MiB — chosen to stay safely within the 40B-instruction
+    /// per-call limit with standard parameters (#balance LZSS, 32 KiB blocks).
+    /// Use this value as the per-self-call input slice size when spreading
+    /// compression across ICP messages.
     public func outputChunkSize(size : Nat) : EncoderBuilder {
       _output_chunk_size := size;
       self;
     };
 
-    /// Set the threshold (bytes) below which `finish()` merges all chunks into
-    /// a single flat `#single` array instead of returning `#chunked`.
-    /// Default: 2 MiB (matches `outputChunkSize` default).
-    public func singleThreshold(size : Nat) : EncoderBuilder {
-      _single_threshold := size;
-      self;
-    };
-
     /// Build the configured `Encoder`.
     public func build() : Encoder {
-      Encoder(_header, _deflate_opts, _output_chunk_size, _single_threshold);
+      Encoder(_header, _deflate_opts, _output_chunk_size);
     };
   };
 
@@ -151,7 +138,7 @@ module {
   ///
   /// Call `encode(bytes)` one or more times, then `finish()` to retrieve
   /// the compressed `EncodedResponse`.
-  public class Encoder(header : Header, deflate_options : DeflateOptions, output_chunk_size : Nat, single_threshold : Nat) {
+  public class Encoder(header : Header, deflate_options : DeflateOptions, output_chunk_size : Nat) {
 
     var input_size = 0;
     let crc32 = CRC32.CRC32();
@@ -233,7 +220,7 @@ module {
       let total = bitbuffer.byteSize();
       let all = bitbuffer.getBytes(0, total);
 
-      let resp : EncodedResponse = if (total < single_threshold) {
+      let resp : EncodedResponse = if (total <= output_chunk_size) {
         #single all;
       } else {
         // Slice `all` into output chunks.

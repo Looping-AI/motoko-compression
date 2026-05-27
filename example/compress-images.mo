@@ -10,8 +10,8 @@
 /// Usage:
 ///   - `storeAndCompressImage("logo.png", bytes)` — compress and store.
 ///   - `getImagePage("logo.png", page)`           — retrieve decompressed page.
-///   - `getImage("logo.png")`                     — retrieve full image (< 2 MiB).
-///   - For images > 2 MiB: beginImageUpload / uploadImageChunk / finishImageUpload.
+///   - `getImage("logo.png")`                     — retrieve full image (< 6 MiB).
+///   - For images > 6 MiB: beginImageUpload / uploadImageChunk / finishImageUpload.
 import Array "mo:core/Array";
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
@@ -84,10 +84,10 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
   // ── Public API ────────────────────────────────────────────────────────────
 
-  // <2 MiB Images
+  // <6 MiB Images
 
   /// Compress `data` and store the result under `name`.  Overwrites any existing entry.
-  /// For images larger than ~2 MiB use beginImageUpload / uploadImageChunk / finishImageUpload.
+  /// For images larger than ~6 MiB use beginImageUpload / uploadImageChunk / finishImageUpload.
   public func storeAndCompressImage(name : Text, data : [Nat8]) : async () {
     gzip_encoder.encode(data);
     let compressed = gzip_encoder.finish();
@@ -101,7 +101,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     return await getImagePage(name, 0);
   };
 
-  // >2 MiB Images
+  // >6 MiB Images
 
   /// Begin a chunked upload.  Clears any buffered encoder state from a
   /// previous (possibly incomplete) upload.
@@ -110,7 +110,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   };
 
   /// Feed one raw chunk of image data to the encoder.
-  /// Each call must supply at most `IC_INPUT_CHUNK` bytes (≤ 2 MiB).
+  /// Each call should supply at most one encoder chunk worth of bytes (≤ 6 MiB).
   public func uploadImageChunk(chunk : [Nat8]) : async () {
     gzip_encoder.encode(chunk);
   };
