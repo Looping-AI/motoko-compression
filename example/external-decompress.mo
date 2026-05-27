@@ -22,7 +22,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
   // ── Constants ─────────────────────────────────────────────────────────
 
   transient let MB = 1_024 * 1_024;
-  transient let PAGE_SIZE = 2 * MB;
+  transient let PAGE_SIZE : Nat = 2 * MB - 512;
 
   // ── Stable state ──────────────────────────────────────────────────────
 

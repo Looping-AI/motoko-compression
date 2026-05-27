@@ -30,7 +30,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// message and produces at most one output chunk.
   transient let IC_INPUT_CHUNK = 2 * MB;
 
-  transient let PAGE_SIZE = 2 * MB;
+  transient let PAGE_SIZE : Nat = 2 * MB - 512;
 
   /// Data below this size is processed in a single message without self-calls.
   transient let CHUNKING_THRESHOLD = 5 * MB;

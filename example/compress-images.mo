@@ -13,7 +13,6 @@
 ///   - `getImage("logo.png")`                     — retrieve full image (< 2 MiB).
 ///   - For images > 2 MiB: beginImageUpload / uploadImageChunk / finishImageUpload.
 import Array "mo:core/Array";
-import Debug "mo:core/Debug";
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
 import Principal "mo:core/Principal";
@@ -52,7 +51,6 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   /// Internal: decode one chunk (self-call for instruction-limit management).
   public shared ({ caller }) func _decodeChunk(chunk : [Nat8]) : async () {
     assert caller == canisterId();
-    Debug.print("_decodeChunk: chunk=" # Nat.toText(chunk.size()) # "B");
     switch (gzip_decoder.decode(chunk)) {
       case (#err(msg)) Runtime.trap("_decode_chunk: " # msg);
       case (#ok(_)) {};
@@ -61,7 +59,10 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  func decodeImage(compressed : Gzip.EncodedResponse) : async [Nat8] {
+  /// Decompress `compressed` and write the result directly into `decoded_cache`.
+  /// Returns `async ()` so the large [Nat8] never crosses an async return boundary.
+  func decodeImage(name : Text, compressed : Gzip.EncodedResponse) : async () {
+    gzip_decoder.clear();
     switch (compressed) {
       case (#single data) {
         switch (gzip_decoder.decode(data)) {
@@ -77,19 +78,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     };
     switch (gzip_decoder.finish()) {
       case (#err(msg)) Runtime.trap("decode_image: " # msg);
-      case (#ok(result)) result.bytes;
-    };
-  };
-
-  func cachedDecode(name : Text, stored : Gzip.EncodedResponse) : async [Nat8] {
-    switch (Map.get(decoded_cache, Text.compare, name)) {
-      case (?cached) cached;
-      case null {
-        gzip_decoder.clear();
-        let data = await decodeImage(stored);
-        Map.add(decoded_cache, Text.compare, name, data);
-        data;
-      };
+      case (#ok(result)) Map.add(decoded_cache, Text.compare, name, result.bytes);
     };
   };
 
@@ -109,10 +98,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   /// Decompress and return the image stored under `name`.
   /// Returns null if no image is stored under that name.
   public func getImage(name : Text) : async ?[Nat8] {
-    switch (Map.get(images, Text.compare, name)) {
-      case null null;
-      case (?stored) ?(await cachedDecode(name, stored));
-    };
+    return await getImagePage(name, 0);
   };
 
   // >2 MiB Images
@@ -142,7 +128,15 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   public func getImagePage(name : Text, page : Nat) : async ?[Nat8] {
     switch (Map.get(images, Text.compare, name)) {
       case null null;
-      case (?stored) ?(pageOf(await cachedDecode(name, stored), page));
+      case (?stored) {
+        if (Map.get(decoded_cache, Text.compare, name) == null) {
+          await decodeImage(name, stored);
+        };
+        switch (Map.get(decoded_cache, Text.compare, name)) {
+          case null Runtime.trap("getImagePage: decodeImage did not populate cache");
+          case (?data) ?(pageOf(data, page));
+        };
+      };
     };
   };
 

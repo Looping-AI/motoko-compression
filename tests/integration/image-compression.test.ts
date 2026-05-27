@@ -178,13 +178,13 @@ describe("ImageStore canister", () => {
     expect(retrieved).toEqual(original);
   }, 180_000);
 
-  it.skip("round-trips a 10 MiB image via chunked upload", async () => {
+  it("round-trips a 10 MiB image via chunked upload", async () => {
     // 10 MiB exceeds PocketIC's 2 MiB ingress limit, so we stream the raw
     // bytes in 2 MiB slices using beginImageUpload / uploadImageChunk /
     // finishImageUpload.  Pseudo-random data compresses to roughly the same
     // size, so the stored EncodedResponse is #chunked; getImage uses
     // _decodeChunk self-calls to reassemble the decompressed output.
-    const SIZE = 10 * 1024 * 1024;
+    const SIZE = 12 * 1024 * 1024;
     const original = makeData(SIZE, 100);
 
     await storeImageChunked("large.png", original);
