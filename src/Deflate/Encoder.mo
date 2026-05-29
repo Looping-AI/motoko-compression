@@ -20,8 +20,10 @@ module {
     /// working memory. Does NOT affect LZSS back-reference reach (the
     /// 32 KiB sliding window persists across blocks). Recommended: 32 KiB.
     deflate_block_size : Nat;
-    /// Use dynamic Huffman tables (true) or fixed tables (false).
-    dynamic_huffman : Bool;
+    /// Huffman table selection. `null` (the default) auto-selects fixed or
+    /// dynamic per block by comparing their exact bit cost and picking the
+    /// smaller. `?#fixed` / `?#dynamic` force a specific kind for every block.
+    force_huffman_kind : ?Block.HuffmanKind;
     /// LZSS compression level.
     lzss : Common.CompressionLevel;
   };
@@ -30,19 +32,11 @@ module {
 
   public class Encoder(bitbuffer : BitBuffer, options : DeflateOptions) {
 
-    let block_type = if (options.dynamic_huffman) {
-      #Dynamic({
-        lzss = LzssEncoder.Encoder(options.lzss);
-        block_limit = options.deflate_block_size;
-      });
-    } else {
-      #Fixed({
-        lzss = LzssEncoder.Encoder(options.lzss);
-        block_limit = options.deflate_block_size;
-      });
-    };
-
-    let block = Block.block(block_type);
+    let block = Block.block(
+      LzssEncoder.Encoder(options.lzss),
+      options.force_huffman_kind,
+      options.deflate_block_size,
+    );
 
     /// Optional callback: called with the bitbuffer's byte size after each
     /// block is flushed. Used by the Gzip encoder to track block boundaries.
@@ -68,8 +62,8 @@ module {
 
     /// Flush the current block.
     public func flush(is_final : Bool) {
-      bitbuffer.addBits(1, if (is_final) 1 else 0); // BFINAL
-      bitbuffer.addBits(2, Block.blockToNat(block_type)); // BTYPE
+      // BFINAL + BTYPE are written by the block itself (it chooses its own
+      // Huffman kind), so the header always precedes the block content.
       block.flush(bitbuffer, is_final);
       switch (on_block_flushed) {
         case (?cb) cb(bitbuffer.byteSize());

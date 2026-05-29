@@ -1,6 +1,7 @@
 import { test; suite; expect } "mo:test";
 import Array "mo:core/Array";
 import Nat8 "mo:core/Nat8";
+import Nat "mo:core/Nat";
 import Runtime "mo:core/Runtime";
 import DeflateDecoder "../src/Deflate/Decoder";
 import Symbol "../src/Deflate/Symbol";
@@ -23,14 +24,21 @@ func roundTrip(data : [Nat8], options : Deflate.DeflateOptions) : [Nat8] {
   };
 };
 
+/// Encode `data` with `options` and return the compressed byte count.
+func compressedSize(data : [Nat8], options : Deflate.DeflateOptions) : Nat {
+  let encoder = Deflate.buildEncoder(options);
+  encoder.encode(data);
+  encoder.finish().byteSize();
+};
+
 let fixedOpts : Deflate.DeflateOptions = {
   deflate_block_size = 65_535;
-  dynamic_huffman = false;
+  force_huffman_kind = ?#fixed;
   lzss = #fast;
 };
 let dynOpts : Deflate.DeflateOptions = {
   deflate_block_size = 65_535;
-  dynamic_huffman = true;
+  force_huffman_kind = ?#dynamic;
   lzss = #best;
 };
 
@@ -280,7 +288,7 @@ suite(
         let data = Array.tabulate<Nat8>(1000, func(i) = Nat8.fromNat(i % 256));
         let opts : Deflate.DeflateOptions = {
           deflate_block_size = 100;
-          dynamic_huffman = false;
+          force_huffman_kind = ?#fixed;
           lzss = #fast;
         };
         expect.array(roundTrip(data, opts), Nat8.toText, Nat8.equal).equal(data);
@@ -293,7 +301,7 @@ suite(
         let data = Array.tabulate<Nat8>(500, func(i) = Nat8.fromNat((i * 7) % 256));
         let opts : Deflate.DeflateOptions = {
           deflate_block_size = 64;
-          dynamic_huffman = true;
+          force_huffman_kind = ?#dynamic;
           lzss = #best;
         };
         expect.array(roundTrip(data, opts), Nat8.toText, Nat8.equal).equal(data);
@@ -390,12 +398,59 @@ suite(
       func() {
         let opts : Deflate.DeflateOptions = {
           deflate_block_size = 100_000;
-          dynamic_huffman = true;
+          force_huffman_kind = ?#dynamic;
           lzss = #fast;
         };
         let _ = Deflate.buildEncoder(opts);
       },
     );
+  },
+);
+
+// ── Suite: Auto Huffman selection (C2) ───────────────────────────────────
+
+suite(
+  "Auto Huffman selection",
+  func() {
+
+    // For each input, auto (force_huffman_kind = null) must never produce more
+    // bytes than the better of forced-fixed / forced-dynamic, and must always
+    // round-trip byte-identically.
+    func autoOpts(level : Deflate.DeflateOptions) : Deflate.DeflateOptions {
+      { level with force_huffman_kind = null };
+    };
+
+    func checkAuto(name : Text, data : [Nat8], base : Deflate.DeflateOptions) {
+      test(
+        name,
+        func() {
+          let fixedSz = compressedSize(data, { base with force_huffman_kind = ?#fixed });
+          let dynSz = compressedSize(data, { base with force_huffman_kind = ?#dynamic });
+          let autoSz = compressedSize(data, autoOpts(base));
+          // Auto picks the smaller of the two analytic costs; allow it to equal
+          // the better (it never exceeds it).
+          expect.bool(autoSz <= Nat.min(fixedSz, dynSz)).isTrue();
+          // All three encodings decode back to the original bytes.
+          expect.array(roundTrip(data, autoOpts(base)), Nat8.toText, Nat8.equal).equal(data);
+          expect.array(roundTrip(data, { base with force_huffman_kind = ?#fixed }), Nat8.toText, Nat8.equal).equal(data);
+          expect.array(roundTrip(data, { base with force_huffman_kind = ?#dynamic }), Nat8.toText, Nat8.equal).equal(data);
+        },
+      );
+    };
+
+    // Tiny input: dynamic-table header overhead dwarfs the payload, so fixed wins.
+    checkAuto("tiny input → fixed-favoured", [0x41, 0x42, 0x43], fixedOpts);
+
+    // Large skewed text-like input: dynamic tables pay off, so dynamic wins.
+    let skewed = Array.tabulate<Nat8>(
+      4096,
+      func(i) = if (i % 8 == 0) 0x7A else 0x61, // mostly 'a', occasional 'z'
+    );
+    checkAuto("large skewed input → dynamic-favoured", skewed, dynOpts);
+
+    // Incompressible-ish pseudo-random: auto must stay valid and not corrupt.
+    let rand = Array.tabulate<Nat8>(2048, func(i) = Nat8.fromNat((i * 2_654_435_761) % 256));
+    checkAuto("pseudo-random input", rand, dynOpts);
   },
 );
 

@@ -14,56 +14,42 @@ import LzssCommon "../LZSS/Common";
 import LzssEncoder "../LZSS/Encoder/lib";
 import CodeTables "CodeTables";
 import HuffmanCodec "HuffmanCodec";
+import Symbol "Symbol";
 
 module {
 
   type BitBuffer = BitBuffer.BitBuffer;
 
-  // ── Block type ─────────────────────────────────────────────────────────────
+  // ── Huffman selection ───────────────────────────────────────────────────────
 
-  public type BlockType = {
-    #Fixed : { lzss : LzssEncoder.Encoder; block_limit : Nat };
-    #Dynamic : { lzss : LzssEncoder.Encoder; block_limit : Nat };
-  };
-
-  /// BTYPE value for each block kind (RFC 1951 §3.2.3).
-  public func blockToNat(bt : BlockType) : Nat {
-    switch bt {
-      case (#Fixed(_)) 1;
-      case (#Dynamic(_)) 2;
-    };
-  };
+  /// Per-block Huffman table choice. `null` (auto) compares fixed vs dynamic
+  /// cost for each block and picks the smaller; an explicit value forces it.
+  public type HuffmanKind = { #fixed; #dynamic };
 
   // ── Block interface ────────────────────────────────────────────────────────
 
   public type BlockInterface = {
     size : () -> Nat;
     add : (Nat8) -> ();
-    /// Emit the block payload. `is_final` indicates whether this is the
-    /// last block of the stream — only then is the underlying LZSS
-    /// encoder allowed to drain its lookahead buffer. Calling LZSS flush
-    /// between non-final blocks would corrupt cross-block matches.
+    /// Emit the block payload, including its own BFINAL + BTYPE header.
+    /// `is_final` indicates whether this is the last block of the stream —
+    /// only then is the underlying LZSS encoder allowed to drain its
+    /// lookahead buffer. Calling LZSS flush between non-final blocks would
+    /// corrupt cross-block matches.
     flush : (BitBuffer, Bool) -> ();
     clear : () -> ();
   };
 
-  /// Construct a block of the given type.
-  public func block(bt : BlockType) : BlockInterface {
-    switch bt {
-      case (#Fixed({ lzss; block_limit })) {
-        Compress(lzss, HuffmanCodec.FixedHuffmanCodec(), block_limit);
-      };
-      case (#Dynamic({ lzss; block_limit })) {
-        Compress(lzss, HuffmanCodec.DynamicHuffmanCodec(), block_limit);
-      };
-    };
+  /// Construct a block. `force = null` enables per-block fixed/dynamic auto-select.
+  public func block(lzss : LzssEncoder.Encoder, force : ?HuffmanKind, block_limit : Nat) : BlockInterface {
+    Compress(lzss, force, block_limit);
   };
 
   // ── Compressed block ───────────────────────────────────────────────────────
 
   public class Compress(
     lzss : LzssEncoder.Encoder,
-    huffman : HuffmanCodec.HuffmanCodec,
+    force : ?HuffmanKind,
     block_limit : Nat,
   ) {
     var input_size : Nat = 0;
@@ -87,6 +73,14 @@ module {
 
     // Precomputed RFC 1951 length/distance code tables (built once).
     let tables = CodeTables.CodeTables();
+
+    // Dynamic codec (used for #dynamic and auto). The fixed encoder is
+    // frequency-independent, so build it once and reuse across all blocks.
+    let dyn = HuffmanCodec.DynamicHuffmanCodec();
+    let fixedEnc : Symbol.Encoder = switch (HuffmanCodec.FixedHuffmanCodec().buildFromFreqs(lit_freqs, dist_freqs)) {
+      case (#ok(e)) e;
+      case (#err(msg)) Runtime.trap("Deflate.Compress: fixed build failed: " # msg);
+    };
 
     // Direct callbacks — no LzssEntry variant alloc per symbol.
     let sink : LzssCommon.MatchSink = {
@@ -113,32 +107,38 @@ module {
       lzss.encodeByte(byte, sink);
     };
 
-    public func flush(bitbuffer : BitBuffer, is_final : Bool) {
-      if (is_final) lzss.flush(sink);
-
-      let symbol_encoder = switch (huffman.buildFromFreqs(lit_freqs, dist_freqs)) {
-        case (#ok(e)) e;
-        case (#err(msg)) Runtime.trap("Deflate.Compress.flush: build failed: " # msg);
+    /// Total payload bits for the buffered symbols under the given code
+    /// bitwidths. Length/distance EXTRA bits are identical for fixed and
+    /// dynamic codes, so they are omitted — they cancel in the comparison.
+    func payloadBits(litBW : [var Nat], distBW : [var Nat]) : Nat {
+      var bits : Nat = 0;
+      var i = 0;
+      while (i < 286) {
+        if (lit_freqs[i] > 0) bits += lit_freqs[i] * litBW[i];
+        i += 1;
       };
-
-      switch (huffman.save(bitbuffer, symbol_encoder)) {
-        case (#ok(_)) {};
-        case (#err(msg)) Runtime.trap("Deflate.Compress.flush: save failed: " # msg);
+      i := 0;
+      while (i < 30) {
+        if (dist_freqs[i] > 0) bits += dist_freqs[i] * distBW[i];
+        i += 1;
       };
+      bits;
+    };
 
-      // Encode symbols directly from flat arrays — no Symbol variant construction.
-      // Hoist the precomputed Huffman code tables out of the inner loop so
-      // emission is a pair of indexed reads + a fused `addBits2` per pointer.
-      let lit_bw = symbol_encoder.literal.bitwidths;
-      let lit_bv = symbol_encoder.literal.bits;
-      let dist_bw = symbol_encoder.distance.bitwidths;
-      let dist_bv = symbol_encoder.distance.bits;
+    // Encode buffered symbols (then EndOfBlock) using `enc`. Reads the
+    // precomputed length/distance code tables; emission is a pair of indexed
+    // reads + a fused `addBits2` per pointer.
+    func emitSymbols(bitbuffer : BitBuffer, enc : Symbol.Encoder) {
+      let lit_bw = enc.literal.bitwidths;
+      let lit_bv = enc.literal.bits;
+      let dist_bw = enc.distance.bitwidths;
+      let dist_bv = enc.distance.bits;
 
       var i = 0;
       while (i < sym_count) {
         let len = sym_v2[i];
         if (len == 0) {
-          // Literal — inline of symbol_encoder.literal.encode.
+          // Literal — inline of enc.literal.encode.
           let s = sym_v1[i];
           bitbuffer.addBits(lit_bw[s], lit_bv[s]);
         } else {
@@ -159,8 +159,67 @@ module {
       };
       // End-of-block marker (code 256) — inline.
       bitbuffer.addBits(lit_bw[256], lit_bv[256]);
+    };
 
-      // Reset state for next block
+    // Emit a fixed-Huffman block: BFINAL + BTYPE=01, no header.
+    func emitFixed(bitbuffer : BitBuffer, is_final : Bool) {
+      bitbuffer.addBits(1, if (is_final) 1 else 0); // BFINAL
+      bitbuffer.addBits(2, 1); // BTYPE = 01 (fixed)
+      emitSymbols(bitbuffer, fixedEnc);
+    };
+
+    public func flush(bitbuffer : BitBuffer, is_final : Bool) {
+      if (is_final) lzss.flush(sink);
+
+      switch (force) {
+        case (?#fixed) emitFixed(bitbuffer, is_final);
+        case (?#dynamic) {
+          let enc = switch (dyn.buildFromFreqs(lit_freqs, dist_freqs)) {
+            case (#ok(e)) e;
+            case (#err(msg)) Runtime.trap("Deflate.Compress.flush: build failed: " # msg);
+          };
+          bitbuffer.addBits(1, if (is_final) 1 else 0); // BFINAL
+          bitbuffer.addBits(2, 2); // BTYPE = 10 (dynamic)
+          switch (dyn.prepareSave(enc)) {
+            case (#ok(plan)) dyn.emit(bitbuffer, plan);
+            case (#err(msg)) Runtime.trap("Deflate.Compress.flush: save failed: " # msg);
+          };
+          emitSymbols(bitbuffer, enc);
+        };
+        case null {
+          // Auto: build dynamic, compare fixed vs dynamic cost, pick smaller.
+          // On any dynamic build/prepare failure, fall back to fixed.
+          let chosen = switch (dyn.buildFromFreqs(lit_freqs, dist_freqs)) {
+            case (#ok(enc)) {
+              switch (dyn.prepareSave(enc)) {
+                case (#ok(plan)) {
+                  let dynTotal = payloadBits(enc.literal.bitwidths, enc.distance.bitwidths) + dyn.headerBits(plan);
+                  let fixedTotal = payloadBits(fixedEnc.literal.bitwidths, fixedEnc.distance.bitwidths);
+                  if (fixedTotal <= dynTotal) { #fixed } else {
+                    #dynamic(enc, plan);
+                  };
+                };
+                case (#err(_)) #fixed;
+              };
+            };
+            case (#err(_)) #fixed;
+          };
+          switch (chosen) {
+            case (#fixed) emitFixed(bitbuffer, is_final);
+            case (#dynamic(enc, plan)) {
+              bitbuffer.addBits(1, if (is_final) 1 else 0); // BFINAL
+              bitbuffer.addBits(2, 2); // BTYPE = 10 (dynamic)
+              dyn.emit(bitbuffer, plan);
+              emitSymbols(bitbuffer, enc);
+            };
+          };
+        };
+      };
+
+      resetState();
+    };
+
+    func resetState() {
       input_size := 0;
       sym_count := 0;
       var k = 0;
@@ -171,12 +230,7 @@ module {
 
     public func clear() {
       lzss.clear();
-      sym_count := 0;
-      input_size := 0;
-      var k = 0;
-      while (k < 286) { lit_freqs[k] := 0; k += 1 };
-      k := 0;
-      while (k < 30) { dist_freqs[k] := 0; k += 1 };
+      resetState();
     };
   };
 

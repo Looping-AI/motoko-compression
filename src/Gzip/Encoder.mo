@@ -6,7 +6,7 @@
 ///   - `EncoderBuilder.lzss` takes `CompressionLevel`, not a `Lzss.Encoder` object.
 ///   - Chunking uses `setOnBlockFlushed` callback instead of mo:bitbuffer events.
 ///   - `encodeBuffer` dropped (Buffer type gone); `encodeText` and `encodeBlob` kept.
-///   - Default lzss = `?#best`; `dynamic_huffman = false` (fixed Huffman, faster).
+///   - Default lzss = `#balance`; `force_huffman_kind = null` (auto fixed/dynamic per block).
 ///   - `deflateBlockSize` and `outputChunkSize` are separate, orthogonal knobs.
 
 import Array "mo:core/Array";
@@ -65,7 +65,7 @@ module {
     var _deflate_opts : DeflateOptions = {
       lzss = #balance; // default LZSS compression level (matches zlib's default)
       deflate_block_size = DEFAULT_DEFLATE_BLOCK_SIZE;
-      dynamic_huffman = true; // Better ratio, without impactful performance penalty, matches zlib's default
+      force_huffman_kind = ?#dynamic; // dynamic per block for fastest, choose auto-select (fixed vs dynamic) for best ratio
     };
 
     var _output_chunk_size : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
@@ -76,15 +76,21 @@ module {
       self;
     };
 
-    /// Use dynamic Huffman tables (better ratio, slightly slower).
+    /// Force dynamic Huffman tables for every block (better ratio, slightly slower).
     public func dynamicHuffman() : EncoderBuilder {
-      _deflate_opts := { _deflate_opts with dynamic_huffman = true };
+      _deflate_opts := { _deflate_opts with force_huffman_kind = ?#dynamic };
       self;
     };
 
-    /// Use fixed Huffman tables (faster, slightly larger output).
+    /// Force fixed Huffman tables for every block (faster, slightly larger output).
     public func fixedHuffman() : EncoderBuilder {
-      _deflate_opts := { _deflate_opts with dynamic_huffman = false };
+      _deflate_opts := { _deflate_opts with force_huffman_kind = ?#fixed };
+      self;
+    };
+
+    /// Auto-select fixed vs dynamic Huffman per block (default).
+    public func autoHuffman() : EncoderBuilder {
+      _deflate_opts := { _deflate_opts with force_huffman_kind = null };
       self;
     };
 

@@ -25,18 +25,6 @@ module {
   type BitBuffer = BitBuffer.BitBuffer;
   type Result<A, B> = Result.Result<A, B>;
 
-  // ── Codec interface ────────────────────────────────────────────────────
-
-  /// Common interface for fixed and dynamic Huffman codecs.
-  public type HuffmanCodec = {
-    /// Build an encoder from pre-accumulated frequency arrays.
-    /// lit_freqs : length 286, dist_freqs : length 30.
-    /// NOTE: the function is allowed to mutate these arrays (e.g. to apply
-    /// the EndOfBlock fixup); the caller must reset them after use.
-    buildFromFreqs : ([var Nat], [var Nat]) -> Result<Symbol.Encoder, Text>;
-    save : (BitBuffer, Symbol.Encoder) -> Result<(), Text>;
-  };
-
   // ── Dynamic Huffman codec ──────────────────────────────────────────────
 
   public class DynamicHuffmanCodec() {
@@ -61,7 +49,19 @@ module {
       return #ok(Symbol.Encoder(le, de));
     };
 
-    public func save(bitbuffer : BitBuffer, codec : Symbol.Encoder) : Result<(), Text> {
+    /// Everything `save` computes BEFORE writing any bits. Reused by
+    /// `headerBits` (cost query for fixed-vs-dynamic selection) and `emit`.
+    public type SavePlan = {
+      codes : List.List<BitwidthCode>;
+      sym_freq : [var Nat];
+      bwe : HuffmanEncoder.Encoder;
+      bwcc : Nat;
+      lcc : Nat;
+      dcc : Nat;
+    };
+
+    /// Build the dynamic-header plan without emitting any bits.
+    public func prepareSave(codec : Symbol.Encoder) : Result<SavePlan, Text> {
       let lcc = Nat.max(257, codec.literal.maxSymbol() + 1);
       let dcc = Nat.max(1, codec.distance.maxSymbol() + 1);
 
@@ -96,26 +96,49 @@ module {
       };
       let bwcc = Nat.max(4, bw_max_idx + 1);
 
+      return #ok({ codes; sym_freq; bwe; bwcc; lcc; dcc });
+    };
+
+    /// Exact number of bits the dynamic block header occupies, computed from a
+    /// plan — mirrors `emit` without writing. Used by the encoder to compare
+    /// dynamic vs fixed cost before committing to a block type.
+    public func headerBits(plan : SavePlan) : Nat {
+      // HLIT (5) + HDIST (5) + HCLEN (4) + 3 bits per HCLEN entry.
+      var bits : Nat = 14 + 3 * plan.bwcc;
+      for ({ symbol; count = _; bitwidth } in List.values(plan.codes)) {
+        bits += plan.bwe.lookup(symbol).bitwidth;
+        if (bitwidth > 0) bits += bitwidth;
+      };
+      bits;
+    };
+
+    /// Write the dynamic block header from a prepared plan.
+    public func emit(bitbuffer : BitBuffer, plan : SavePlan) {
       // HLIT, HDIST, HCLEN
-      bitbuffer.addBits(5, lcc - 257);
-      bitbuffer.addBits(5, dcc - 1);
-      bitbuffer.addBits(4, bwcc - 4);
+      bitbuffer.addBits(5, plan.lcc - 257);
+      bitbuffer.addBits(5, plan.dcc - 1);
+      bitbuffer.addBits(4, plan.bwcc - 4);
 
       // Code lengths for meta-Huffman tree
       var i = 0;
-      while (i < bwcc) {
+      while (i < plan.bwcc) {
         let idx = Symbol.BITWIDTH_CODE_ORDER[i];
-        bitbuffer.addBits(3, if (sym_freq[idx] != 0) bwe.lookup(idx).bitwidth else 0);
+        bitbuffer.addBits(3, if (plan.sym_freq[idx] != 0) plan.bwe.lookup(idx).bitwidth else 0);
         i += 1;
       };
 
       // Compressed code-length sequences
-      for ({ symbol; count; bitwidth } in List.values(codes)) {
-        bwe.encode(bitbuffer, symbol);
+      for ({ symbol; count; bitwidth } in List.values(plan.codes)) {
+        plan.bwe.encode(bitbuffer, symbol);
         if (bitwidth > 0) { bitbuffer.addBits(bitwidth, count) };
       };
+    };
 
-      return #ok();
+    public func save(bitbuffer : BitBuffer, codec : Symbol.Encoder) : Result<(), Text> {
+      switch (prepareSave(codec)) {
+        case (#ok(plan)) { emit(bitbuffer, plan); #ok() };
+        case (#err(msg)) #err(msg);
+      };
     };
 
     // ── Internal: run-length encode bitwidths ──────────────────────────

@@ -108,7 +108,7 @@ import Deflate "mo:compression/Deflate";
 
 let options : Deflate.DeflateOptions = {
   block_size = 32_768;
-  dynamic_huffman = true;
+  force_huffman_kind = null; // auto-select fixed/dynamic per block
   lzss = null; // use default LZSS encoder
 };
 
@@ -141,11 +141,11 @@ let decoded = LZSS.decode(entries); // Buffer<LzssEntry> -> [Nat8]
 
 ### `Deflate`
 
-| Symbol                  | Description                                                         |
-| ----------------------- | ------------------------------------------------------------------- |
-| `buildEncoder(options)` | Returns a `Deflate.Encoder`.                                        |
-| `buildDecoder(?Buffer)` | Returns a `Deflate.Decoder`.                                        |
-| `DeflateOptions`        | `{ block_size : Nat; dynamic_huffman : Bool; lzss : ?LzssEncoder }` |
+| Symbol                  | Description                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------- |
+| `buildEncoder(options)` | Returns a `Deflate.Encoder`.                                                          |
+| `buildDecoder(?Buffer)` | Returns a `Deflate.Decoder`.                                                          |
+| `DeflateOptions`        | `{ block_size : Nat; force_huffman_kind : ?{#fixed; #dynamic}; lzss : ?LzssEncoder }` |
 
 ### `LZSS`
 
