@@ -10,9 +10,10 @@
 /// Usage:
 ///   - `storeAndCompressImage("logo.png", bytes)` — compress and store.
 ///   - `getImagePage("logo.png", page)`           — retrieve decompressed page.
-///   - `getImage("logo.png")`                     — retrieve full image (< 6 MiB).
-///   - For images > 6 MiB: beginImageUpload / uploadImageChunk / finishImageUpload.
+///   - `getImage("logo.png")`                     — retrieve full image (< 5 MiB).
+///   - For images > 5 MiB: beginImageUpload / uploadImageChunk / finishImageUpload.
 import Array "mo:core/Array";
+import List "mo:core/List";
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
 import Principal "mo:core/Principal";
@@ -31,10 +32,43 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   transient let gzip_encoder = Gzip.EncoderBuilder().build();
   transient let gzip_decoder = Gzip.Decoder();
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Constants ─────────────────────────────────────────────────────────────
 
   transient let MB : Nat = 1_024 * 1_024;
   transient let PAGE_SIZE : Nat = 2 * MB - 512;
+
+  /// Bytes per self-call — derived from the encoder so both stay in sync.
+  transient let ENCODE_CHUNK_SIZE : Nat = gzip_encoder.outputChunkSize();
+
+  /// Compressed chunks to decompress per self-call.
+  /// At ~8.6B instructions per 5 MiB chunk, 3 chunks ≈ 25.8B — safely under the 40B limit.
+  transient let DECODE_BATCH_SIZE : Nat = 3;
+
+  // ── Transient buffers ─────────────────────────────────────────────────────
+
+  /// Accumulates per-chunk compressed streams during `_compressChunk` self-calls.
+  /// Each element is a complete, independent gzip stream for one input chunk.
+  transient var _compress_buf = List.empty<[Nat8]>();
+
+  /// Accumulates decompressed bytes across `_decompressBatch` self-calls.
+  transient var _decompress_buf = List.empty<Nat8>();
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /// Split `data` into fixed-size chunks of at most `size` bytes.
+  func chunks(data : [Nat8], size : Nat) : [[Nat8]] {
+    let n = data.size();
+    if (n == 0 or size == 0) return [data];
+    let count = n / size + (if (n % size != 0) 1 else 0);
+    Array.tabulate<[Nat8]>(
+      count,
+      func(i) {
+        let lo = i * size;
+        let hi = Nat.min(lo + size, n);
+        Array.tabulate<Nat8>(hi - lo, func(j) { data[lo + j] });
+      },
+    );
+  };
 
   func pageOf(data : [Nat8], page : Nat) : [Nat8] {
     let lo = page * PAGE_SIZE;
@@ -48,12 +82,42 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
   // ── Internal chunk handlers ───────────────────────────────────────────────
 
-  /// Internal: decode one chunk (self-call for instruction-limit management).
-  public shared ({ caller }) func _decodeChunk(chunk : [Nat8]) : async () {
+  /// Internal: compress one input chunk into a complete, independent gzip stream
+  /// and append it to `_compress_buf`. Each await gives a fresh instruction budget.
+  public shared ({ caller }) func _compressChunk(chunk : [Nat8]) : async () {
     assert caller == canisterId();
-    switch (gzip_decoder.decode(chunk)) {
-      case (#err(msg)) Runtime.trap("_decode_chunk: " # msg);
-      case (#ok(_)) {};
+    gzip_encoder.clear();
+    gzip_encoder.encode(chunk);
+    switch (gzip_encoder.finish()) {
+      case (#single data) List.add(_compress_buf, data);
+      case (#chunked _) Runtime.trap("_compressChunk: chunk exceeded outputChunkSize");
+    };
+  };
+
+  /// Internal: assemble all per-chunk compressed streams, store under `name`,
+  /// and evict any stale decoded cache entry.
+  public shared ({ caller }) func _finishCompression(name : Text) : async () {
+    assert caller == canisterId();
+    let streams = List.toArray(_compress_buf);
+    List.clear(_compress_buf);
+    let compressed = if (streams.size() == 1) #single(streams[0]) else #chunked(streams);
+    Map.add(images, Text.compare, name, compressed);
+    ignore Map.delete(decoded_cache, Text.compare, name);
+  };
+
+  /// Internal: decompress a batch of chunks (each a complete independent gzip stream)
+  /// and append results to `_decompress_buf`. Each await gives a fresh instruction budget.
+  public shared ({ caller }) func _decompressBatch(batch : [[Nat8]]) : async () {
+    assert caller == canisterId();
+    for (chunk in batch.vals()) {
+      switch (gzip_decoder.decode(chunk)) {
+        case (#err(msg)) Runtime.trap("_decompressBatch decode: " # msg);
+        case (#ok(_)) {};
+      };
+      switch (gzip_decoder.finish()) {
+        case (#err(msg)) Runtime.trap("_decompressBatch finish: " # msg);
+        case (#ok(result)) List.addAll(_decompress_buf, result.bytes.vals());
+      };
     };
   };
 
@@ -66,33 +130,49 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     switch (compressed) {
       case (#single data) {
         switch (gzip_decoder.decode(data)) {
-          case (#err(msg)) Runtime.trap("decode_image: " # msg);
+          case (#err(msg)) Runtime.trap("decodeImage decode: " # msg);
           case (#ok(_)) {};
         };
-      };
-      case (#chunked chunks) {
-        for (chunk in chunks.vals()) {
-          await _decodeChunk(chunk);
+        switch (gzip_decoder.finish()) {
+          case (#err(msg)) Runtime.trap("decodeImage finish: " # msg);
+          case (#ok(result)) Map.add(decoded_cache, Text.compare, name, result.bytes);
         };
       };
-    };
-    switch (gzip_decoder.finish()) {
-      case (#err(msg)) Runtime.trap("decode_image: " # msg);
-      case (#ok(result)) Map.add(decoded_cache, Text.compare, name, result.bytes);
+      case (#chunked cs) {
+        List.clear(_decompress_buf);
+        let n = cs.size();
+        var i = 0;
+        while (i < n) {
+          let hi = Nat.min(i + DECODE_BATCH_SIZE, n);
+          let batch = Array.tabulate<[Nat8]>(hi - i, func(j) { cs[i + j] });
+          await _decompressBatch(batch);
+          i := hi;
+        };
+        Map.add(decoded_cache, Text.compare, name, List.toArray(_decompress_buf));
+      };
     };
   };
 
   // ── Public API ────────────────────────────────────────────────────────────
 
-  // <6 MiB Images
+  // <5 MiB Images
 
   /// Compress `data` and store the result under `name`.  Overwrites any existing entry.
-  /// For images larger than ~6 MiB use beginImageUpload / uploadImageChunk / finishImageUpload.
+  /// For images larger than ~5 MiB use beginImageUpload / uploadImageChunk / finishImageUpload.
   public func storeAndCompressImage(name : Text, data : [Nat8]) : async () {
-    gzip_encoder.encode(data);
-    let compressed = gzip_encoder.finish();
-    Map.add(images, Text.compare, name, compressed);
-    ignore Map.delete(decoded_cache, Text.compare, name);
+    gzip_encoder.clear();
+    List.clear(_compress_buf);
+    if (data.size() < ENCODE_CHUNK_SIZE) {
+      gzip_encoder.encode(data);
+      let compressed = gzip_encoder.finish();
+      Map.add(images, Text.compare, name, compressed);
+      ignore Map.delete(decoded_cache, Text.compare, name);
+    } else {
+      for (chunk in chunks(data, ENCODE_CHUNK_SIZE).vals()) {
+        await _compressChunk(chunk);
+      };
+      await _finishCompression(name);
+    };
   };
 
   /// Decompress and return the image stored under `name`.
@@ -101,26 +181,25 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     return await getImagePage(name, 0);
   };
 
-  // >6 MiB Images
+  // >5 MiB Images
 
   /// Begin a chunked upload.  Clears any buffered encoder state from a
   /// previous (possibly incomplete) upload.
   public func beginImageUpload() : async () {
     gzip_encoder.clear();
+    List.clear(_compress_buf);
   };
 
   /// Feed one raw chunk of image data to the encoder.
-  /// Each call should supply at most one encoder chunk worth of bytes (≤ 6 MiB).
+  /// Each call should supply at most one encoder chunk worth of bytes (≤ ENCODE_CHUNK_SIZE).
   public func uploadImageChunk(chunk : [Nat8]) : async () {
-    gzip_encoder.encode(chunk);
+    await _compressChunk(chunk);
   };
 
   /// Finalize compression and store the result under `name`.
   /// Must be called after `beginImageUpload` + one or more `uploadImageChunk` calls.
   public func finishImageUpload(name : Text) : async () {
-    let compressed = gzip_encoder.finish();
-    Map.add(images, Text.compare, name, compressed);
-    ignore Map.delete(decoded_cache, Text.compare, name);
+    await _finishCompression(name);
   };
 
   /// Decompress and return one page of the image stored under `name`.

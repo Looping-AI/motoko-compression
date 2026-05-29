@@ -49,6 +49,10 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Cleared at the start of each `decompressData()` invocation.
   transient var _decompress_buf = List.empty<Nat8>();
 
+  /// Accumulates per-chunk compressed streams during `_compressChunk` self-calls.
+  /// Each element is a complete, independent gzip stream for one input chunk.
+  transient var _compress_buf = List.empty<[Nat8]>();
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   /// Split `data` into fixed-size chunks of at most `size` bytes.
@@ -124,25 +128,40 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   // ── Compression ───────────────────────────────────────────────────────────
 
-  /// Internal: encode one chunk.
-  /// Guarded so only this canister may call it — each await gives the caller
-  /// a fresh ICP instruction budget.
+  /// Internal: compress one input chunk into a complete, independent gzip stream and
+  /// append it to `_compress_buf`. Each await gives a fresh ICP instruction budget.
+  /// Guarded so only this canister may call it.
+  ///
+  /// `clear → encode → finish` per chunk means each element of `_compress_buf` has its
+  /// own gzip header, CRC32, and footer — making each independently decodable by
+  /// `_decompressBatch` (which calls `decode + finish` per element).
   public shared ({ caller }) func _compressChunk(chunk : [Nat8]) : async () {
     assert caller == canisterId();
+    gzip_encoder.clear();
     gzip_encoder.encode(chunk);
+    switch (gzip_encoder.finish()) {
+      case (#single data) List.add(_compress_buf, data);
+      // Each input chunk ≤ ENCODE_CHUNK_SIZE = outputChunkSize(), so compressed output
+      // also fits in one output chunk and finish() always returns #single.
+      case (#chunked _) Runtime.trap("_compressChunk: chunk exceeded outputChunkSize");
+    };
   };
 
-  /// Internal: flush the final DEFLATE block, build output chunks, and persist the result.
-  /// Isolated in a self-call so its instruction cost (proportional to total compressed size)
-  /// gets a fresh budget, independent of the preceding encode calls.
+  /// Internal: assemble all per-chunk compressed streams into the final `EncodedResponse`
+  /// and persist it. Isolated in a self-call so its O(N) list-to-array cost gets a fresh budget.
   public shared ({ caller }) func _finishCompression() : async () {
     assert caller == canisterId();
-    _compressed := ?gzip_encoder.finish();
+    let streams = List.toArray(_compress_buf);
+    List.clear(_compress_buf);
+    _compressed := ?(
+      if (streams.size() == 1) #single(streams[0]) else #chunked(streams)
+    );
   };
 
   /// Compress all stored data and persist the result.
-  /// For data < ENCODE_CHUNK_SIZE, encodes in a single message then finalizes via self-call.
-  /// For larger data, spreads encode work across ICP messages via self-calls.
+  /// For data < ENCODE_CHUNK_SIZE, encodes inline and produces a #single stream.
+  /// For larger data, each input chunk is compressed into an independent gzip stream
+  /// via self-calls, then assembled into a #chunked EncodedResponse by _finishCompression.
   public func compressData() : async () {
     gzip_encoder.clear();
     let data = getData();
@@ -151,6 +170,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
       gzip_encoder.encode(data);
       _compressed := ?gzip_encoder.finish();
     } else {
+      List.clear(_compress_buf);
       for (chunk in chunks(data, ENCODE_CHUNK_SIZE).vals()) {
         await _compressChunk(chunk);
       };

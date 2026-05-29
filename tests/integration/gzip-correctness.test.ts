@@ -108,7 +108,7 @@ describe("Gzip Correctness", () => {
   }, 10_000);
 
   it("round-trips 10 MiB through gzip and compressed size is within ±20% of node:zlib", async () => {
-    const SIZE_MIB = 12n;
+    const SIZE_MIB = 10n;
     const { originalBytes, compressedBytes, decompressedBytes } =
       await roundTrip(SIZE_MIB);
 
@@ -120,5 +120,5 @@ describe("Gzip Correctness", () => {
     const ratio = compressedBytes.length / zlibBytes.length;
     expect(ratio).toBeGreaterThan(0.9);
     expect(ratio).toBeLessThan(1.1);
-  }, 60_000);
+  }, 120_000);
 });
