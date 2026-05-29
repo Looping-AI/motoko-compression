@@ -62,18 +62,26 @@ try {
   // compress_data() / decompress_data() use inter-canister self-calls.
   // PocketIC sometimes exhausts its reply-polling window before the outer
   // call officially settles, even though all Perf.mark() calls have fired.
-  const toleratePollingTimeout = async (fn: () => Promise<void>) => {
+  const toleratePollingTimeout = async (
+    fn: () => Promise<void>,
+    callName: string,
+  ) => {
     try {
       await fn();
     } catch (err) {
       const isPollingTimeout =
         err instanceof Error && err.constructor.name === "RetryableError";
       if (!isPollingTimeout) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[perf-warn] ${callName}: call did not complete (RetryableError — PocketIC polling window exhausted or canister hit instruction limit)`,
+      );
+      console.error(`[perf-warn] ${callName}: error detail: ${msg}`);
     }
   };
 
-  await toleratePollingTimeout(() => actor.compressData());
-  await toleratePollingTimeout(() => actor.decompressData());
+  await toleratePollingTimeout(() => actor.compressData(), "compressData");
+  await toleratePollingTimeout(() => actor.decompressData(), "decompressData");
 } finally {
   await pic?.tearDown().catch(() => {});
   await server?.stop().catch(() => {});

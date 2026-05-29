@@ -66,7 +66,14 @@ const REGISTRY: Record<string, PatchTarget[]> = {
     },
     {
       file: "src/Deflate/HuffmanCodec.mo",
-      funcs: ["build", "save", "load", "buildBitwidthCodes", "loadBitwidths"],
+      funcs: [
+        "build",
+        "buildFromFreqs",
+        "prepareSave",
+        "save",
+        "headerBits",
+        "emit",
+      ],
     },
     {
       file: "src/Deflate/Encoder.mo",
@@ -74,7 +81,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
     },
     {
       file: "src/Deflate/Decoder.mo",
-      funcs: ["decode", "decodeNonCompressed", "decodeCompressed", "finish"],
+      funcs: ["decode", "decodeWithCapacity", "bytesConsumed"],
     },
   ],
   gzip: [
@@ -237,8 +244,19 @@ const REGISTRY: Record<string, PatchTarget[]> = {
  *   src/Gzip/Decoder.mo → "gzip_decoder"
  */
 const TOP_LEVEL: Partial<Record<string, string[]>> = {
+  deflate: [
+    "deflate_encoder:encode",
+    "deflate_encoder:flush",
+    "deflate_encoder:finish",
+  ],
+  gzip: [
+    "gzip_encoder:encode",
+    "gzip_encoder:finish",
+    "gzip_decoder:decode",
+    "gzip_decoder:finish",
+  ],
   compress: ["gzip_encoder:encode", "gzip_encoder:finish"],
-  decompress: ["gzip_decoder:finish"],
+  decompress: ["gzip_decoder:decode", "gzip_decoder:finish"],
 };
 
 /**
@@ -247,9 +265,9 @@ const TOP_LEVEL: Partial<Record<string, string[]>> = {
  * components stay at 1 MiB to keep the run representative.
  */
 const PAYLOAD_BYTES: Record<string, number> = {
-  huffman: 100 * 1024,
-  deflate: 100 * 1024,
-  gzip: 9.5 * 1024 * 1024,
+  huffman: 10 * 1024,
+  deflate: 10 * 1024,
+  gzip: 1 * 1024 * 1024,
   lzss: 10 * 1024,
   bitbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   circularbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
@@ -1267,7 +1285,7 @@ function computeTopLevel(
     const stats = intervals[tag];
     if (!stats || stats.calls === 0) {
       console.warn(
-        `  ⚠ top_level: no completed interval for "${tag}" — message-boundary discard? Skipping summary.`,
+        `  ⚠ top_level: no completed interval for "${tag}" — the call may have failed (check [perf-warn] lines above for details). Skipping summary.`,
       );
       return null;
     }
