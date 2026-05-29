@@ -8,6 +8,7 @@ import Nat8 "mo:core/Nat8";
 import Nat16 "mo:core/Nat16";
 import HuffmanEncoder "../Huffman/Encoder";
 import BitBuffer "../internal/BitBuffer";
+import CodeTables "CodeTables";
 
 module {
 
@@ -58,15 +59,15 @@ module {
 
   public let MAX_DISTANCE : Nat = 32_768;
 
-  // ── Encode helpers (private) ─────────────────────────────────────────────
+  // ── Encode helpers (oracle functions) ───────────────────────────────────
   //
-  // Motoko modules only allow purely static top-level `let` bindings
-  // (array literals, func definitions, etc.) — no `var`, loops, or function
-  // applications are permitted at module scope.  The encode logic is
-  // therefore expressed as private functions.  The hot Encoder.encode path
-  // fully inlines the equivalent code with local `var` variables.
+  // These pure functions serve as independent test oracles for the CodeTables
+  // equivalence suite and as helpers for `lengthMarker`/`distanceMarker`.
+  // They cannot be replaced by table lookups at module scope — Motoko forbids
+  // non-static expressions (loops, function calls) there; tables must be
+  // built inside a class or function body.
 
-  // Helpers used by lengthMarker/distanceMarker and the inlined Encoder.encode.
+  // Used by lengthMarker/distanceMarker and as independent CodeTables oracles.
   public func lenCode(length : Nat) : Nat {
     if (length <= 10) { 257 + (length - 3) } else if (length <= 18) {
       265 + (length - 11) / 2;
@@ -125,11 +126,10 @@ module {
     public let literal = literal_encoder;
     public let distance = distance_encoder;
 
-    /// Encode one symbol into `bitbuffer`.
-    ///
-    /// Hot path: length and distance encoding is fully inlined — no tuple
-    /// allocation per symbol.  Length uses an if/else chain; distance uses a
-    /// single while-loop with local `var` accumulators.
+    // Precomputed RFC 1951 length/distance code tables.
+    let tables = CodeTables.CodeTables();
+
+    /// Encode one symbol into `bitbuffer` using precomputed code tables.
     public func encode(bitbuffer : BitBuffer.BitBuffer, symbol : Symbol) {
       switch symbol {
         case (#EndOfBlock) {
@@ -139,50 +139,19 @@ module {
           literal_encoder.encode(bitbuffer, Nat8.toNat(byte));
         };
         case (#pointer(distance, length)) {
-          // ── Length code (O(1) if/else, no heap) ────────────────────────
-          var lCode : Nat = 0;
-          var lBits : Nat = 0;
-          var lVal : Nat = 0;
-          if (length <= 10) {
-            lCode := 257 + (length - 3);
-          } else if (length <= 18) {
-            lCode := 265 + (length - 11) / 2;
-            lBits := 1;
-            lVal := (length - 11) % 2;
-          } else if (length <= 34) {
-            lCode := 269 + (length - 19) / 4;
-            lBits := 2;
-            lVal := (length - 19) % 4;
-          } else if (length <= 66) {
-            lCode := 273 + (length - 35) / 8;
-            lBits := 3;
-            lVal := (length - 35) % 8;
-          } else if (length <= 130) {
-            lCode := 277 + (length - 67) / 16;
-            lBits := 4;
-            lVal := (length - 67) % 16;
-          } else if (length < 258) {
-            lCode := 281 + (length - 131) / 32;
-            lBits := 5;
-            lVal := (length - 131) % 32;
-          } else {
-            lCode := 285; // length == 258, no extra bits
-          };
+          // ── Length code (O(1) table lookup) ──────────────────────────
+          let lCode = tables.lengthCode[length - 3];
           literal_encoder.encode(bitbuffer, lCode);
-          if (lBits > 0) { bitbuffer.addBits(lBits, lVal) };
-          // ── Distance code (O(log₂ d) loop, no heap) ───────────────────
-          if (distance <= 4) {
-            distance_encoder.encode(bitbuffer, distance - 1);
-          } else {
-            var dBits = 1;
-            var dBase = 4;
-            while (dBase * 2 < distance) { dBits += 1; dBase *= 2 };
-            // After loop: dBase < distance ≤ 2*dBase
-            let dHalf = dBase / 2;
-            distance_encoder.encode(bitbuffer, 2 * dBits + 2 + (if (distance < dBase + dHalf + 1) 0 else 1));
-            if (dBits > 0) {
-              bitbuffer.addBits(dBits, (distance - dBase - 1) % dHalf);
-            };
+          let lBits = tables.lengthExtraBits[length - 3];
+          if (lBits > 0) {
+            bitbuffer.addBits(lBits, tables.lengthExtraVal[length - 3]);
+          };
+          // ── Distance code (O(1) table lookup) ────────────────────────
+          let dCode = tables.distCodeOf(distance);
+          distance_encoder.encode(bitbuffer, dCode);
+          let dBits = tables.distExtraBits[dCode];
+          if (dBits > 0) {
+            bitbuffer.addBits(dBits, distance - tables.distBase[dCode]);
           };
         };
       };

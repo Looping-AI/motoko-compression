@@ -12,7 +12,7 @@ import Runtime "mo:core/Runtime";
 import BitBuffer "../internal/BitBuffer";
 import LzssCommon "../LZSS/Common";
 import LzssEncoder "../LZSS/Encoder/lib";
-import Symbol "Symbol";
+import CodeTables "CodeTables";
 import HuffmanCodec "HuffmanCodec";
 
 module {
@@ -85,6 +85,9 @@ module {
     let lit_freqs : [var Nat] = Prim.Array_init<Nat>(286, 0);
     let dist_freqs : [var Nat] = Prim.Array_init<Nat>(30, 0);
 
+    // Precomputed RFC 1951 length/distance code tables (built once).
+    let tables = CodeTables.CodeTables();
+
     // Direct callbacks — no LzssEntry variant alloc per symbol.
     let sink : LzssCommon.MatchSink = {
       onLiteral = func(b : Nat8) {
@@ -98,8 +101,8 @@ module {
         sym_v1[sym_count] := offset;
         sym_v2[sym_count] := len; // len >= 3, never 0
         sym_count += 1;
-        lit_freqs[Symbol.lenCode(len)] += 1;
-        dist_freqs[Symbol.distCode(offset)] += 1;
+        lit_freqs[tables.lengthCode[len - 3]] += 1;
+        dist_freqs[tables.distCodeOf(offset)] += 1;
       };
     };
 
@@ -141,55 +144,16 @@ module {
         } else {
           // Pointer: sym_v1[i] = backward_offset, sym_v2[i] = length
           let dist = sym_v1[i];
-          // ── Length code (RFC 1951, inlined — no variant alloc) ──────────
-          var lCode : Nat = 0;
-          var lBits : Nat = 0;
-          var lVal : Nat = 0;
-          if (len <= 10) {
-            lCode := 257 + (len - 3);
-          } else if (len <= 18) {
-            lCode := 265 + (len - 11) / 2;
-            lBits := 1;
-            lVal := (len - 11) % 2;
-          } else if (len <= 34) {
-            lCode := 269 + (len - 19) / 4;
-            lBits := 2;
-            lVal := (len - 19) % 4;
-          } else if (len <= 66) {
-            lCode := 273 + (len - 35) / 8;
-            lBits := 3;
-            lVal := (len - 35) % 8;
-          } else if (len <= 130) {
-            lCode := 277 + (len - 67) / 16;
-            lBits := 4;
-            lVal := (len - 67) % 16;
-          } else if (len < 258) {
-            lCode := 281 + (len - 131) / 32;
-            lBits := 5;
-            lVal := (len - 131) % 32;
-          } else {
-            lCode := 285;
-          };
+          // ── Length code (table lookup, index = len - 3) ─────────────────
+          let lIdx : Nat = len - 3;
+          let lCode = tables.lengthCode[lIdx];
           // Fused literal-code + length-extra emit.
-          bitbuffer.addBits2(lit_bw[lCode], lit_bv[lCode], lBits, lVal);
+          bitbuffer.addBits2(lit_bw[lCode], lit_bv[lCode], tables.lengthExtraBits[lIdx], tables.lengthExtraVal[lIdx]);
 
-          // ── Distance code (RFC 1951, inlined — no variant alloc) ────────
-          var dCode : Nat = 0;
-          var dBits : Nat = 0;
-          var dExtra : Nat = 0;
-          if (dist <= 4) {
-            dCode := dist - 1;
-          } else {
-            var b = 1;
-            var base = 4;
-            while (base * 2 < dist) { b += 1; base *= 2 };
-            let half = base / 2;
-            dCode := 2 * b + 2 + (if (dist < base + half + 1) 0 else 1);
-            dBits := b;
-            dExtra := (dist - base - 1) % half;
-          };
+          // ── Distance code (table lookup) ────────────────────────────────
+          let dCode = tables.distCodeOf(dist);
           // Fused distance-code + distance-extra emit.
-          bitbuffer.addBits2(dist_bw[dCode], dist_bv[dCode], dBits, dExtra);
+          bitbuffer.addBits2(dist_bw[dCode], dist_bv[dCode], tables.distExtraBits[dCode], dist - tables.distBase[dCode]);
         };
         i += 1;
       };

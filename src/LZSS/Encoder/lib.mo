@@ -41,6 +41,25 @@ module {
     };
   };
 
+  // Stop searching once a match this long is found (zlib `nice_match`).
+  func levelToNiceLength(level : Common.CompressionLevel) : Nat {
+    switch level {
+      case (#fast) 16;
+      case (#balance) 128;
+      case (#best) 258;
+    };
+  };
+
+  // Once a match this long is found, shorten the remaining chain walk to a
+  // quarter (zlib `good_match`).
+  func levelToGoodLength(level : Common.CompressionLevel) : Nat {
+    switch level {
+      case (#fast) 4;
+      case (#balance) 8;
+      case (#best) 32;
+    };
+  };
+
   // ── Constants ──────────────────────────────────────────────────────────
 
   let MIN_MATCH : Nat = 3;
@@ -67,6 +86,8 @@ module {
     let WSIZE : Nat = levelToWindowSize(level);
     let WPHYS : Nat = 2 * WSIZE;
     let MAX_CHAIN : Nat = levelToMaxChain(level);
+    let NICE_LENGTH : Nat = levelToNiceLength(level);
+    let GOOD_LENGTH : Nat = levelToGoodLength(level);
     // WSIZE is always a power of 2, so `p % WSIZE` is the same as `p & (WSIZE-1)`.
     // Motoko's Nat has no bitwise ops; we use modulo.
     let WMASK32 : Nat32 = Nat32.fromNat(WSIZE - 1);
@@ -137,6 +158,7 @@ module {
       var bestPos : Nat = 0;
       var cur : Nat = startMatch;
       var chainLen : Nat = MAX_CHAIN;
+      var shortened : Bool = false;
       let scanStart = strstart;
       // Earliest legal match position (distance must be <= WSIZE).
       let limit : Int = (scanStart : Int) - WSIZE + 1;
@@ -155,6 +177,13 @@ module {
             bestLen := k;
             bestPos := cur;
             if (k >= maxLen) break chain;
+            // Long enough match found: stop searching entirely.
+            if (bestLen >= NICE_LENGTH) break chain;
+            // Decent match found: walk fewer remaining chain links.
+            if (not shortened and bestLen >= GOOD_LENGTH) {
+              chainLen /= 4;
+              shortened := true;
+            };
           };
         };
         chainLen -= 1;
@@ -166,13 +195,11 @@ module {
         cur := nextPos;
       };
 
-      let result = if (bestLen >= MIN_MATCH) {
+      if (bestLen >= MIN_MATCH) {
         (bestLen, scanStart - bestPos);
       } else {
         (0, 0);
       };
-
-      return result;
     };
 
     // Process exactly one symbol (literal or pointer) at strstart.

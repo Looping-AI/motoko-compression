@@ -29,9 +29,7 @@ module {
 
   /// Common interface for fixed and dynamic Huffman codecs.
   public type HuffmanCodec = {
-    build : ({ next : () -> ?Symbol.Symbol }) -> Result<Symbol.Encoder, Text>;
-    /// Build an encoder from pre-accumulated frequency arrays instead of
-    /// iterating over the symbol list a second time.
+    /// Build an encoder from pre-accumulated frequency arrays.
     /// lit_freqs : length 286, dist_freqs : length 30.
     /// NOTE: the function is allowed to mutate these arrays (e.g. to apply
     /// the EndOfBlock fixup); the caller must reset them after use.
@@ -42,40 +40,6 @@ module {
   // ── Dynamic Huffman codec ──────────────────────────────────────────────
 
   public class DynamicHuffmanCodec() {
-
-    public func build(symbols_iter : { next : () -> ?Symbol.Symbol }) : Result<Symbol.Encoder, Text> {
-      let literal_freq = Prim.Array_init<Nat>(286, 0);
-      let distance_freq = Prim.Array_init<Nat>(30, 0);
-      var empty_distance = true;
-
-      for (symbol in symbols_iter) {
-        literal_freq[Symbol.lengthMarker(symbol)] += 1;
-        let dm = Symbol.distanceMarker(symbol);
-        if (dm != Symbol.NO_DISTANCE) {
-          distance_freq[dm] += 1;
-          empty_distance := false;
-        };
-      };
-      // EndOfBlock is always emitted, even if not in the iterator
-      literal_freq[256] += 1;
-      // Need at least one distance code
-      if (empty_distance) { distance_freq[0] := 1 };
-
-      let le = switch (HuffmanEncoder.fromFrequencies(Array.fromVarArray(literal_freq), 15)) {
-        case (#ok(e)) e;
-        case (#err(msg)) {
-          return #err("DynamicHuffmanCodec build literal: " # msg);
-        };
-      };
-      let de = switch (HuffmanEncoder.fromFrequencies(Array.fromVarArray(distance_freq), 15)) {
-        case (#ok(e)) e;
-        case (#err(msg)) {
-          return #err("DynamicHuffmanCodec build distance: " # msg);
-        };
-      };
-
-      return #ok(Symbol.Encoder(le, de));
-    };
 
     public func buildFromFreqs(lit_freqs : [var Nat], dist_freqs : [var Nat]) : Result<Symbol.Encoder, Text> {
       // EndOfBlock is always emitted; apply to the caller's array (caller resets after flush).
@@ -231,7 +195,7 @@ module {
 
   public class FixedHuffmanCodec() {
 
-    public func build(_ : { next : () -> ?Symbol.Symbol }) : Result<Symbol.Encoder, Text> {
+    func build() : Result<Symbol.Encoder, Text> {
       // Build literal/length encoder from fixed codes
       let lb = HuffmanEncoder.Builder(288);
       for ({ bitwidth; symbol_start; symbol_end; base_code } in Symbol.FIXED_LENGTH_CODES.vals()) {
@@ -270,7 +234,7 @@ module {
     };
 
     public func buildFromFreqs(_ : [var Nat], _ : [var Nat]) : Result<Symbol.Encoder, Text> {
-      build({ next = func() { null } });
+      build();
     };
 
     public func save(_ : BitBuffer, _ : Symbol.Encoder) : Result<(), Text> {

@@ -4,6 +4,7 @@ import Nat8 "mo:core/Nat8";
 import Runtime "mo:core/Runtime";
 import DeflateDecoder "../src/Deflate/Decoder";
 import Symbol "../src/Deflate/Symbol";
+import CodeTables "../src/Deflate/CodeTables";
 import Deflate "../src/Deflate/lib";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -408,7 +409,7 @@ suite(
       "input with zero pointers (only literals, distance tree degenerate)",
       func() {
         // 30 distinct bytes → LZSS finds no matches → dist-freq table all zero,
-        // exercising the empty_distance hack in DynamicHuffmanCodec.build.
+        // exercising the empty_distance guard in DynamicHuffmanCodec.buildFromFreqs.
         let data = Array.tabulate<Nat8>(30, func(i) = Nat8.fromNat(i));
         expect.array(roundTrip(data, dynOpts), Nat8.toText, Nat8.equal).equal(data);
       },
@@ -421,6 +422,79 @@ suite(
         // most literal-code bitwidths are zero → exercises RLE codes 17/18 in save().
         let data = Array.tabulate<Nat8>(500, func(i) = if (i % 2 == 0) 0 else 1);
         expect.array(roundTrip(data, dynOpts), Nat8.toText, Nat8.equal).equal(data);
+      },
+    );
+  },
+);
+
+// ── Suite: CodeTables equivalence ─────────────────────────────────────────
+//
+// CodeTables replaces the inline length if-else cascade and the distance
+// while-loop on the encoder hot path. Its (code, extra-bits, extra-value)
+// output must be byte-identical to the previous logic for every legal length
+// (3..258) and distance (1..32768), otherwise compressed output would change.
+
+// Reference length encoding (mirrors the previous inline cascade in Block.flush).
+func refLength(len : Nat) : (Nat, Nat, Nat) {
+  if (len <= 10) { (257 + (len - 3), 0, 0) } else if (len <= 18) {
+    (265 + (len - 11) / 2, 1, (len - 11) % 2);
+  } else if (len <= 34) {
+    (269 + (len - 19) / 4, 2, (len - 19) % 4);
+  } else if (len <= 66) {
+    (273 + (len - 35) / 8, 3, (len - 35) % 8);
+  } else if (len <= 130) {
+    (277 + (len - 67) / 16, 4, (len - 67) % 16);
+  } else if (len < 258) {
+    (281 + (len - 131) / 32, 5, (len - 131) % 32);
+  } else { (285, 0, 0) };
+};
+
+// Reference distance encoding (mirrors the previous inline while-loop).
+func refDistance(dist : Nat) : (Nat, Nat, Nat) {
+  if (dist <= 4) { (dist - 1, 0, 0) } else {
+    var b = 1;
+    var base = 4;
+    while (base * 2 < dist) { b += 1; base *= 2 };
+    let half = base / 2;
+    let code = 2 * b + 2 + (if (dist < base + half + 1) 0 else 1);
+    (code, b, (dist - base - 1) % half);
+  };
+};
+
+suite(
+  "CodeTables equivalence",
+  func() {
+
+    let t = CodeTables.CodeTables();
+
+    test(
+      "length codes 3..258 match reference + Symbol.lenCode",
+      func() {
+        var len = 3;
+        while (len <= 258) {
+          let (rCode, rBits, rVal) = refLength(len);
+          expect.nat(t.lengthCode[len - 3]).equal(rCode);
+          expect.nat(t.lengthExtraBits[len - 3]).equal(rBits);
+          expect.nat(t.lengthExtraVal[len - 3]).equal(rVal);
+          expect.nat(t.lengthCode[len - 3]).equal(Symbol.lenCode(len));
+          len += 1;
+        };
+      },
+    );
+
+    test(
+      "distance codes 1..32768 match reference + Symbol.distCode",
+      func() {
+        var dist = 1;
+        while (dist <= 32_768) {
+          let (rCode, rBits, rVal) = refDistance(dist);
+          let code = t.distCodeOf(dist);
+          expect.nat(code).equal(rCode);
+          expect.nat(code).equal(Symbol.distCode(dist));
+          expect.nat(t.distExtraBits[code]).equal(rBits);
+          expect.nat(dist - t.distBase[code]).equal(rVal);
+          dist += 1;
+        };
       },
     );
   },
