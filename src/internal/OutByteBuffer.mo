@@ -11,7 +11,6 @@
 /// intentional and matches zlib inflate behaviour.
 
 import Array "mo:core/Array";
-import Int "mo:core/Int";
 import Prim "mo:⛔";
 import Runtime "mo:core/Runtime";
 
@@ -75,13 +74,28 @@ module {
         );
       };
       ensureRoom(length);
-      // len ≥ distance is proved by the guard above;
-      let start : Nat = len - distance;
-      var i = 0;
-      while (i < length) {
-        buf[len] := buf[start + i];
-        len += 1;
-        i += 1;
+      if (distance == 1) {
+        // RLE fast-fill: repeat the last byte without re-reading per iteration.
+        let b = buf[len - 1];
+        var i = 0;
+        while (i < length) {
+          buf[len] := b;
+          len += 1;
+          i += 1;
+        };
+      } else {
+        // Two-cursor copy. Reading follows writing so overlap/RLE semantics
+        // are preserved; avoids recomputing `start + i` each iteration.
+        var s : Nat = len - distance;
+        var d : Nat = len;
+        var i = 0;
+        while (i < length) {
+          buf[d] := buf[s];
+          s += 1;
+          d += 1;
+          i += 1;
+        };
+        len := d;
       };
     };
 
@@ -89,6 +103,20 @@ module {
 
     /// Number of bytes currently in the buffer.
     public func size() : Nat { len };
+
+    /// Backing-store capacity (allocated slots).
+    public func capacity() : Nat { cap };
+
+    /// Direct access to the backing store for hot-path callers that hoist
+    /// writes into Wasm locals. The reference is only valid until the next
+    /// growth — re-fetch via `store()` after any operation that may grow the
+    /// buffer (`add`, `addBytes`, `copyMatch`).
+    public func store() : [var Nat8] { buf };
+
+    /// Set the logical length directly. Used by hot-path callers that have
+    /// written bytes straight into `store()` and need to sync the length back.
+    /// Caller must ensure `n <= capacity()`.
+    public func setLen(n : Nat) { len := n };
 
     /// Copy all bytes into a fresh immutable array. O(n).
     public func toArray() : [Nat8] {

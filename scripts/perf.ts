@@ -184,6 +184,12 @@ const REGISTRY: Record<string, PatchTarget[]> = {
   ],
   compress: [
     {
+      // Top-level gzip encoder — one encode() + one finish() per run.
+      // These are the tags summed by computeTopLevel() for the high-level summary.
+      file: "src/Gzip/Encoder.mo",
+      funcs: ["encode", "finish"],
+    },
+    {
       // LZSS encoder — the byte-by-byte hot loop. `encode` is a thin for-loop
       // wrapper; omitted to avoid one mark pair per 10 KiB batch call.
       file: "src/LZSS/Encoder/lib.mo",
@@ -223,6 +229,19 @@ const REGISTRY: Record<string, PatchTarget[]> = {
 };
 
 /**
+ * Top-level function tags (per component) whose inclusive intervals are summed
+ * to produce a high-level work + footprint summary printed at the end of a run.
+ *
+ * Tags follow the `moduleLabel:func` convention used by `fileToLabel`:
+ *   src/Gzip/Encoder.mo → "gzip_encoder"
+ *   src/Gzip/Decoder.mo → "gzip_decoder"
+ */
+const TOP_LEVEL: Partial<Record<string, string[]>> = {
+  compress: ["gzip_encoder:encode", "gzip_encoder:finish"],
+  decompress: ["gzip_decoder:finish"],
+};
+
+/**
  * Workload size in bytes per component. Low-level primitive components use a
  * tiny payload because their methods fire many times per byte; high-level
  * components stay at 1 MiB to keep the run representative.
@@ -237,7 +256,7 @@ const PAYLOAD_BYTES: Record<string, number> = {
   utils: 10 * 1024, // 10 KiB — fine-grained primitive
   bitreader: 10 * 1024, // 10 KiB — fine-grained primitive
   crc32: 10 * 1024, // 10 KiB — fine-grained primitive
-  compress: 10 * 1024,
+  compress: 100 * 1024,
   decompress: 100 * 1024,
 };
 
@@ -1042,6 +1061,27 @@ type IntervalStats = {
   exclusive: { instrs: IntervalStat; mem: IntervalStat; heap: IntervalStat };
 };
 
+type TopLevelTagSummary = {
+  calls: number;
+  total_instrs: number;
+  total_mem: number;
+  total_heap: number;
+};
+
+type TopLevelSummary = {
+  /** Sum of inclusive instrs across all top-level tags — total "work" for this run. */
+  work_instrs: number;
+  /** Sum of inclusive mem deltas across all top-level tags. */
+  work_mem: number;
+  /** Sum of inclusive heap deltas across all top-level tags. */
+  work_heap: number;
+  /** Absolute rts_memory_size at the last top-level :end mark — post-run footprint. */
+  footprint_mem: number;
+  /** Absolute rts_heap_size at the last top-level :end mark — post-run footprint. */
+  footprint_heap: number;
+  per_tag: Record<string, TopLevelTagSummary>;
+};
+
 type Report = {
   component: string;
   timestamp: string;
@@ -1050,6 +1090,7 @@ type Report = {
   unhandled_returns: number;
   timeline: TimelineEntry[];
   intervals: Record<string, IntervalStats>;
+  top_level: TopLevelSummary | null;
 };
 
 /** Sample up to `points` evenly-spaced `:start` marks by index (always includes first and last). */
@@ -1196,6 +1237,75 @@ function computeIntervals(marks: Mark[]): {
   }
 
   return { intervals: result, unpaired_starts, unpaired_by_func };
+}
+
+/**
+ * Compute a high-level summary for the top-level tags in TOP_LEVEL[component].
+ *
+ * - work_instrs/mem/heap: sum of (avg × calls) over all top-level tags.
+ *   For the single-message inline path calls==1, so avg==total.
+ * - footprint_mem/heap: absolute rts_memory_size / rts_heap_size at the LAST
+ *   top-level :end mark — a stable post-run snapshot rather than a delta.
+ *
+ * Returns null when the component has no TOP_LEVEL entry or any required tag
+ * produced no completed interval (e.g. message-boundary discard).
+ */
+function computeTopLevel(
+  marks: Mark[],
+  intervals: Record<string, IntervalStats>,
+  comp: string,
+): TopLevelSummary | null {
+  const tags = TOP_LEVEL[comp];
+  if (!tags || tags.length === 0) return null;
+
+  let work_instrs = 0;
+  let work_mem = 0;
+  let work_heap = 0;
+  const per_tag: Record<string, TopLevelTagSummary> = {};
+
+  for (const tag of tags) {
+    const stats = intervals[tag];
+    if (!stats || stats.calls === 0) {
+      console.warn(
+        `  ⚠ top_level: no completed interval for "${tag}" — message-boundary discard? Skipping summary.`,
+      );
+      return null;
+    }
+    const instrs = stats.inclusive.instrs?.avg ?? 0;
+    const mem = stats.inclusive.mem?.avg ?? 0;
+    const heap = stats.inclusive.heap?.avg ?? 0;
+    const total_instrs = instrs * stats.calls;
+    const total_mem = mem * stats.calls;
+    const total_heap = heap * stats.calls;
+    work_instrs += total_instrs;
+    work_mem += total_mem;
+    work_heap += total_heap;
+    per_tag[tag] = { calls: stats.calls, total_instrs, total_mem, total_heap };
+  }
+
+  // Absolute mem/heap at the last top-level :end mark.
+  let footprint_mem = 0;
+  let footprint_heap = 0;
+  for (let i = marks.length - 1; i >= 0; i--) {
+    const m = marks[i];
+    if (m.tag.endsWith(":end")) {
+      const func = m.tag.slice(0, m.tag.lastIndexOf(":"));
+      if (tags.includes(func)) {
+        footprint_mem = m.mem;
+        footprint_heap = m.heap;
+        break;
+      }
+    }
+  }
+
+  return {
+    work_instrs,
+    work_mem,
+    work_heap,
+    footprint_mem,
+    footprint_heap,
+    per_tag,
+  };
 }
 
 /** Write one compact JSON object per line (JSON Lines format). */
@@ -1369,6 +1479,40 @@ async function main() {
       );
     }
 
+    const topLevel = computeTopLevel(marks, intervals, component);
+    if (topLevel) {
+      const HR2 = "─".repeat(72);
+      console.log(`\n${HR2}`);
+      console.log(` Top-level summary — component: ${component}`);
+      console.log(HR2);
+      console.log(` ${"metric".padEnd(28)} ${"value".padStart(18)}`);
+      console.log(HR2);
+      console.log(
+        ` ${"work_instrs".padEnd(28)} ${topLevel.work_instrs.toLocaleString("en-US").padStart(18)}`,
+      );
+      console.log(
+        ` ${"work_mem (KiB)".padEnd(28)} ${(topLevel.work_mem / 1024).toFixed(0).padStart(18)}`,
+      );
+      console.log(
+        ` ${"work_heap (KiB)".padEnd(28)} ${(topLevel.work_heap / 1024).toFixed(0).padStart(18)}`,
+      );
+      console.log(
+        ` ${"footprint_mem (KiB)".padEnd(28)} ${(topLevel.footprint_mem / 1024).toFixed(0).padStart(18)}`,
+      );
+      console.log(
+        ` ${"footprint_heap (KiB)".padEnd(28)} ${(topLevel.footprint_heap / 1024).toFixed(0).padStart(18)}`,
+      );
+      if (Object.keys(topLevel.per_tag).length > 1) {
+        console.log(HR2);
+        for (const [tag, s] of Object.entries(topLevel.per_tag)) {
+          console.log(
+            ` ${tag.padEnd(28)} ${s.total_instrs.toLocaleString("en-US").padStart(18)} instrs`,
+          );
+        }
+      }
+      console.log(HR2);
+    }
+
     const report: Report = {
       component,
       timestamp,
@@ -1377,6 +1521,7 @@ async function main() {
       unhandled_returns: unhandledReturnCount,
       timeline: computeTimeline(marks),
       intervals,
+      top_level: topLevel,
     };
     writeFileSync(`${base}.json`, JSON.stringify(report, null, 2));
 

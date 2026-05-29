@@ -64,8 +64,16 @@ module {
       let remaining = reader.readBytes(reader.byteSize());
 
       // 2. Deflate-decompress the payload.
+      //    Pre-size the output buffer from the gzip ISIZE field (last 4 bytes,
+      //    LE, = uncompressed size mod 2^32). For inputs ≥ 4 GiB this under-
+      //    estimates and the buffer falls back to doubling growth.
+      let rsize = remaining.size();
+      let outCapHint : Nat = if (rsize >= 4) {
+        let isizeSlice = Array.tabulate<Nat8>(4, func(k) { remaining[rsize - 4 + k] });
+        Utils.leBytesToNat(isizeSlice);
+      } else { 0 };
       let deflate = DeflateDecoder.Decoder(remaining);
-      let decodedBytes = switch (deflate.decode()) {
+      let decodedBytes = switch (deflate.decodeWithCapacity(outCapHint)) {
         case (#err(msg)) return #err(msg);
         case (#ok(b)) b;
       };

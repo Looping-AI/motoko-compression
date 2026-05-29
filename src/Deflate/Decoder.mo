@@ -134,7 +134,15 @@ module {
 
     /// Decompress the full deflate stream and return the decoded bytes.
     public func decode() : Result<[Nat8], Text> {
-      let out = OutByteBuffer.OutByteBuffer(65536);
+      decodeWithCapacity(0);
+    };
+
+    /// Like `decode()` but pre-sizes the output buffer to `initOutCap` bytes.
+    /// Callers that know the decompressed size up front (e.g. Gzip via ISIZE)
+    /// pass it here to avoid repeated doubling growth and the associated
+    /// reallocations/copies. Pass `0` to use the default initial capacity.
+    public func decodeWithCapacity(initOutCap : Nat) : Result<[Nat8], Text> {
+      let out = OutByteBuffer.OutByteBuffer(if (initOutCap > 0) initOutCap else 65536);
       var bfinal = false;
 
       label _blocks loop {
@@ -227,6 +235,14 @@ module {
       let distRootBits64 : Nat64 = Nat64.fromNat(distRootBits);
       let distMask : Nat64 = ((1 : Nat64) << distRootBits64) - 1;
 
+      // Hoist the output backing store into locals to remove per-symbol
+      // method-call overhead on the hot path. `obuf`/`ocap` are re-fetched
+      // whenever the slow path grows the buffer; `olen` is synced back via
+      // out.setLen at every exit.
+      var obuf = out.store();
+      var olen = out.size();
+      var ocap = out.capacity();
+
       label _syms loop {
         // ── Inline litDec.decodeRaw ──────────────────────────────────────
         while (bits <= 56 and pos < srcLen) {
@@ -269,7 +285,17 @@ module {
         // ────────────────────────────────────────────────────────────────
 
         if (sym < 256) {
-          out.add(Nat8.fromNat(sym));
+          if (olen < ocap) {
+            obuf[olen] := Nat8.fromNat(sym);
+            olen += 1;
+          } else {
+            // Slow path: grow via OutByteBuffer, then re-fetch the store.
+            out.setLen(olen);
+            out.add(Nat8.fromNat(sym));
+            obuf := out.store();
+            olen := out.size();
+            ocap := out.capacity();
+          };
         } else if (sym == 256) {
           break _syms; // end-of-block
         } else {
@@ -350,11 +376,37 @@ module {
             bits -= distExtra;
           };
 
-          out.copyMatch(Nat64.toNat(distance), Nat64.toNat(length));
+          let d = Nat64.toNat(distance);
+          let l = Nat64.toNat(length);
+          if (d <= olen and olen + l <= ocap) {
+            // Fast path: copy directly into the hoisted backing store.
+            if (d == 1) {
+              // RLE fast-fill: repeat the last byte, no read inside the loop.
+              let b = obuf[olen - 1];
+              var i = 0;
+              while (i < l) { obuf[olen] := b; olen += 1; i += 1 };
+            } else {
+              // Two-cursor copy; read follows write to preserve overlap.
+              var s : Nat = olen - d;
+              var dd : Nat = olen;
+              var i = 0;
+              while (i < l) { obuf[dd] := obuf[s]; s += 1; dd += 1; i += 1 };
+              olen := dd;
+            };
+          } else {
+            // Slow path: let OutByteBuffer validate the distance and grow.
+            out.setLen(olen);
+            out.copyMatch(d, l);
+            obuf := out.store();
+            olen := out.size();
+            ocap := out.capacity();
+          };
         };
       };
 
-      // Sync locals back to the accumulator (covers all exit paths).
+      // Sync output length back to the buffer (covers all exit paths).
+      out.setLen(olen);
+      // Sync accumulator locals back to the accumulator (covers all exit paths).
       acc.restoreAcc(hold, bits, pos);
     };
 

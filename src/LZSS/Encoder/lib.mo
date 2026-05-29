@@ -166,11 +166,13 @@ module {
         cur := nextPos;
       };
 
-      if (bestLen >= MIN_MATCH) {
+      let result = if (bestLen >= MIN_MATCH) {
         (bestLen, scanStart - bestPos);
       } else {
         (0, 0);
       };
+
+      return result;
     };
 
     // Process exactly one symbol (literal or pointer) at strstart.
