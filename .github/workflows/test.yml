@@ -23,6 +23,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       # ── Motoko toolchain ─────────────────────────────────────────────────────
+      ## DFX is needed for mops async tests
+      - name: Install dfx
+        uses: dfinity/setup-dfx@main
+
       - name: Install ic-mops
         run: npm install -g ic-mops
 
