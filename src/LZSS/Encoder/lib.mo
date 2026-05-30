@@ -60,6 +60,19 @@ module {
     };
   };
 
+  // Above this match length, stop inserting hash entries for every position a
+  // match covers (zlib's `max_insert_length` = max_lazy_match). Inserting all
+  // ~258 positions of a long match dominates encode time on compressible data;
+  // skipping them above the threshold trades a tiny ratio loss for a large
+  // speedup. #best keeps full insertion (= MAX_MATCH) to preserve ratio.
+  func levelToMaxInsert(level : Common.CompressionLevel) : Nat {
+    switch level {
+      case (#fast) 4;
+      case (#balance) 16;
+      case (#best) Common.MATCH_MAX_SIZE; // 258 — always insert
+    };
+  };
+
   // Hash table size (bucket count) per level. A smaller table for a smaller
   // window cuts the per-slide head[] clear cost (slideWindow is O(HASH_SIZE)),
   // while #best keeps the full 2^15 table to minimize collisions. All values
@@ -102,6 +115,7 @@ module {
     let MAX_CHAIN : Nat = levelToMaxChain(level);
     let NICE_LENGTH : Nat = levelToNiceLength(level);
     let GOOD_LENGTH : Nat = levelToGoodLength(level);
+    let MAX_INSERT : Nat = levelToMaxInsert(level);
     // Per-level hash table sizing. Power of two, so HASH_MASK = HASH_SIZE - 1.
     let HASH_SIZE : Nat = levelToHashSize(level);
     let HASH_MASK : Nat32 = Nat32.fromNat(HASH_SIZE - 1);
@@ -205,13 +219,25 @@ module {
       var chainLen : Nat = MAX_CHAIN;
       var shortened : Bool = false;
       let scanStart = strstart;
-      // Earliest legal match position (distance must be <= WSIZE).
-      let limit : Int = (scanStart : Int) - WSIZE + 1;
+      // Earliest legal match position (distance must be <= WSIZE). Kept as a
+      // Nat so the per-step chain check is an unsigned compare: when
+      // scanStart < WSIZE every position is reachable, so the floor is 0.
+      let limit : Nat = if (scanStart + 1 > WSIZE) scanStart + 1 - WSIZE else 0;
+
+      // Loop-invariant scan bytes (zlib `scan[0]`/`scan[1]`).
+      let scan0 = window[scanStart];
+      let scan1 = window[scanStart + 1];
+      // Tail bytes of the current best match (zlib `scan_end`/`scan_end1`).
+      // A candidate must match both before any full byte scan, which rejects
+      // most candidates with two reads once bestLen is large.
+      var scanEnd = window[scanStart + bestLen];
+      var scanEnd1 = window[scanStart + bestLen - 1];
 
       label chain loop {
-        // Quick reject: the bestLen'th and 0th/1st bytes must match.
+        // Quick reject: the bestLen'th, (bestLen-1)'th and first two bytes
+        // must match before the full comparison.
         if (
-          window[cur + bestLen] == window[scanStart + bestLen] and window[cur] == window[scanStart] and window[cur + 1] == window[scanStart + 1]
+          window[cur + bestLen] == scanEnd and window[cur + bestLen - 1] == scanEnd1 and window[cur] == scan0 and window[cur + 1] == scan1
         ) {
           // Compare bytes from offset 2 onwards.
           var k : Nat = 2;
@@ -229,6 +255,10 @@ module {
               chainLen /= 4;
               shortened := true;
             };
+            // bestLen < maxLen here, so both reads stay within the valid
+            // lookahead region.
+            scanEnd := window[scanStart + bestLen];
+            scanEnd1 := window[scanStart + bestLen - 1];
           };
         };
         chainLen -= 1;
@@ -236,7 +266,7 @@ module {
         let p = prev[pmod(cur)];
         if (p == 0) break chain;
         let nextPos : Nat = Nat32.toNat(p) - 1;
-        if (nextPos : Int < limit) break chain;
+        if (nextPos < limit) break chain;
         cur := nextPos;
       };
 
@@ -262,16 +292,24 @@ module {
         if (bestLen >= MIN_MATCH) {
           sink.onPointer(bestDist, bestLen);
           // Insert hashes for positions skipped by the match (so future
-          // matches see them). Skip positions whose 3-byte window would
-          // run past the current valid lookahead.
-          let endLookahead = strstart + lookahead;
-          var k : Nat = 1;
-          while (k < bestLen) {
-            let p = strstart + k;
-            if (p + MIN_MATCH <= endLookahead) {
-              ignore insertString(p);
+          // matches see them) — but only for short matches. For long matches
+          // inserting every covered position dominates encode time; zlib skips
+          // them above `max_insert_length` (MAX_INSERT here), re-priming the
+          // rolling hash instead. Skip positions whose 3-byte window would run
+          // past the current valid lookahead.
+          if (bestLen <= MAX_INSERT) {
+            let endLookahead = strstart + lookahead;
+            var k : Nat = 1;
+            while (k < bestLen) {
+              let p = strstart + k;
+              if (p + MIN_MATCH <= endLookahead) {
+                ignore insertString(p);
+              };
+              k += 1;
             };
-            k += 1;
+          } else {
+            // Continuity is broken; the next insert must fully recompute.
+            insHValid := false;
           };
           strstart += bestLen;
           lookahead -= bestLen;
