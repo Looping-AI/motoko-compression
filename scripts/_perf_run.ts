@@ -6,7 +6,8 @@
  *   bun scripts/_perf_run.ts <component> <wasm-file-path>
  *
  * Starts a PocketIC instance, installs the perf-instrumented canister,
- * runs generate_data(1) → compress_data(), then shuts down.
+ * runs generateBytes(1) → requestCompressJob() → requestDecompressJob(),
+ * ticking PocketIC after each job submission until the job completes.
  *
  * Canister Debug.print output (including [perf] marks emitted by Perf.mark())
  * is forwarded by PocketIC through the process streams. The parent captures
@@ -33,17 +34,65 @@ const payloadBytes = payloadBytesArg
   : BigInt(1024 * 1024);
 
 // Minimal IDL — only the methods needed for the workload.
-const idlFactory = ({ IDL }: { IDL: any }) =>
-  IDL.Service({
-    generateBytes: IDL.Func([IDL.Nat], [], []),
-    compressData: IDL.Func([], [], []),
-    decompressData: IDL.Func([], [], []),
+const idlFactory = ({ IDL }: { IDL: any }) => {
+  const JobId = IDL.Nat;
+  const JobStatus = IDL.Variant({
+    done: IDL.Null,
+    compressing: IDL.Record({ total: IDL.Nat, index: IDL.Nat }),
+    decompressing: IDL.Record({ total: IDL.Nat, index: IDL.Nat }),
+    failed: IDL.Text,
   });
+  return IDL.Service({
+    generateBytes: IDL.Func([IDL.Nat], [], []),
+    requestCompressJob: IDL.Func([], [JobId], []),
+    requestDecompressJob: IDL.Func([], [JobId], []),
+    getJobStatus: IDL.Func([JobId], [IDL.Opt(JobStatus)], ["query"]),
+  });
+};
+
+type JobStatusVariant =
+  | { done: null }
+  | { compressing: { total: bigint; index: bigint } }
+  | { decompressing: { total: bigint; index: bigint } }
+  | { failed: string };
 
 interface PerfService {
   generateBytes: (n_bytes: bigint) => Promise<void>;
-  compressData: () => Promise<void>;
-  decompressData: () => Promise<void>;
+  requestCompressJob: () => Promise<bigint>;
+  requestDecompressJob: () => Promise<bigint>;
+  getJobStatus: (id: bigint) => Promise<Array<JobStatusVariant>>;
+}
+
+/**
+ * Ticks PocketIC until the given job transitions to done or failed.
+ * Logs a warning on failure rather than throwing — perf runs tolerate partial data.
+ */
+async function awaitJob(
+  pic: PocketIc,
+  actor: PerfService,
+  jobId: bigint,
+  callName: string,
+  maxTicks = 200000,
+): Promise<void> {
+  for (let i = 0; i < maxTicks; i++) {
+    await pic.tick();
+    const result = await actor.getJobStatus(jobId);
+    if (result.length === 0) {
+      console.error(`[perf-warn] ${callName}: job ${jobId} not found`);
+      return;
+    }
+    const status = result[0];
+    if ("done" in status) return;
+    if ("failed" in status) {
+      console.error(
+        `[perf-warn] ${callName}: job ${jobId} failed: ${status.failed}`,
+      );
+      return;
+    }
+  }
+  console.error(
+    `[perf-warn] ${callName}: job ${jobId} did not complete after ${maxTicks} ticks — possible canister trap`,
+  );
 }
 
 let server: PocketIcServer | undefined;
@@ -59,29 +108,11 @@ try {
 
   await actor.generateBytes(payloadBytes);
 
-  // compress_data() / decompress_data() use inter-canister self-calls.
-  // PocketIC sometimes exhausts its reply-polling window before the outer
-  // call officially settles, even though all Perf.mark() calls have fired.
-  const toleratePollingTimeout = async (
-    fn: () => Promise<void>,
-    callName: string,
-  ) => {
-    try {
-      await fn();
-    } catch (err) {
-      const isPollingTimeout =
-        err instanceof Error && err.constructor.name === "RetryableError";
-      if (!isPollingTimeout) throw err;
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[perf-warn] ${callName}: call did not complete (RetryableError — PocketIC polling window exhausted or canister hit instruction limit)`,
-      );
-      console.error(`[perf-warn] ${callName}: error detail: ${msg}`);
-    }
-  };
+  const compressId = await actor.requestCompressJob();
+  await awaitJob(pic, actor, compressId, "requestCompressJob");
 
-  await toleratePollingTimeout(() => actor.compressData(), "compressData");
-  await toleratePollingTimeout(() => actor.decompressData(), "decompressData");
+  const decompressId = await actor.requestDecompressJob();
+  await awaitJob(pic, actor, decompressId, "requestDecompressJob");
 } finally {
   await pic?.tearDown().catch(() => {});
   await server?.stop().catch(() => {});

@@ -21,6 +21,7 @@ import DeflateEncoder "../Deflate/Encoder";
 import Header "Header";
 import Utils "../internal/utils";
 import Common "../LZSS/Common";
+import Perf "../internal/Perf"; // [PERF_IMPORT]
 
 module {
 
@@ -174,7 +175,11 @@ module {
 
     /// Compress `bytes` and accumulate them in the internal buffer.
     public func encode(bytes : [Nat8]) {
-      if (bytes.size() == 0) return;
+      Perf.mark("gzip_encoder:encode:start"); // [PERF]
+      if (bytes.size() == 0) {
+        Perf.mark("gzip_encoder:encode:end"); // [PERF]
+        return;
+      };
 
       // Pre-grow the output buffer to the worst-case DEFLATE stored-block size
       // so the backing array never doubles during compression of this chunk.
@@ -188,6 +193,7 @@ module {
         Header.encode(bitbuffer, header, deflate_options.lzss);
       };
       deflate.encode(bytes);
+      Perf.mark("gzip_encoder:encode:end"); // [PERF]
     };
 
     /// Compress UTF-8 text.
@@ -212,6 +218,7 @@ module {
     /// Flush the final Deflate block, append the Gzip footer, and return
     /// the compressed data split into block-aligned chunks.
     public func finish() : EncodedResponse {
+      Perf.mark("gzip_encoder:finish:start"); // [PERF]
       // Write the Gzip header if no data was ever encoded
       if (not header_written) {
         header_written := true;
@@ -274,6 +281,7 @@ module {
         #chunked chunks;
       };
       clear();
+      Perf.mark("gzip_encoder:finish:end"); // [PERF]
       resp;
     };
   };

@@ -2,8 +2,8 @@
  * Gzip correctness test.
  *
  * Verifies that the motoko-compression gzip implementation round-trips data
- * correctly: generate_data → compress_data → decompress_data must reproduce
- * the original bytes exactly.
+ * correctly: generateBytes → requestCompressJob → requestDecompressJob must
+ * reproduce the original bytes exactly.
  *
  * Additionally asserts that the compressed output size is within ±20% of
  * node:zlib's output, catching regressions in compression ratio.
@@ -32,6 +32,30 @@ async function readAllPages(
   return Buffer.concat(chunks);
 }
 
+/**
+ * Ticks PocketIC until the given job transitions to #done.
+ * Throws if the job is not found or fails.
+ */
+async function awaitJob(
+  pic: PocketIc,
+  actor: CompressionService,
+  jobId: bigint,
+  maxTicks = 2000,
+): Promise<void> {
+  for (let i = 0; i < maxTicks; i++) {
+    await pic.tick();
+    const result = await actor.getJobStatus(jobId);
+    if (result.length === 0) throw new Error(`Job ${jobId} not found`);
+    const status = result[0];
+    if ("done" in status) return;
+    if ("failed" in status)
+      throw new Error(`Job ${jobId} failed: ${status.failed}`);
+  }
+  throw new Error(
+    `Job ${jobId} did not complete after ${maxTicks} ticks — possible canister trap`,
+  );
+}
+
 describe("Gzip Correctness", () => {
   let server: PocketIcServer;
   let pic: PocketIc;
@@ -57,16 +81,18 @@ describe("Gzip Correctness", () => {
     // 1. Generate sizeMib MiB of pseudo-random data (seeded, deterministic).
     await actor.generateBytes(sizeMib * 1024n * 1024n);
 
-    // 2. Compress — dispatch without awaiting.
-    await actor.compressData();
+    // 2. Submit compress job and tick until complete.
+    const compressId = await actor.requestCompressJob();
+    await awaitJob(pic, actor, compressId);
 
     // 3. Collect compressed bytes.
     const compressedBytes = await readAllPages((p) =>
       actor.getCompressedData(p),
     );
 
-    // 4. Decompress — dispatch without awaiting.
-    await actor.decompressData();
+    // 4. Submit decompress job and tick until complete.
+    const decompressId = await actor.requestDecompressJob();
+    await awaitJob(pic, actor, decompressId);
 
     // 5. Collect decompressed and original bytes.
     const [decompressedBytes, originalBytes] = await Promise.all([

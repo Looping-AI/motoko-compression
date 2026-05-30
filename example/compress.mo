@@ -227,6 +227,48 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     pageOf(bytes, page);
   };
 
+  // ── Direct (single-message) compress / decompress ────────────────────────
+
+  /// Compress rawData in a single message (no timer). Best for small payloads
+  /// that fit within the per-message instruction limit (~40 B instructions).
+  public func compress() : async () {
+    let bytes = switch (rawData) { case (?d) d; case null [] };
+    let cs = splitChunks(bytes, ENCODE_CHUNK_SIZE);
+    List.clear(compressBuf);
+    for (chunk in cs.vals()) {
+      gzipEncoder.clear();
+      gzipEncoder.encode(chunk);
+      switch (gzipEncoder.finish()) {
+        case (#single b) List.add(compressBuf, b);
+        case (#chunked _) Runtime.trap("compress: chunk exceeded outputChunkSize");
+      };
+    };
+    let streams = List.toArray(compressBuf);
+    compressed := ?(if (streams.size() == 1) #single(streams[0]) else #chunked(streams));
+  };
+
+  /// Decompress compressed data in a single message (no timer). Best for small payloads.
+  public func decompress() : async () {
+    let ?comp = compressed else Runtime.trap("decompress: no compressed data");
+    let cs = switch (comp) {
+      case (#single d) [d];
+      case (#chunked chunks) chunks;
+    };
+    gzipDecoder.clear();
+    List.clear(decompressBuf);
+    for (chunk in cs.vals()) {
+      switch (gzipDecoder.decode(chunk)) {
+        case (#err msg) Runtime.trap("decompress decode: " # msg);
+        case (#ok _) {};
+      };
+      switch (gzipDecoder.finish()) {
+        case (#err msg) Runtime.trap("decompress finish: " # msg);
+        case (#ok result) List.addAll(decompressBuf, result.bytes.vals());
+      };
+    };
+    decompressed := ?List.toArray(decompressBuf);
+  };
+
   // ── Job submission ────────────────────────────────────────────────────────
 
   /// Request a compression job. Returns the JobId immediately.

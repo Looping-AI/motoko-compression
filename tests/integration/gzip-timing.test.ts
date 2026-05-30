@@ -7,9 +7,12 @@
  * then averaged to capture the true per-message round-trip overhead for this
  * machine/environment — replacing the former hard-coded 1-second constant.
  *
+ * Uses the direct compress() / decompress() single-message methods so that
+ * timer scheduling and polling overhead do not inflate the measured ratio.
+ *
  * Assertions:
- *   - canister compressData()   must be within MAX_RATIO of node:zlib (after discount)
- *   - canister decompressData() must be within MAX_RATIO of node:zlib (after discount)
+ *   - canister compress() must be within MAX_RATIO of node:zlib (after discount)
+ *   - canister decompress() must be within MAX_RATIO of node:zlib (after discount)
  */
 import { describe, it, beforeAll, afterAll, expect } from "bun:test";
 import { PocketIc, PocketIcServer } from "@dfinity/pic";
@@ -77,13 +80,13 @@ describe("Gzip Timing", () => {
     await server.stop();
   });
 
-  it("canister compressData() is within MAX_RATIO of node:zlib gzip (after ping discount)", async () => {
+  it("canister compress() is within MAX_RATIO of node:zlib gzip (after ping discount)", async () => {
     // Collect original bytes for the zlib comparison.
     const originalBytes = await readAllPages((p) => actor.getGeneratedData(p));
 
     // ── canister compress ─────────────────────────────────────────────────
     const actorStart = performance.now();
-    await actor.compressData();
+    await actor.compress();
     const actorMs = performance.now() - actorStart;
 
     // ── node:zlib compress ────────────────────────────────────────────────
@@ -106,7 +109,7 @@ describe("Gzip Timing", () => {
     expect(ratio).toBeLessThanOrEqual(MAX_RATIO);
   }, 120_000);
 
-  it("canister decompressData() is within MAX_RATIO of node:zlib gunzip (after ping discount)", async () => {
+  it("canister decompress() is within MAX_RATIO of node:zlib gunzip (after ping discount)", async () => {
     // Compressed bytes were produced by the previous test.
     const compressedBytes = await readAllPages((p) =>
       actor.getCompressedData(p),
@@ -114,7 +117,7 @@ describe("Gzip Timing", () => {
 
     // ── canister decompress ───────────────────────────────────────────────
     const actorStart = performance.now();
-    await actor.decompressData();
+    await actor.decompress();
     const actorMs = performance.now() - actorStart;
 
     // ── node:zlib decompress ──────────────────────────────────────────────
