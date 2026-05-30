@@ -68,7 +68,7 @@ module {
     var _deflate_opts : DeflateOptions = {
       lzss = #balance;
       deflate_block_size = DEFAULT_DEFLATE_BLOCK_SIZE;
-      force_huffman_kind = null;
+      force_huffman_kind = ?#fixed;
     };
 
     var _output_chunk_size : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
