@@ -211,8 +211,11 @@ module {
     // Find the longest match for window[strstart..] starting from window
     // position `startMatch`. Walks the prev[] chain up to MAX_CHAIN steps.
     // `maxLen` bounds the match length (= min(lookahead, MAX_MATCH)).
-    // Returns (bestLen, bestDist); bestLen = 0 means no match >= MIN_MATCH.
-    func longestMatch(startMatch : Nat, maxLen : Nat) : (Nat, Nat) {
+    // Returns { len; dist }; len = 0 means no match >= MIN_MATCH.
+    func longestMatch(startMatch : Nat, maxLen : Nat) : {
+      len : Nat;
+      dist : Nat;
+    } {
       var bestLen : Nat = MIN_MATCH - 1; // require strictly greater
       var bestPos : Nat = 0;
       var cur : Nat = startMatch;
@@ -271,9 +274,9 @@ module {
       };
 
       if (bestLen >= MIN_MATCH) {
-        (bestLen, scanStart - bestPos);
+        { len = bestLen; dist = scanStart - bestPos };
       } else {
-        (0, 0);
+        { len = 0; dist = 0 };
       };
     };
 
@@ -288,19 +291,19 @@ module {
       if (priorHead != 0) {
         let curMatch : Nat = Nat32.toNat(priorHead) - 1;
         let maxLen = if (tailMode and lookahead < MAX_MATCH) lookahead else MAX_MATCH;
-        let (bestLen, bestDist) = longestMatch(curMatch, maxLen);
-        if (bestLen >= MIN_MATCH) {
-          sink.onPointer(bestDist, bestLen);
+        let m = longestMatch(curMatch, maxLen);
+        if (m.len >= MIN_MATCH) {
+          sink.onPointer(m.dist, m.len);
           // Insert hashes for positions skipped by the match (so future
           // matches see them) — but only for short matches. For long matches
           // inserting every covered position dominates encode time; zlib skips
           // them above `max_insert_length` (MAX_INSERT here), re-priming the
           // rolling hash instead. Skip positions whose 3-byte window would run
           // past the current valid lookahead.
-          if (bestLen <= MAX_INSERT) {
+          if (m.len <= MAX_INSERT) {
             let endLookahead = strstart + lookahead;
             var k : Nat = 1;
-            while (k < bestLen) {
+            while (k < m.len) {
               let p = strstart + k;
               if (p + MIN_MATCH <= endLookahead) {
                 ignore insertString(p);
@@ -311,8 +314,8 @@ module {
             // Continuity is broken; the next insert must fully recompute.
             insHValid := false;
           };
-          strstart += bestLen;
-          lookahead -= bestLen;
+          strstart += m.len;
+          lookahead -= m.len;
           emitted := true;
         };
       };
