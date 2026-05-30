@@ -130,6 +130,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // ── Timer callbacks ───────────────────────────────────────────────────────
 
   func tickCompress() : async () {
+    var trapped = true;
     try {
       let ?cs = activeChunks else {
         markJobFailed("compress: no input chunks");
@@ -150,14 +151,18 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         compressed := ?(if (streams.size() == 1) #single(streams[0]) else #chunked(streams));
         markJobDone();
       };
+      trapped := false;
     } catch (e) {
       markJobFailed("compress trap: " # Error.message(e));
+      trapped := false;
     } finally {
-      markJobFailed("compress: unhandled trap");
+      // finally is always called, even after a trap (unlike catch).
+      if (trapped) markJobFailed("compress: unhandled trap");
     };
   };
 
   func tickDecompress() : async () {
+    var trapped = true;
     try {
       let ?cs = activeChunks else {
         markJobFailed("decompress: no input chunks");
@@ -179,10 +184,13 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         List.clear(decompressBuf);
         markJobDone();
       };
+      trapped := false;
     } catch (e) {
       markJobFailed("decompress trap: " # Error.message(e));
+      trapped := false;
     } finally {
-      markJobFailed("decompress: unhandled trap");
+      // finally is always called, even after a trap (unlike catch).
+      if (trapped) markJobFailed("decompress: unhandled trap");
     };
   };
 
