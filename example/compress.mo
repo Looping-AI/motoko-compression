@@ -14,6 +14,7 @@
 ///   5. Poll `getJobStatus(id)` until `#done`.
 ///   6. Compare `getGeneratedData()` pages with `getDecompressedData()` pages.
 import Array "mo:core/Array";
+import Error "mo:core/Error";
 import List "mo:core/List";
 import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
@@ -129,47 +130,59 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // ── Timer callbacks ───────────────────────────────────────────────────────
 
   func tickCompress() : async () {
-    let ?cs = activeChunks else {
-      markJobFailed("compress: no input chunks");
-      return;
-    };
-    if (chunkIdx < chunkTotal) {
-      gzipEncoder.clear();
-      gzipEncoder.encode(cs[chunkIdx]);
-      switch (gzipEncoder.finish()) {
-        case (#single bytes) List.add(compressBuf, bytes);
-        case (#chunked _) Runtime.trap("tickCompress: chunk exceeded outputChunkSize");
+    try {
+      let ?cs = activeChunks else {
+        markJobFailed("compress: no input chunks");
+        return;
       };
-      chunkIdx += 1;
-      timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
-    } else {
-      let streams = List.toArray(compressBuf);
-      List.clear(compressBuf);
-      compressed := ?(if (streams.size() == 1) #single(streams[0]) else #chunked(streams));
-      markJobDone();
+      if (chunkIdx < chunkTotal) {
+        gzipEncoder.clear();
+        gzipEncoder.encode(cs[chunkIdx]);
+        switch (gzipEncoder.finish()) {
+          case (#single bytes) List.add(compressBuf, bytes);
+          case (#chunked _) Runtime.trap("tickCompress: chunk exceeded outputChunkSize");
+        };
+        chunkIdx += 1;
+        timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
+      } else {
+        let streams = List.toArray(compressBuf);
+        List.clear(compressBuf);
+        compressed := ?(if (streams.size() == 1) #single(streams[0]) else #chunked(streams));
+        markJobDone();
+      };
+    } catch (e) {
+      markJobFailed("compress trap: " # Error.message(e));
+    } finally {
+      markJobFailed("compress: unhandled trap");
     };
   };
 
   func tickDecompress() : async () {
-    let ?cs = activeChunks else {
-      markJobFailed("decompress: no input chunks");
-      return;
-    };
-    if (chunkIdx < chunkTotal) {
-      switch (gzipDecoder.decode(cs[chunkIdx])) {
-        case (#err msg) { markJobFailed("decompress decode: " # msg); return };
-        case (#ok _) {};
+    try {
+      let ?cs = activeChunks else {
+        markJobFailed("decompress: no input chunks");
+        return;
       };
-      switch (gzipDecoder.finish()) {
-        case (#err msg) { markJobFailed("decompress finish: " # msg); return };
-        case (#ok result) List.addAll(decompressBuf, result.bytes.vals());
+      if (chunkIdx < chunkTotal) {
+        switch (gzipDecoder.decode(cs[chunkIdx])) {
+          case (#err msg) { markJobFailed("decompress decode: " # msg); return };
+          case (#ok _) {};
+        };
+        switch (gzipDecoder.finish()) {
+          case (#err msg) { markJobFailed("decompress finish: " # msg); return };
+          case (#ok result) List.addAll(decompressBuf, result.bytes.vals());
+        };
+        chunkIdx += 1;
+        timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
+      } else {
+        decompressed := ?List.toArray(decompressBuf);
+        List.clear(decompressBuf);
+        markJobDone();
       };
-      chunkIdx += 1;
-      timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
-    } else {
-      decompressed := ?List.toArray(decompressBuf);
-      List.clear(decompressBuf);
-      markJobDone();
+    } catch (e) {
+      markJobFailed("decompress trap: " # Error.message(e));
+    } finally {
+      markJobFailed("decompress: unhandled trap");
     };
   };
 

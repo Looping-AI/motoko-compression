@@ -16,7 +16,6 @@ import CRC32 "../internal/CRC32";
 import DeflateDecoder "../Deflate/Decoder";
 import Header "Header";
 import Utils "../internal/utils";
-import Perf "../internal/Perf"; // [PERF_IMPORT]
 
 module {
 
@@ -46,9 +45,7 @@ module {
     ///
     /// Returns `#ok` always; errors are only surfaced by `finish()`.
     public func decode(bytes : [Nat8]) : Result<(), Text> {
-      Perf.mark("gzip_decoder:decode:start"); // [PERF]
       reader.addBytes(bytes);
-      Perf.mark("gzip_decoder:decode:end"); // [PERF]
       #ok();
     };
 
@@ -56,13 +53,9 @@ module {
     ///
     /// Calls `clear()` on success before returning.
     public func finish() : Result<DecodedResponse, Text> {
-      Perf.mark("gzip_decoder:finish:start"); // [PERF]
       // 1. Decode the Gzip header (uses BitReader for existing Header.decode API).
       let header = switch (Header.decode(reader)) {
-        case (#err(msg)) {
-          Perf.mark("gzip_decoder:finish:end"); // [PERF]
-          return #err(msg);
-        };
+        case (#err(msg)) return #err(msg);
         case (#ok(h)) h;
       };
 
@@ -81,17 +74,13 @@ module {
       } else { 0 };
       let deflate = DeflateDecoder.Decoder(remaining);
       let decodedBytes = switch (deflate.decodeWithCapacity(outCapHint)) {
-        case (#err(msg)) {
-          Perf.mark("gzip_decoder:finish:end"); // [PERF]
-          return #err(msg);
-        };
+        case (#err(msg)) return #err(msg);
         case (#ok(b)) b;
       };
 
       // 3. Locate the Gzip footer (8 bytes) immediately after the deflate data.
       let c = deflate.bytesConsumed();
       if (c + 8 > remaining.size()) {
-        Perf.mark("gzip_decoder:finish:end"); // [PERF]
         return #err("Gzip: stream truncated — no footer");
       };
 
@@ -100,7 +89,6 @@ module {
       let stored_crc32 = Nat32.fromNat(Utils.leBytesToNat(crcSlice));
       let actual_crc32 = CRC32.checksum(decodedBytes);
       if (stored_crc32 != actual_crc32) {
-        Perf.mark("gzip_decoder:finish:end"); // [PERF]
         return #err(
           "Gzip: CRC32 mismatch — stored "
           # debug_show stored_crc32
@@ -114,7 +102,6 @@ module {
       let stored_isize = Utils.leBytesToNat(isizeSlice);
       let actual_isize = decodedBytes.size() % 4294967296;
       if (stored_isize != actual_isize) {
-        Perf.mark("gzip_decoder:finish:end"); // [PERF]
         return #err(
           "Gzip: ISIZE mismatch — stored "
           # debug_show stored_isize
@@ -129,7 +116,6 @@ module {
       };
 
       clear();
-      Perf.mark("gzip_decoder:finish:end"); // [PERF]
       #ok(result);
     };
 
