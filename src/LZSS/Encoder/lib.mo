@@ -108,23 +108,49 @@ module {
 
     // ── Internal helpers ─────────────────────────────────────────────────
 
-    // 3-byte hash at window position `p`. Requires p+2 < WPHYS and the
-    // three bytes to be valid (i.e. p+2 < strstart + lookahead).
-    func hashAt(p : Nat) : Nat {
-      let b0 = Nat8.toNat32(window[p]);
-      let b1 = Nat8.toNat32(window[p + 1]);
-      let b2 = Nat8.toNat32(window[p + 2]);
-      let h = (((b0 << HASH_SHIFT) ^ b1) << HASH_SHIFT) ^ b2;
-      Nat32.toNat(h & HASH_MASK);
-    };
+    // Rolling 3-byte hash state.
+    //
+    // `insH` holds the masked 3-byte hash of the most recently inserted
+    // position (`lastHashedPos`) — identical to a full recompute. When
+    // insertions are contiguous (the steady-state case: every position is
+    // inserted exactly once in increasing order) the next hash is obtained
+    // with a single shift/xor folding in just the new trailing byte, instead
+    // of three byte reads plus two shifts. This is valid because
+    // HASH_SHIFT * MIN_MATCH == 15 == hash bit width, so a byte's
+    // contribution is masked away exactly MIN_MATCH steps later — making the
+    // shift/xor recurrence a true rolling hash over the last 3 bytes.
+    //
+    // `insHValid` is cleared whenever continuity breaks (first insert, window
+    // slide, or a skipped tail insert); the `p == lastHashedPos + 1` guard
+    // then forces a full recompute that re-primes the rolling state. The
+    // produced hash is byte-for-byte identical to the non-incremental
+    // computation, so the emitted symbol stream is unchanged.
+    var insH : Nat32 = 0;
+    var lastHashedPos : Nat = 0;
+    var insHValid : Bool = false;
 
     // Insert the 3-byte string at position `p` into the hash chain.
-    // Returns the previous head value (0 = no prior, else prior pos + 1).
+    // Requires window[p .. p+2] to be valid. Returns the previous head value
+    // (0 = no prior, else prior pos + 1).
     func insertString(p : Nat) : Nat32 {
-      let h = hashAt(p);
-      let priorHead = head[h];
+      let hUnmasked : Nat32 = if (insHValid and p == lastHashedPos + 1) {
+        // Rolling update: fold in only the new trailing byte.
+        (insH << HASH_SHIFT) ^ Nat8.toNat32(window[p + 2]);
+      } else {
+        // Full recompute (also re-primes the rolling state).
+        let b0 = Nat8.toNat32(window[p]);
+        let b1 = Nat8.toNat32(window[p + 1]);
+        let b2 = Nat8.toNat32(window[p + 2]);
+        (((b0 << HASH_SHIFT) ^ b1) << HASH_SHIFT) ^ b2;
+      };
+      let h = hUnmasked & HASH_MASK;
+      insH := h;
+      lastHashedPos := p;
+      insHValid := true;
+      let hNat = Nat32.toNat(h);
+      let priorHead = head[hNat];
       prev[pmod(p)] := priorHead;
-      head[h] := Nat32.fromNat(p + 1);
+      head[hNat] := Nat32.fromNat(p + 1);
       priorHead;
     };
 
@@ -134,6 +160,8 @@ module {
       var i = 0;
       while (i < WSIZE) { window[i] := window[WSIZE + i]; i += 1 };
       strstart -= WSIZE;
+      // Positions shifted; the rolling hash must re-prime on the next insert.
+      insHValid := false;
       let cut = Nat32.fromNat(WSIZE);
       i := 0;
       while (i < HASH_SIZE) {
@@ -317,6 +345,7 @@ module {
       while (i < WSIZE) { prev[i] := 0; i += 1 };
       strstart := 0;
       lookahead := 0;
+      insHValid := false;
     };
 
   }; // end class Encoder
