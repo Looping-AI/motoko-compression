@@ -86,6 +86,12 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     Array.tabulate<Nat8>(hi - lo, func(i) { data[lo + i] });
   };
 
+  // ── Latency baseline ──────────────────────────────────────────────────────
+
+  /// No-op update call — callers use it to measure round-trip overhead so they
+  /// can subtract transport latency from compression timing measurements.
+  public func ping() : async Text { "pong" };
+
   // ── Data generation ───────────────────────────────────────────────────────
 
   /// Fill the canister with `n_bytes` of structured test data split into thirds:

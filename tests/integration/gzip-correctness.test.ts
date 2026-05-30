@@ -88,6 +88,9 @@ describe("Gzip Correctness", () => {
     // Compression ratio must be within ±10% of node:zlib output.
     const zlibBytes = await gzip(originalBytes);
     const ratio = compressedBytes.length / zlibBytes.length;
+    console.log(
+      `sizes  |  original: ${(originalBytes.length / 1024).toFixed(1)} KiB  motoko: ${(compressedBytes.length / 1024).toFixed(1)} KiB  zlib: ${(zlibBytes.length / 1024).toFixed(1)} KiB  ratio: ${ratio.toFixed(2)}x`,
+    );
     expect(ratio).toBeGreaterThan(0.9);
     expect(ratio).toBeLessThan(1.1);
   }, 10_000);
@@ -103,6 +106,9 @@ describe("Gzip Correctness", () => {
     // Compression ratio must still be within ±10% of node:zlib output.
     const zlibBytes = await gzip(originalBytes);
     const ratio = compressedBytes.length / zlibBytes.length;
+    console.log(
+      `sizes  |  original: ${(originalBytes.length / 1024).toFixed(1)} KiB  motoko: ${(compressedBytes.length / 1024).toFixed(1)} KiB  zlib: ${(zlibBytes.length / 1024).toFixed(1)} KiB  ratio: ${ratio.toFixed(2)}x`,
+    );
     expect(ratio).toBeGreaterThan(0.9);
     expect(ratio).toBeLessThan(1.1);
   }, 10_000);
@@ -118,6 +124,9 @@ describe("Gzip Correctness", () => {
     // Compression ratio must be within ±10% of node:zlib output.
     const zlibBytes = await gzip(originalBytes);
     const ratio = compressedBytes.length / zlibBytes.length;
+    console.log(
+      `sizes  |  original: ${(originalBytes.length / 1024).toFixed(1)} KiB  motoko: ${(compressedBytes.length / 1024).toFixed(1)} KiB  zlib: ${(zlibBytes.length / 1024).toFixed(1)} KiB  ratio: ${ratio.toFixed(2)}x`,
+    );
     expect(ratio).toBeGreaterThan(0.9);
     expect(ratio).toBeLessThan(1.1);
   }, 120_000);

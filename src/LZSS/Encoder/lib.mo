@@ -1,7 +1,6 @@
 /// LZSS encoder — zlib-style hash-chain implementation.
 ///
-/// Replaces the prior CircularBuffer + 65 536-bucket prefix-table design with:
-///   - A single flat byte window of size 2 * window_size (history + lookahead).
+/// Uses a single flat byte window of size 2 * window_size (history + lookahead):
 ///   - `head[hash]` : Nat32  — most recent window position for each 3-byte hash
 ///                              (stored as position + 1, 0 = none).
 ///   - `prev[pos & WMASK]` : Nat32 — previous occurrence of the same hash
@@ -99,10 +98,6 @@ module {
   // for every level, keeping the rolling-hash recurrence exact (see
   // insertString). The bucket count / mask are per-level (see levelToHashSize).
   let HASH_SHIFT : Nat32 = 5;
-
-  // ── Module-level convenience API ───────────────────────────────────────
-
-  public func default() : Encoder { Encoder(#best) };
 
   // ── Encoder class ──────────────────────────────────────────────────────
 
