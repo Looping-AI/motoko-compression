@@ -62,10 +62,13 @@ module {
 
     var _header : Header = Header.defaultHeader();
 
+    // lzss: #balance matches zlib's default. #fast is counter-intuitively slower: a smaller
+    //   window triggers slideWindow() more often, multiplying WASM bounds checks across the window array.
+    // force_huffman_kind: null auto-selects fixed vs dynamic Huffman, gives best ratio; fixed is typically fastest.
     var _deflate_opts : DeflateOptions = {
-      lzss = #balance; // default LZSS compression level (matches zlib's default)
+      lzss = #balance;
       deflate_block_size = DEFAULT_DEFLATE_BLOCK_SIZE;
-      force_huffman_kind = ?#dynamic; // dynamic per block for fastest, choose auto-select (fixed vs dynamic) for best ratio
+      force_huffman_kind = ?#fixed;
     };
 
     var _output_chunk_size : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
