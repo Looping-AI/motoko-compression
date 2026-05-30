@@ -31,6 +31,9 @@ module {
   public type BlockInterface = {
     size : () -> Nat;
     add : (Nat8) -> ();
+    /// Bulk-feed the slice `data[off ..< off + len]`. Equivalent to calling
+    /// `add` on each byte in turn, but routes through the LZSS bulk path.
+    addBytes : ([Nat8], Nat, Nat) -> ();
     /// Emit the block payload, including its own BFINAL + BTYPE header.
     /// `is_final` indicates whether this is the last block of the stream —
     /// only then is the underlying LZSS encoder allowed to drain its
@@ -105,6 +108,11 @@ module {
     public func add(byte : Nat8) {
       input_size += 1;
       lzss.encodeByte(byte, sink);
+    };
+
+    public func addBytes(data : [Nat8], off : Nat, len : Nat) {
+      input_size += len;
+      lzss.encodeRange(data, off, len, sink);
     };
 
     /// Total payload bits for the buffered symbols under the given code

@@ -54,9 +54,18 @@ module {
 
     /// Encode a slice of bytes.
     public func encode(data : [Nat8]) {
-      for (byte in data.vals()) {
+      let n = data.size();
+      var off = 0;
+      // Feed in bulk, splitting only at Deflate block boundaries. Each chunk
+      // is bounded by the block's remaining capacity so input_size never
+      // exceeds deflate_block_size (matching the per-byte flush trigger).
+      while (off < n) {
         if (block.size() >= options.deflate_block_size) flush(false);
-        block.add(byte);
+        let room : Nat = options.deflate_block_size - block.size();
+        let avail : Nat = n - off;
+        let take = if (room < avail) room else avail;
+        block.addBytes(data, off, take);
+        off += take;
       };
     };
 

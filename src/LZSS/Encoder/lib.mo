@@ -254,11 +254,45 @@ module {
       };
     };
 
-    /// Encode `bytes` by feeding them one at a time.
-    public func encode(bytes : [Nat8], sink : MatchSink) {
-      for (byte in bytes.vals()) {
-        encodeByte(byte, sink);
+    // Bulk fill + drain over `data[off ..< off + len]`. Bytes are copied into
+    // the window in batches (up to a window slide or input exhaustion) and the
+    // match loop is drained between batches. This is byte-for-byte equivalent
+    // to feeding the same bytes through `encodeByte` one at a time — the slide
+    // points and `processOne` calls land on identical window states — but it
+    // removes the per-byte call/branch overhead from the hot path.
+    func feed(data : [Nat8], off : Nat, len : Nat, sink : MatchSink) {
+      let end = off + len;
+      var i = off;
+      while (i < end) {
+        // Slide before filling if the window is physically full. After every
+        // drain below, lookahead < MIN_LOOKAHEAD < WSIZE, so strstart > WSIZE
+        // here and the slide is safe.
+        if (strstart + lookahead == WPHYS) slideWindow();
+        let base = strstart + lookahead;
+        let room : Nat = WPHYS - base;
+        let avail : Nat = end - i;
+        let fill = if (room < avail) room else avail;
+        var j = 0;
+        while (j < fill) {
+          window[base + j] := data[i + j];
+          j += 1;
+        };
+        lookahead += fill;
+        i += fill;
+        while (lookahead >= MIN_LOOKAHEAD) {
+          processOne(sink, false);
+        };
       };
+    };
+
+    /// Encode `bytes` in bulk.
+    public func encode(bytes : [Nat8], sink : MatchSink) {
+      feed(bytes, 0, bytes.size(), sink);
+    };
+
+    /// Encode the slice `bytes[off ..< off + len]` in bulk.
+    public func encodeRange(bytes : [Nat8], off : Nat, len : Nat, sink : MatchSink) {
+      feed(bytes, off, len, sink);
     };
 
     /// Drain any bytes still in the lookahead. Must be called once at EOF.
