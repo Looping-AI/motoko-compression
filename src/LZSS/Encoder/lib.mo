@@ -60,6 +60,19 @@ module {
     };
   };
 
+  // Hash table size (bucket count) per level. A smaller table for a smaller
+  // window cuts the per-slide head[] clear cost (slideWindow is O(HASH_SIZE)),
+  // while #best keeps the full 2^15 table to minimize collisions. All values
+  // are powers of two, so HASH_MASK = HASH_SIZE - 1. Must stay <= 2^15 so the
+  // rolling hash invariant (MIN_MATCH * HASH_SHIFT = 15 >= hash bits) holds.
+  func levelToHashSize(level : Common.CompressionLevel) : Nat {
+    switch level {
+      case (#fast) 4_096; // 2^12
+      case (#balance) 16_384; // 2^14
+      case (#best) 32_768; // 2^15
+    };
+  };
+
   // ── Constants ──────────────────────────────────────────────────────────
 
   let MIN_MATCH : Nat = 3;
@@ -69,8 +82,9 @@ module {
   // (Literal because module-level lets can't combine other lets statically.)
   let MIN_LOOKAHEAD : Nat = 262;
 
-  let HASH_SIZE : Nat = 32_768; // 2^15
-  let HASH_MASK : Nat32 = 0x7FFF;
+  // HASH_SHIFT is fixed at 5 so that MIN_MATCH * HASH_SHIFT == 15 >= hash bits
+  // for every level, keeping the rolling-hash recurrence exact (see
+  // insertString). The bucket count / mask are per-level (see levelToHashSize).
   let HASH_SHIFT : Nat32 = 5;
 
   // ── Module-level convenience API ───────────────────────────────────────
@@ -88,6 +102,9 @@ module {
     let MAX_CHAIN : Nat = levelToMaxChain(level);
     let NICE_LENGTH : Nat = levelToNiceLength(level);
     let GOOD_LENGTH : Nat = levelToGoodLength(level);
+    // Per-level hash table sizing. Power of two, so HASH_MASK = HASH_SIZE - 1.
+    let HASH_SIZE : Nat = levelToHashSize(level);
+    let HASH_MASK : Nat32 = Nat32.fromNat(HASH_SIZE - 1);
     // WSIZE is always a power of 2, so `p % WSIZE` is the same as `p & (WSIZE-1)`.
     // Motoko's Nat has no bitwise ops; we use modulo.
     let WMASK32 : Nat32 = Nat32.fromNat(WSIZE - 1);
@@ -116,9 +133,9 @@ module {
     // inserted exactly once in increasing order) the next hash is obtained
     // with a single shift/xor folding in just the new trailing byte, instead
     // of three byte reads plus two shifts. This is valid because
-    // HASH_SHIFT * MIN_MATCH == 15 == hash bit width, so a byte's
-    // contribution is masked away exactly MIN_MATCH steps later — making the
-    // shift/xor recurrence a true rolling hash over the last 3 bytes.
+    // MIN_MATCH * HASH_SHIFT == 15 >= hash bits for every level, so a byte's
+    // contribution shifts past the mask exactly MIN_MATCH steps later — making
+    // the shift/xor recurrence a true rolling hash over the last 3 bytes.
     //
     // `insHValid` is cleared whenever continuity breaks (first insert, window
     // slide, or a skipped tail insert); the `p == lastHashedPos + 1` guard
