@@ -1,25 +1,42 @@
 /// Example: general-purpose Gzip compression on the Internet Computer.
 ///
 /// Demonstrates how to compress and decompress arbitrary byte data safely
-/// within the ICP instruction-limit by splitting work across multiple messages
-/// via a self-call pattern.
+/// within the ICP instruction-limit using a timer-driven job queue.
+///
+/// Each timer tick processes one chunk with a fresh instruction budget;
+/// callers submit a job and poll `getJobStatus(id)` until `#done`.
 ///
 /// Usage:
-///   1. Call `generate_data(size_mb)` to fill the canister with pseudo-random data.
-///   2. Call `compress_data()` to compress it (spreads work over several ICP messages).
-///   3. Call `decompress_data()` to decompress and retrieve the bytes.
-///   4. Compare with `get_generated_data()` to verify the round-trip.
+///   1. Call `generateBytes(size_mb)` to fill the canister with pseudo-random data.
+///   2. Call `requestCompressJob()` → receive a JobId.
+///   3. Poll `getJobStatus(id)` until `#done`.
+///   4. Call `requestDecompressJob()` → receive a JobId.
+///   5. Poll `getJobStatus(id)` until `#done`.
+///   6. Compare `getGeneratedData()` pages with `getDecompressedData()` pages.
 import Array "mo:core/Array";
 import List "mo:core/List";
 import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
 import Nat64 "mo:core/Nat64";
-import Principal "mo:core/Principal";
 import Random "mo:core/Random";
 import Runtime "mo:core/Runtime";
+import Timer "mo:core/Timer";
 import Gzip "../src/Gzip/lib";
 
 shared ({ caller = _owner }) persistent actor class Compression() = self {
+
+  // ── Types ─────────────────────────────────────────────────────────────────
+
+  public type JobId = Nat;
+
+  public type JobStatus = {
+    #compressing : { index : Nat; total : Nat };
+    #decompressing : { index : Nat; total : Nat };
+    #done;
+    #failed : Text;
+  };
+
+  type CompletedJob = { #done; #failed : Text };
 
   // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -29,67 +46,144 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   // ── Stable state ──────────────────────────────────────────────────────────
 
-  var _data : ?[Nat8] = null;
-  var _compressed : ?Gzip.EncodedResponse = null;
-  var _decompressed : ?[Nat8] = null;
+  var rawData : ?[Nat8] = null;
+  var compressed : ?Gzip.EncodedResponse = null;
+  var decompressed : ?[Nat8] = null;
+
+  // Job queue
+  var nextJobId : Nat = 0;
+  var activeJobId : ?Nat = null;
+  var jobKind : { #compress; #decompress } = #compress;
+  var chunkIdx : Nat = 0;
+  var chunkTotal : Nat = 0;
+  var completedJobs : [(Nat, CompletedJob)] = [];
 
   // ── Transient state ───────────────────────────────────────────────────────
 
-  transient let gzip_encoder = Gzip.EncoderBuilder().build();
+  transient let gzipEncoder = Gzip.EncoderBuilder().build();
 
-  /// Bytes per self-call — derived from the encoder so both stay in sync.
-  transient let ENCODE_CHUNK_SIZE : Nat = gzip_encoder.outputChunkSize();
-  transient let gzip_decoder = Gzip.Decoder();
+  transient let ENCODE_CHUNK_SIZE : Nat = gzipEncoder.outputChunkSize();
 
-  /// Compressed chunks to decompress per self-call.
-  /// At ~8.6B instructions per 6 MiB chunk, 3 chunks ≈ 25.8B — safely under the 40B limit.
-  transient let DECODE_BATCH_SIZE : Nat = 3;
+  transient let gzipDecoder = Gzip.Decoder();
 
-  /// Accumulates decompressed bytes across `_decompressBatch` self-calls.
-  /// Cleared at the start of each `decompressData()` invocation.
-  transient var _decompress_buf = List.empty<Nat8>();
+  transient let compressBuf = List.empty<[Nat8]>();
 
-  /// Accumulates per-chunk compressed streams during `_compressChunk` self-calls.
-  /// Each element is a complete, independent gzip stream for one input chunk.
-  transient var _compress_buf = List.empty<[Nat8]>();
+  transient let decompressBuf = List.empty<Nat8>();
+
+  /// Pre-split chunks for the active job (compress input or decompress input).
+  transient var activeChunks : ?[[Nat8]] = null;
+
+  transient var timerHandle : ?Timer.TimerId = null;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  /// Split `data` into fixed-size chunks of at most `size` bytes.
-  func chunks(data : [Nat8], size : Nat) : [[Nat8]] {
-    let n = data.size();
-    if (n == 0 or size == 0) return [data];
+  func splitChunks(bytes : [Nat8], size : Nat) : [[Nat8]] {
+    let n = bytes.size();
+    if (n == 0 or size == 0) return [bytes];
     let count = n / size + (if (n % size != 0) 1 else 0);
     Array.tabulate<[Nat8]>(
       count,
       func(i) {
         let lo = i * size;
         let hi = Nat.min(lo + size, n);
-        Array.tabulate<Nat8>(hi - lo, func(j) { data[lo + j] });
+        Array.tabulate<Nat8>(hi - lo, func(j) { bytes[lo + j] });
       },
     );
   };
 
-  func canisterId() : Principal { Principal.fromActor(self) };
-
-  func getData() : [Nat8] {
-    switch (_data) { case (?d) d; case null [] };
-  };
-
-  /// Return up to PAGE_SIZE bytes at index `page` (2 MiB pages, 0-indexed).
-  /// Returns [] when `page` is past the end of `data`.
-  func pageOf(data : [Nat8], page : Nat) : [Nat8] {
+  func pageOf(bytes : [Nat8], page : Nat) : [Nat8] {
     let lo = page * PAGE_SIZE;
-    let n = data.size();
+    let n = bytes.size();
     if (lo >= n) return [];
     let hi = Nat.min(lo + PAGE_SIZE, n);
-    Array.tabulate<Nat8>(hi - lo, func(i) { data[lo + i] });
+    Array.tabulate<Nat8>(hi - lo, func(i) { bytes[lo + i] });
+  };
+
+  // ── Job lifecycle ─────────────────────────────────────────────────────────
+
+  func markJobDone() {
+    switch (activeJobId) {
+      case (?id) {
+        completedJobs := Array.concat(completedJobs, [(id, #done)]);
+        activeJobId := null;
+        activeChunks := null;
+        timerHandle := null;
+      };
+      case null {};
+    };
+  };
+
+  func markJobFailed(msg : Text) {
+    switch (activeJobId) {
+      case (?id) {
+        completedJobs := Array.concat(completedJobs, [(id, #failed msg)]);
+        activeJobId := null;
+        activeChunks := null;
+        timerHandle := null;
+        gzipDecoder.clear();
+      };
+      case null {};
+    };
+  };
+
+  // ── Timer callbacks ───────────────────────────────────────────────────────
+
+  func tickCompress() : async () {
+    let ?cs = activeChunks else {
+      markJobFailed("compress: no input chunks");
+      return;
+    };
+    if (chunkIdx < chunkTotal) {
+      gzipEncoder.clear();
+      gzipEncoder.encode(cs[chunkIdx]);
+      switch (gzipEncoder.finish()) {
+        case (#single bytes) List.add(compressBuf, bytes);
+        case (#chunked _) Runtime.trap("tickCompress: chunk exceeded outputChunkSize");
+      };
+      chunkIdx += 1;
+      timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
+    } else {
+      let streams = List.toArray(compressBuf);
+      List.clear(compressBuf);
+      compressed := ?(if (streams.size() == 1) #single(streams[0]) else #chunked(streams));
+      markJobDone();
+    };
+  };
+
+  func tickDecompress() : async () {
+    let ?cs = activeChunks else {
+      markJobFailed("decompress: no input chunks");
+      return;
+    };
+    if (chunkIdx < chunkTotal) {
+      switch (gzipDecoder.decode(cs[chunkIdx])) {
+        case (#err msg) { markJobFailed("decompress decode: " # msg); return };
+        case (#ok _) {};
+      };
+      switch (gzipDecoder.finish()) {
+        case (#err msg) { markJobFailed("decompress finish: " # msg); return };
+        case (#ok result) List.addAll(decompressBuf, result.bytes.vals());
+      };
+      chunkIdx += 1;
+      timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
+    } else {
+      decompressed := ?List.toArray(decompressBuf);
+      List.clear(decompressBuf);
+      markJobDone();
+    };
+  };
+
+  // ── Upgrade hook ──────────────────────────────────────────────────────────
+
+  system func postupgrade() {
+    // Timers do not survive upgrades — mark any in-progress job as failed.
+    if (activeJobId != null) {
+      markJobFailed("canister upgraded mid-job");
+    };
   };
 
   // ── Latency baseline ──────────────────────────────────────────────────────
 
-  /// No-op update call — callers use it to measure round-trip overhead so they
-  /// can subtract transport latency from compression timing measurements.
   public func ping() : async Text { "pong" };
 
   // ── Data generation ───────────────────────────────────────────────────────
@@ -101,7 +195,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   public func generateBytes(n_bytes : Nat) : async () {
     let rng = Random.seed(42 : Nat64);
     let third = n_bytes / 3;
-    _data := ?Array.tabulate<Nat8>(
+    rawData := ?Array.tabulate<Nat8>(
       n_bytes,
       func(i) {
         if (i < third) {
@@ -116,133 +210,112 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   };
 
   /// Return a 2 MiB page of the raw generated bytes (0-indexed).
-  /// Returns [] when `page` is past the end of the data.
   public query func getGeneratedData(page : Nat) : async [Nat8] {
-    pageOf(getData(), page);
+    switch (rawData) {
+      case (?d) pageOf(d, page);
+      case null [];
+    };
   };
 
   /// Return a 2 MiB page of the compressed output bytes (0-indexed).
-  /// Returns [] when `page` is past the end of the compressed data.
   public query func getCompressedData(page : Nat) : async [Nat8] {
-    let ?compressed = _compressed else return [];
-    let bytes = switch (compressed) {
+    let ?comp = compressed else return [];
+    let bytes = switch (comp) {
       case (#single data) data;
-      case (#chunked chunks) Array.flatten<Nat8>(chunks);
+      case (#chunked cs) Array.flatten<Nat8>(cs);
     };
     pageOf(bytes, page);
   };
 
-  // ── Compression ───────────────────────────────────────────────────────────
+  // ── Job submission ────────────────────────────────────────────────────────
 
-  /// Internal: compress one input chunk into a complete, independent gzip stream and
-  /// append it to `_compress_buf`. Each await gives a fresh ICP instruction budget.
-  /// Guarded so only this canister may call it.
-  ///
-  /// `clear → encode → finish` per chunk means each element of `_compress_buf` has its
-  /// own gzip header, CRC32, and footer — making each independently decodable by
-  /// `_decompressBatch` (which calls `decode + finish` per element).
-  public shared ({ caller }) func _compressChunk(chunk : [Nat8]) : async () {
-    assert caller == canisterId();
-    gzip_encoder.clear();
-    gzip_encoder.encode(chunk);
-    switch (gzip_encoder.finish()) {
-      case (#single data) List.add(_compress_buf, data);
-      // Each input chunk ≤ ENCODE_CHUNK_SIZE = outputChunkSize(), so compressed output
-      // also fits in one output chunk and finish() always returns #single.
-      case (#chunked _) Runtime.trap("_compressChunk: chunk exceeded outputChunkSize");
-    };
+  /// Request a compression job. Returns the JobId immediately.
+  /// Only one job may be active at a time — traps if one is already running.
+  public func requestCompressJob() : async JobId {
+    assert activeJobId == null;
+    let id = nextJobId;
+    nextJobId += 1;
+
+    let bytes = switch (rawData) { case (?d) d; case null [] };
+    let cs = splitChunks(bytes, ENCODE_CHUNK_SIZE);
+    activeChunks := ?cs;
+    chunkIdx := 0;
+    chunkTotal := cs.size();
+    jobKind := #compress;
+    activeJobId := ?id;
+    List.clear(compressBuf);
+
+    timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
+    id;
   };
 
-  /// Internal: assemble all per-chunk compressed streams into the final `EncodedResponse`
-  /// and persist it. Isolated in a self-call so its O(N) list-to-array cost gets a fresh budget.
-  public shared ({ caller }) func _finishCompression() : async () {
-    assert caller == canisterId();
-    let streams = List.toArray(_compress_buf);
-    List.clear(_compress_buf);
-    _compressed := ?(
-      if (streams.size() == 1) #single(streams[0]) else #chunked(streams)
+  /// Request a decompression job. Returns the JobId immediately.
+  /// Only one job may be active at a time — traps if one is already running.
+  /// Traps if no compressed data is available.
+  public func requestDecompressJob() : async JobId {
+    assert activeJobId == null;
+    let ?comp = compressed else Runtime.trap("requestDecompressJob: no compressed data");
+    let id = nextJobId;
+    nextJobId += 1;
+
+    let cs = switch (comp) {
+      case (#single d) [d];
+      case (#chunked chunks) chunks;
+    };
+    activeChunks := ?cs;
+    chunkIdx := 0;
+    chunkTotal := cs.size();
+    jobKind := #decompress;
+    activeJobId := ?id;
+    gzipDecoder.clear();
+    List.clear(decompressBuf);
+
+    timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
+    id;
+  };
+
+  // ── Job status & management ───────────────────────────────────────────────
+
+  /// Poll the status of a job by its JobId.
+  /// Returns `null` if the id is unknown (never submitted or already cleared).
+  public query func getJobStatus(id : JobId) : async ?JobStatus {
+    if (activeJobId == ?id) {
+      return ?(
+        switch (jobKind) {
+          case (#compress) #compressing { index = chunkIdx; total = chunkTotal };
+          case (#decompress) #decompressing {
+            index = chunkIdx;
+            total = chunkTotal;
+          };
+        }
+      );
+    };
+    for ((jid, status) in completedJobs.vals()) {
+      if (jid == id) {
+        return ?(
+          switch (status) {
+            case (#done) #done;
+            case (#failed msg) #failed msg;
+          }
+        );
+      };
+    };
+    null;
+  };
+
+  /// Discard a completed job record, freeing its slot in the history.
+  public func clearJob(id : JobId) : async () {
+    completedJobs := Array.filter<(Nat, CompletedJob)>(
+      completedJobs,
+      func((jid, _)) { jid != id },
     );
   };
 
-  /// Compress all stored data and persist the result.
-  /// For data < ENCODE_CHUNK_SIZE, encodes inline and produces a #single stream.
-  /// For larger data, each input chunk is compressed into an independent gzip stream
-  /// via self-calls, then assembled into a #chunked EncodedResponse by _finishCompression.
-  public func compressData() : async () {
-    gzip_encoder.clear();
-    let data = getData();
-
-    if (data.size() < ENCODE_CHUNK_SIZE) {
-      gzip_encoder.encode(data);
-      _compressed := ?gzip_encoder.finish();
-    } else {
-      List.clear(_compress_buf);
-      for (chunk in chunks(data, ENCODE_CHUNK_SIZE).vals()) {
-        await _compressChunk(chunk);
-      };
-      await _finishCompression();
-    };
-  };
-
-  // ── Decompression ─────────────────────────────────────────────────────────
-
-  /// Internal: decompress a batch of compressed chunks (each a complete gzip stream) and
-  /// append results to `_decompress_buf`. Batching up to DECODE_BATCH_SIZE chunks per
-  /// self-call reduces inter-message round-trips while staying within the 40B limit.
-  /// Guarded so only this canister may call it — each await gives a fresh instruction budget.
-  public shared ({ caller }) func _decompressBatch(batch : [[Nat8]]) : async () {
-    assert caller == canisterId();
-    for (chunk in batch.vals()) {
-      switch (gzip_decoder.decode(chunk)) {
-        case (#err(msg)) Runtime.trap("_decompressBatch decode: " # msg);
-        case (#ok(_)) {};
-      };
-      switch (gzip_decoder.finish()) {
-        case (#err(msg)) Runtime.trap("_decompressBatch finish: " # msg);
-        case (#ok(result)) List.addAll(_decompress_buf, result.bytes.vals());
-      };
-    };
-  };
-
-  /// Decompress the stored compressed data and cache the result in _decompressed.
-  /// For `#single` output: decode + finish inline (≤ 1 chunk, always fits in one message).
-  /// For `#chunked` output: self-calls process DECODE_BATCH_SIZE chunks each, each with a
-  /// fresh instruction budget. Results accumulate in `_decompress_buf` and are converted
-  /// to `[Nat8]` in a single O(N) pass via `List.toArray` after all batches complete.
-  public func decompressData() : async () {
-    gzip_decoder.clear();
-    let ?compressed = _compressed else return;
-
-    switch (compressed) {
-      case (#single data) {
-        switch (gzip_decoder.decode(data)) {
-          case (#err(msg)) Runtime.trap("decompressData decode: " # msg);
-          case (#ok(_)) {};
-        };
-        switch (gzip_decoder.finish()) {
-          case (#err(msg)) Runtime.trap("decompressData finish: " # msg);
-          case (#ok(result)) _decompressed := ?result.bytes;
-        };
-      };
-      case (#chunked cs) {
-        List.clear(_decompress_buf);
-        let n = cs.size();
-        var i = 0;
-        while (i < n) {
-          let hi = Nat.min(i + DECODE_BATCH_SIZE, n);
-          let batch = Array.tabulate<[Nat8]>(hi - i, func(j) { cs[i + j] });
-          await _decompressBatch(batch);
-          i := hi;
-        };
-        _decompressed := ?List.toArray(_decompress_buf);
-      };
-    };
-  };
+  // ── Result retrieval ──────────────────────────────────────────────────────
 
   /// Return a 2 MiB page of the decompressed bytes (0-indexed).
-  /// Returns [] when `page` is past the end or decompressData() has not been called.
   public query func getDecompressedData(page : Nat) : async [Nat8] {
-    let ?d = _decompressed else return [];
+    let ?d = decompressed else return [];
     pageOf(d, page);
   };
 
