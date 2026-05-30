@@ -36,7 +36,7 @@ module {
   // and is detected as an error (tag > MAX_BITWIDTH).
 
   let SENTINEL : Nat64 = 16; // = MAX_BITWIDTH + 1 (inlined to keep static)
-  let FAST_ROOT_BITS : Nat = 9;
+  let FAST_ROOT_BITS : Nat = 10;
   let POW2 : [Nat] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
 
   public class FastDecoder(tbl : [var Nat64], rootBits : Nat) {
@@ -50,23 +50,23 @@ module {
     public func decodeRaw(acc : BitAccumulator.BitAccumulator) : Nat {
       acc.refill();
       let v = tbl[acc.peekNat(rootBits)];
-      let w = v % 32;
+      let w = v & 31;
       if (w > Nat64.fromNat(MAX_BITWIDTH)) return DECODE_ERROR; // sentinel
       let wNat = Nat64.toNat(w);
       if (wNat <= rootBits) {
         acc.drop(wNat);
-        return Nat64.toNat(v / 32);
+        return Nat64.toNat(v >> 5);
       };
       // Overflow path — w is the max code length of this subtable.
       acc.drop(rootBits);
       let sub_bits : Nat = wNat - rootBits;
-      let sub_offset = Nat64.toNat(v / 32);
+      let sub_offset = Nat64.toNat(v >> 5);
       acc.refill();
       let v2 = tbl[sub_offset + acc.peekNat(sub_bits)];
-      let w2 = v2 % 32;
+      let w2 = v2 & 31;
       if (Nat64.toNat(w2) > sub_bits) return DECODE_ERROR; // sentinel or overlong
       acc.drop(Nat64.toNat(w2));
-      Nat64.toNat(v2 / 32);
+      Nat64.toNat(v2 >> 5);
     };
   };
 
@@ -170,14 +170,14 @@ module {
       if (subMaxBw[k] > 0) {
         // tag = max_bw (> rootBits, ≤ MAX_BITWIDTH) — encodes "this is overflow"
         // AND the number of extra bits to peek (= tag - rootBits).
-        tbl[k] := Nat64.fromNat(subOffset[k]) * 32 + Nat64.fromNat(subMaxBw[k]);
+        tbl[k] := (Nat64.fromNat(subOffset[k]) << 5) | Nat64.fromNat(subMaxBw[k]);
       };
       k += 1;
     };
 
     // Pass 6b: fill direct entries (primary) and subtable entries.
     for ((sym, bw, beBits) in entries.vals()) {
-      let value : Nat64 = Nat64.fromNat(sym) * 32 + Nat64.fromNat(bw);
+      let value : Nat64 = (Nat64.fromNat(sym) << 5) | Nat64.fromNat(bw);
       if (bw <= rootBits) {
         let step = POW2[bw];
         let padCount : Nat = POW2[rootBits - bw];
@@ -194,7 +194,7 @@ module {
         let extraBits = beBits / primary_size;
         let step = POW2[extraBw];
         let padCount : Nat = POW2[mbw - bw];
-        let value64 : Nat64 = Nat64.fromNat(sym) * 32 + Nat64.fromNat(extraBw);
+        let value64 : Nat64 = (Nat64.fromNat(sym) << 5) | Nat64.fromNat(extraBw);
         var p = 0;
         while (p < padCount) {
           tbl[off + extraBits + p * step] := value64;
@@ -233,8 +233,8 @@ module {
       // Resolved symbol slot iff: non-sentinel (w ≤ MAX_BITWIDTH), and either
       // in a subtable (i ≥ primarySize) or a direct primary entry (w ≤ root).
       if (w >= 1 and w <= maxBw64 and (i >= primarySize or w <= rootBits64)) {
-        let sym = Nat64.toNat(v / 32);
-        tbl[i] := mapPayload(sym) * 32 + w;
+        let sym = Nat64.toNat(v >> 5);
+        tbl[i] := (mapPayload(sym) << 5) | w;
       };
       i += 1;
     };

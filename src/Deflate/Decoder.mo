@@ -286,7 +286,7 @@ module {
           pos += 1;
         };
         let lv : Nat64 = litTbl[Nat64.toNat(hold & litMask)];
-        let lw : Nat64 = lv % 32;
+        let lw : Nat64 = lv & 31;
         var lpayload : Nat64 = 0;
         if (lw > 15) {
           err := ?"Deflate: invalid literal/length Huffman code";
@@ -295,27 +295,27 @@ module {
         if (lw <= litRootBits64) {
           hold := hold >> lw;
           bits -= lw;
-          lpayload := lv / 32;
+          lpayload := lv >> 5;
         } else {
           // Overflow: consume root_bits, look up subtable.
           hold := hold >> litRootBits64;
           bits -= litRootBits64;
           let lsub : Nat64 = lw - litRootBits64;
-          let loff = Nat64.toNat(lv / 32);
+          let loff = Nat64.toNat(lv >> 5);
           while (bits <= 56 and pos < srcLen) {
             hold := hold | (Nat64.fromNat8(src[pos]) << bits);
             bits += 8;
             pos += 1;
           };
           let lv2 : Nat64 = litTbl[loff + Nat64.toNat(hold & (((1 : Nat64) << lsub) - 1))];
-          let lw2 : Nat64 = lv2 % 32;
+          let lw2 : Nat64 = lv2 & 31;
           if (lw2 > lsub) {
             err := ?"Deflate: invalid literal/length Huffman code";
             break _syms;
           };
           hold := hold >> lw2;
           bits -= lw2;
-          lpayload := lv2 / 32;
+          lpayload := lv2 >> 5;
         };
         // ────────────────────────────────────────────────────────────────
         // Baked lit/len payload: low 2 bits = kind (0 literal, 1 length,
@@ -365,7 +365,7 @@ module {
             pos += 1;
           };
           let dv : Nat64 = distTbl[Nat64.toNat(hold & distMask)];
-          let dw : Nat64 = dv % 32;
+          let dw : Nat64 = dv & 31;
           var dpayload : Nat64 = 0;
           if (dw > 15) {
             err := ?"Deflate: invalid distance Huffman code";
@@ -374,26 +374,26 @@ module {
           if (dw <= distRootBits64) {
             hold := hold >> dw;
             bits -= dw;
-            dpayload := dv / 32;
+            dpayload := dv >> 5;
           } else {
             hold := hold >> distRootBits64;
             bits -= distRootBits64;
             let dsub : Nat64 = dw - distRootBits64;
-            let doff = Nat64.toNat(dv / 32);
+            let doff = Nat64.toNat(dv >> 5);
             while (bits <= 56 and pos < srcLen) {
               hold := hold | (Nat64.fromNat8(src[pos]) << bits);
               bits += 8;
               pos += 1;
             };
             let dv2 : Nat64 = distTbl[doff + Nat64.toNat(hold & (((1 : Nat64) << dsub) - 1))];
-            let dw2 : Nat64 = dv2 % 32;
+            let dw2 : Nat64 = dv2 & 31;
             if (dw2 > dsub) {
               err := ?"Deflate: invalid distance Huffman code";
               break _syms;
             };
             hold := hold >> dw2;
             bits -= dw2;
-            dpayload := dv2 / 32;
+            dpayload := dv2 >> 5;
           };
           // ────────────────────────────────────────────────────────────
           // Baked distance payload: low 4 bits = extra-bit count,
