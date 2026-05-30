@@ -205,4 +205,38 @@ module {
 
     #ok(FastDecoder(tbl, rootBits));
   };
+
+  /// Rewrite the payload field (`entry / 32`) of every *resolved-symbol*
+  /// table slot using `mapPayload`, leaving the consume tag (`entry % 32`),
+  /// overflow pointers, and sentinel/pad slots untouched.
+  ///
+  /// This lets a caller fold symbol-specific semantics (e.g. DEFLATE
+  /// length/distance base + extra-bit counts) directly into the decode
+  /// table so the hot loop needs no secondary lookup. The mapped payload
+  /// replaces the symbol; the caller's hot loop is responsible for decoding
+  /// the new payload layout. Must be applied at most once per table.
+  ///
+  /// Resolved slots are: primary entries with tag ≤ root_bits, and all
+  /// non-sentinel subtable entries. Overflow-pointer primary entries (tag in
+  /// (root_bits, MAX_BITWIDTH]) carry a subtable offset, not a symbol, and
+  /// are skipped. Sentinel/pad slots (tag = MAX_BITWIDTH + 1) are skipped.
+  public func bakePayloads(dec : FastDecoder, mapPayload : Nat -> Nat64) {
+    let tbl = dec.table;
+    let rootBits64 = Nat64.fromNat(dec.root_bits);
+    let maxBw64 = Nat64.fromNat(MAX_BITWIDTH);
+    let primarySize = POW2[dec.root_bits];
+    let n = tbl.size();
+    var i = 0;
+    while (i < n) {
+      let v = tbl[i];
+      let w = v % 32;
+      // Resolved symbol slot iff: non-sentinel (w ≤ MAX_BITWIDTH), and either
+      // in a subtable (i ≥ primarySize) or a direct primary entry (w ≤ root).
+      if (w >= 1 and w <= maxBw64 and (i >= primarySize or w <= rootBits64)) {
+        let sym = Nat64.toNat(v / 32);
+        tbl[i] := mapPayload(sym) * 32 + w;
+      };
+      i += 1;
+    };
+  };
 };

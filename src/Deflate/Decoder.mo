@@ -92,6 +92,34 @@ module {
     (24_577, 13),
   ];
 
+  // ── Baked payload mappers (Phase 1) ────────────────────────────────────
+  // Fold literal/length and distance semantics directly into the Huffman
+  // decode-table entries (via HuffmanDecoder.bakePayloads), so the hot loop
+  // needs no secondary LENGTH_TABLE / DISTANCE_TABLE lookup per match.
+  //
+  // Lit/len payload (the value stored as `entry / 32`):
+  //   low 2 bits = kind: 0 literal, 1 length, 2 end-of-block, 3 invalid
+  //   literal:  byte  = payload >> 6
+  //   length:   extra = (payload >> 2) & 0xF,  base = payload >> 6
+  func litLenPayload(sym : Nat) : Nat64 {
+    if (sym < 256) {
+      Nat64.fromNat(sym) * 64 // (byte << 6) | kind 0
+    } else if (sym == 256) {
+      2 // end-of-block (kind 2)
+    } else if (sym <= 285) {
+      let (baseLen, lenExtra) = LENGTH_TABLE[sym - 257];
+      baseLen * 64 + lenExtra * 4 + 1 // (base << 6) | (extra << 2) | kind 1
+    } else {
+      3 // invalid length code (symbols 286, 287)
+    };
+  };
+
+  // Distance payload: low 4 bits = extra bit count, base = payload >> 4.
+  func distPayload(sym : Nat) : Nat64 {
+    let (baseDist, distExtra) = DISTANCE_TABLE[sym];
+    baseDist * 16 + distExtra // (base << 4) | extra
+  };
+
   // ── Fixed Huffman table builders ───────────────────────────────────────
   // Module-level private functions — bodies can use var/loops freely.
   // Called from the Decoder class constructor (once per decode call).
@@ -129,6 +157,13 @@ module {
     var err : ?Text = null;
     let fixedLit : HuffmanDecoder.FastDecoder = buildFixedLitDecoder();
     let fixedDist : HuffmanDecoder.FastDecoder = buildFixedDistDecoder();
+
+    // Bake length/distance semantics into the fixed decode tables once, so
+    // the hot loop reads base + extra-bit counts straight from the entries.
+    do {
+      HuffmanDecoder.bakePayloads(fixedLit, litLenPayload);
+      HuffmanDecoder.bakePayloads(fixedDist, distPayload);
+    };
 
     // ── Public API ────────────────────────────────────────────────────────
 
@@ -252,7 +287,7 @@ module {
         };
         let lv : Nat64 = litTbl[Nat64.toNat(hold & litMask)];
         let lw : Nat64 = lv % 32;
-        var sym : Nat = 0;
+        var lpayload : Nat64 = 0;
         if (lw > 15) {
           err := ?"Deflate: invalid literal/length Huffman code";
           break _syms;
@@ -260,7 +295,7 @@ module {
         if (lw <= litRootBits64) {
           hold := hold >> lw;
           bits -= lw;
-          sym := Nat64.toNat(lv / 32);
+          lpayload := lv / 32;
         } else {
           // Overflow: consume root_bits, look up subtable.
           hold := hold >> litRootBits64;
@@ -280,33 +315,37 @@ module {
           };
           hold := hold >> lw2;
           bits -= lw2;
-          sym := Nat64.toNat(lv2 / 32);
+          lpayload := lv2 / 32;
         };
         // ────────────────────────────────────────────────────────────────
+        // Baked lit/len payload: low 2 bits = kind (0 literal, 1 length,
+        // 2 end-of-block, 3 invalid). Literal byte = payload >> 6;
+        // length extra = (payload >> 2) & 0xF, length base = payload >> 6.
 
-        if (sym < 256) {
+        let lkind = lpayload & 3;
+        if (lkind == 0) {
+          // Literal byte.
+          let byte = Nat8.fromNat(Nat64.toNat(lpayload >> 6));
           if (olen < ocap) {
-            obuf[olen] := Nat8.fromNat(sym);
+            obuf[olen] := byte;
             olen += 1;
           } else {
             // Slow path: grow via OutByteBuffer, then re-fetch the store.
             out.setLen(olen);
-            out.add(Nat8.fromNat(sym));
+            out.add(byte);
             obuf := out.store();
             olen := out.size();
             ocap := out.capacity();
           };
-        } else if (sym == 256) {
+        } else if (lkind == 2) {
           break _syms; // end-of-block
+        } else if (lkind == 3) {
+          err := ?"Deflate: invalid length code";
+          break _syms;
         } else {
-          // Length code 257..285
-          let lenIdx : Nat = sym - 257;
-          if (lenIdx >= 29) {
-            err := ?("Deflate: invalid length code " # debug_show sym);
-            break _syms;
-          };
-          let (baseLen, lenExtra) = LENGTH_TABLE[lenIdx];
-          var length : Nat64 = baseLen;
+          // Length code: base + extra-bit count baked into the payload.
+          let lenExtra : Nat64 = (lpayload >> 2) & 0xF;
+          var length : Nat64 = lpayload >> 6;
           if (lenExtra > 0) {
             while (bits <= 56 and pos < srcLen) {
               hold := hold | (Nat64.fromNat8(src[pos]) << bits);
@@ -327,7 +366,7 @@ module {
           };
           let dv : Nat64 = distTbl[Nat64.toNat(hold & distMask)];
           let dw : Nat64 = dv % 32;
-          var dc : Nat = 0;
+          var dpayload : Nat64 = 0;
           if (dw > 15) {
             err := ?"Deflate: invalid distance Huffman code";
             break _syms;
@@ -335,7 +374,7 @@ module {
           if (dw <= distRootBits64) {
             hold := hold >> dw;
             bits -= dw;
-            dc := Nat64.toNat(dv / 32);
+            dpayload := dv / 32;
           } else {
             hold := hold >> distRootBits64;
             bits -= distRootBits64;
@@ -354,16 +393,14 @@ module {
             };
             hold := hold >> dw2;
             bits -= dw2;
-            dc := Nat64.toNat(dv2 / 32);
+            dpayload := dv2 / 32;
           };
           // ────────────────────────────────────────────────────────────
+          // Baked distance payload: low 4 bits = extra-bit count,
+          // distance base = payload >> 4.
 
-          if (dc >= 30) {
-            err := ?("Deflate: invalid distance code " # debug_show dc);
-            break _syms;
-          };
-          let (baseDist, distExtra) = DISTANCE_TABLE[dc];
-          var distance : Nat64 = baseDist;
+          let distExtra : Nat64 = dpayload & 0xF;
+          var distance : Nat64 = dpayload >> 4;
           if (distExtra > 0) {
             while (bits <= 56 and pos < srcLen) {
               hold := hold | (Nat64.fromNat8(src[pos]) << bits);
@@ -474,6 +511,10 @@ module {
         case (#ok(d)) d;
         case (#err(msg)) return #err("Deflate: distance decoder: " # msg);
       };
+
+      // Bake length/distance semantics into the per-block decode tables.
+      HuffmanDecoder.bakePayloads(ld, litLenPayload);
+      HuffmanDecoder.bakePayloads(dd, distPayload);
 
       #ok((ld, dd));
     };
