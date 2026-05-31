@@ -48,8 +48,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // ── Stable state ──────────────────────────────────────────────────────────
 
   var rawData : ?[Nat8] = null;
-  var compressed : ?Gzip.EncodedResponse = null;
-  var decompressed : ?[Nat8] = null;
+  let compressed : List.List<[Nat8]> = List.empty();
+  let decompressed : List.List<Nat8> = List.empty();
 
   // Job queue
   var nextJobId : Nat = 0;
@@ -68,11 +68,12 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // finish() always returns #single regardless of byte-value distribution.
   transient let ENCODE_CHUNK_SIZE : Nat = gzipEncoder.outputChunkSize() * 7 / 8;
 
+  // Decode is ~5–10× cheaper per byte than encode. Each Gzip stream costs ~7B
+  // instructions. Start at 1 (same throughput as current) and tune upward with
+  // perf data — e.g. set to 5 to batch 5 streams per tick at ~35B instructions.
+  transient let DECODE_BATCH_SIZE : Nat = 5;
+
   transient let gzipDecoder = Gzip.Decoder();
-
-  transient let compressBuf = List.empty<[Nat8]>();
-
-  transient let decompressBuf = List.empty<Nat8>();
 
   /// Pre-split chunks for the active job (compress input or decompress input).
   transient var activeChunks : ?[[Nat8]] = null;
@@ -143,15 +144,12 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         gzipEncoder.clear();
         gzipEncoder.encode(cs[chunkIdx]);
         switch (gzipEncoder.finish()) {
-          case (#single bytes) List.add(compressBuf, bytes);
+          case (#single bytes) List.add(compressed, bytes);
           case (#chunked _) Runtime.trap("tickCompress: chunk exceeded outputChunkSize");
         };
         chunkIdx += 1;
         timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
       } else {
-        let streams = List.toArray(compressBuf);
-        List.clear(compressBuf);
-        compressed := ?(if (streams.size() == 1) #single(streams[0]) else #chunked(streams));
         markJobDone();
       };
       trapped := false;
@@ -171,20 +169,21 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         markJobFailed("decompress: no input chunks");
         return;
       };
-      if (chunkIdx < chunkTotal) {
+      let batchEnd = Nat.min(chunkIdx + DECODE_BATCH_SIZE, chunkTotal);
+      label batch while (chunkIdx < batchEnd) {
         switch (gzipDecoder.decode(cs[chunkIdx])) {
           case (#err msg) { markJobFailed("decompress decode: " # msg); return };
           case (#ok _) {};
         };
         switch (gzipDecoder.finish()) {
           case (#err msg) { markJobFailed("decompress finish: " # msg); return };
-          case (#ok result) List.addAll(decompressBuf, result.bytes.vals());
+          case (#ok result) List.addAll(decompressed, result.bytes.vals());
         };
         chunkIdx += 1;
+      };
+      if (chunkIdx < chunkTotal) {
         timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
       } else {
-        decompressed := ?List.toArray(decompressBuf);
-        List.clear(decompressBuf);
         markJobDone();
       };
       trapped := false;
@@ -243,12 +242,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   /// Return a 2 MiB page of the compressed output bytes (0-indexed).
   public query func getCompressedData(page : Nat) : async [Nat8] {
-    let ?comp = compressed else return [];
-    let bytes = switch (comp) {
-      case (#single data) data;
-      case (#chunked cs) Array.flatten<Nat8>(cs);
-    };
-    pageOf(bytes, page);
+    if (List.size(compressed) == 0) return [];
+    pageOf(Array.flatten<Nat8>(List.toArray(compressed)), page);
   };
 
   // ── Direct (single-message) compress / decompress ────────────────────────
@@ -258,39 +253,32 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   public func compress() : async () {
     let bytes = switch (rawData) { case (?d) d; case null [] };
     let cs = splitChunks(bytes, ENCODE_CHUNK_SIZE);
-    List.clear(compressBuf);
+    List.clear(compressed);
     for (chunk in cs.vals()) {
       gzipEncoder.clear();
       gzipEncoder.encode(chunk);
       switch (gzipEncoder.finish()) {
-        case (#single b) List.add(compressBuf, b);
+        case (#single b) List.add(compressed, b);
         case (#chunked _) Runtime.trap("compress: chunk exceeded outputChunkSize");
       };
     };
-    let streams = List.toArray(compressBuf);
-    compressed := ?(if (streams.size() == 1) #single(streams[0]) else #chunked(streams));
   };
 
   /// Decompress compressed data in a single message (no timer). Best for small payloads.
   public func decompress() : async () {
-    let ?comp = compressed else Runtime.trap("decompress: no compressed data");
-    let cs = switch (comp) {
-      case (#single d) [d];
-      case (#chunked chunks) chunks;
-    };
+    if (List.size(compressed) == 0) Runtime.trap("decompress: no compressed data");
     gzipDecoder.clear();
-    List.clear(decompressBuf);
-    for (chunk in cs.vals()) {
+    List.clear(decompressed);
+    for (chunk in List.values(compressed)) {
       switch (gzipDecoder.decode(chunk)) {
         case (#err msg) Runtime.trap("decompress decode: " # msg);
         case (#ok _) {};
       };
       switch (gzipDecoder.finish()) {
         case (#err msg) Runtime.trap("decompress finish: " # msg);
-        case (#ok result) List.addAll(decompressBuf, result.bytes.vals());
+        case (#ok result) List.addAll(decompressed, result.bytes.vals());
       };
     };
-    decompressed := ?List.toArray(decompressBuf);
   };
 
   // ── Job submission ────────────────────────────────────────────────────────
@@ -309,7 +297,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     chunkTotal := cs.size();
     jobKind := #compress;
     activeJobId := ?id;
-    List.clear(compressBuf);
+    List.clear(compressed);
 
     timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
     id;
@@ -320,21 +308,18 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Traps if no compressed data is available.
   public func requestDecompressJob() : async JobId {
     assert activeJobId == null;
-    let ?comp = compressed else Runtime.trap("requestDecompressJob: no compressed data");
+    if (List.size(compressed) == 0) Runtime.trap("requestDecompressJob: no compressed data");
+    let cs = List.toArray(compressed);
     let id = nextJobId;
     nextJobId += 1;
 
-    let cs = switch (comp) {
-      case (#single d) [d];
-      case (#chunked chunks) chunks;
-    };
     activeChunks := ?cs;
     chunkIdx := 0;
     chunkTotal := cs.size();
     jobKind := #decompress;
     activeJobId := ?id;
     gzipDecoder.clear();
-    List.clear(decompressBuf);
+    List.clear(decompressed);
 
     timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
     id;
@@ -381,8 +366,17 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   /// Return a 2 MiB page of the decompressed bytes (0-indexed).
   public query func getDecompressedData(page : Nat) : async [Nat8] {
-    let ?d = decompressed else return [];
-    pageOf(d, page);
+    let lo = page * PAGE_SIZE;
+    let n = List.size(decompressed);
+    if (lo >= n) return [];
+    let hi = Nat.min(lo + PAGE_SIZE, n);
+    Array.tabulate<Nat8>(
+      hi - lo,
+      func(i) {
+        let ?b = List.get(decompressed, lo + i) else Runtime.trap("getDecompressedData: out of bounds");
+        b;
+      },
+    );
   };
 
 };
