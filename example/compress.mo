@@ -63,7 +63,10 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   transient let gzipEncoder = Gzip.EncoderBuilder().build();
 
-  transient let ENCODE_CHUNK_SIZE : Nat = gzipEncoder.outputChunkSize();
+  // Fixed Huffman maps bytes 0x90–0xFF to 9-bit codes → up to 12.5% expansion on
+  // incompressible data. Keep input slices at 7/8 of outputChunkSize so that
+  // finish() always returns #single regardless of byte-value distribution.
+  transient let ENCODE_CHUNK_SIZE : Nat = gzipEncoder.outputChunkSize() * 7 / 8;
 
   transient let gzipDecoder = Gzip.Decoder();
 

@@ -100,7 +100,9 @@ let pic: PocketIc | undefined;
 
 try {
   server = await PocketIcServer.start({ showCanisterLogs: true });
-  pic = await PocketIc.create(server.getUrl());
+  pic = await PocketIc.create(server.getUrl(), {
+    processingTimeoutMs: 600_000,
+  });
 
   const wasm = new Uint8Array(readFileSync(wasmFile));
   const fixture = await pic.setupCanister<PerfService>({ idlFactory, wasm });
