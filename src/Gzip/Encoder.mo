@@ -189,6 +189,9 @@ module {
     /// within IC message limits.
     public func outputChunkSize() : Nat { output_chunk_size };
 
+    /// Returns the configured DEFLATE block size (bytes).
+    public func deflateBlockSize() : Nat { deflate_options.deflate_block_size };
+
     /// Compress `bytes` and accumulate them in the internal buffer.
     public func encode(bytes : [Nat8]) {
       if (bytes.size() == 0) return;

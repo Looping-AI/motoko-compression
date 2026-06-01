@@ -42,7 +42,10 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   type ActiveJob = {
     id : Nat;
-    kind : { #compress; #decompress };
+    kind : {
+      #compress : { chunkSize : Nat };
+      #decompress : { chunks : [[Nat8]] };
+    };
     var chunkIdx : Nat;
     chunkTotal : Nat;
   };
@@ -61,9 +64,9 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   // ── Stable state ──────────────────────────────────────────────────────────
 
-  var rawData : ?[Nat8] = null;
-  let compressed : List.List<[Nat8]> = List.empty();
-  let decompressed : List.List<Nat8> = List.empty();
+  transient var rawData : ?[Nat8] = null;
+  transient let compressed : List.List<[Nat8]> = List.empty();
+  transient let decompressed : List.List<Nat8> = List.empty();
 
   // Job queue
   let jobState : JobState = {
@@ -74,13 +77,13 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   // ── Transient state ───────────────────────────────────────────────────────
 
-  // finish() falls back to DEFLATE stored blocks when Huffman output > raw size,
-  // so the worst-case expansion is just the stored-block overhead:
-  //   ceil(N / 65535) × 5 B headers + 10 B gzip header + 8 B gzip footer = ~23 B.
-  // Choose the largest N such that N + ceil(N/65535)×5 + 18 ≤ outputChunkSize.
+  // Non-final blocks use fixed Huffman (worst case 9/8 expansion). Solving
+  // N × (9b+10)/(8b) + 18 ≤ s for N gives the safe input slice size.
   transient let ENCODE_CHUNK_SIZE : Nat = do {
-    let s = Gzip.EncoderBuilder().build().outputChunkSize();
-    s - (s + 65534) / 65535 * 5 - 18;
+    let enc = Gzip.EncoderBuilder().build();
+    let s = enc.outputChunkSize();
+    let b = enc.deflateBlockSize();
+    (s - 18) * 8 * b / (9 * b + 10);
   };
 
   // Decode is ~5–10× cheaper per byte than encode. Each Gzip stream costs ~7B
@@ -88,26 +91,9 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // perf data — e.g. set to 5 to batch 5 streams per tick at ~35B instructions.
   transient let DECODE_BATCH_SIZE : Nat = 5;
 
-  /// Pre-split chunks for the active job (compress input or decompress input).
-  transient var activeChunks : ?[[Nat8]] = null;
-
   transient var timerHandle : ?Timer.TimerId = null;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-
-  func splitChunks(bytes : [Nat8], size : Nat) : [[Nat8]] {
-    let n = bytes.size();
-    if (n == 0 or size == 0) return [bytes];
-    let count = n / size + (if (n % size != 0) 1 else 0);
-    Array.tabulate<[Nat8]>(
-      count,
-      func(i) {
-        let lo = i * size;
-        let hi = Nat.min(lo + size, n);
-        Array.tabulate<Nat8>(hi - lo, func(j) { bytes[lo + j] });
-      },
-    );
-  };
 
   func pageOf(bytes : [Nat8], page : Nat) : [Nat8] {
     let lo = page * PAGE_SIZE;
@@ -124,7 +110,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
       case (?job) {
         Map.add(jobState.completedJobs, Nat.compare, job.id, #done);
         jobState.activeJob := null;
-        activeChunks := null;
         timerHandle := null;
       };
       case null {};
@@ -136,7 +121,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
       case (?job) {
         Map.add(jobState.completedJobs, Nat.compare, job.id, #failed msg);
         jobState.activeJob := null;
-        activeChunks := null;
         timerHandle := null;
       };
       case null {};
@@ -152,13 +136,20 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         markJobFailed("compress: no active job");
         return;
       };
-      let ?cs = activeChunks else {
-        markJobFailed("compress: no input chunks");
+      let #compress { chunkSize } = job.kind else {
+        markJobFailed("compress: wrong job kind");
+        return;
+      };
+      let ?raw = rawData else {
+        markJobFailed("compress: no raw data");
         return;
       };
       if (job.chunkIdx < job.chunkTotal) {
+        let lo = job.chunkIdx * chunkSize;
+        let hi = Nat.min(lo + chunkSize, raw.size());
+        let chunk = Array.tabulate<Nat8>(hi - lo, func(j) { raw[lo + j] });
         let gzipEncoder = Gzip.EncoderBuilder().build();
-        gzipEncoder.encode(cs[job.chunkIdx]);
+        gzipEncoder.encode(chunk);
         switch (gzipEncoder.finish()) {
           case (#single bytes) List.add(compressed, bytes);
           case (#chunked _) Runtime.trap("tickCompress: chunk exceeded outputChunkSize");
@@ -185,14 +176,14 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         markJobFailed("decompress: no active job");
         return;
       };
-      let ?cs = activeChunks else {
-        markJobFailed("decompress: no input chunks");
+      let #decompress { chunks } = job.kind else {
+        markJobFailed("decompress: wrong job kind");
         return;
       };
       let batchEnd = Nat.min(job.chunkIdx + DECODE_BATCH_SIZE, job.chunkTotal);
       label batch while (job.chunkIdx < batchEnd) {
         let gzipDecoder = Gzip.Decoder();
-        switch (gzipDecoder.decode(cs[job.chunkIdx])) {
+        switch (gzipDecoder.decode(chunks[job.chunkIdx])) {
           case (#err msg) { markJobFailed("decompress decode: " # msg); return };
           case (#ok _) {};
         };
@@ -259,10 +250,27 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     };
   };
 
+  // ── Read Data ───────────────────────────────────────────────────────
+
   /// Return a 2 MiB page of the compressed output bytes (0-indexed).
   public query func getCompressedData(page : Nat) : async [Nat8] {
     if (List.size(compressed) == 0) return [];
     pageOf(Array.flatten<Nat8>(List.toArray(compressed)), page);
+  };
+
+  /// Return a 2 MiB page of the decompressed bytes (0-indexed).
+  public query func getDecompressedData(page : Nat) : async [Nat8] {
+    let lo = page * PAGE_SIZE;
+    let n = List.size(decompressed);
+    if (lo >= n) return [];
+    let hi = Nat.min(lo + PAGE_SIZE, n);
+    Array.tabulate<Nat8>(
+      hi - lo,
+      func(i) {
+        let ?b = List.get(decompressed, lo + i) else Runtime.trap("getDecompressedData: out of bounds");
+        b;
+      },
+    );
   };
 
   // ── Direct (single-message) compress / decompress ────────────────────────
@@ -306,13 +314,13 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     jobState.nextJobId += 1;
 
     let bytes = switch (rawData) { case (?d) d; case null [] };
-    let cs = splitChunks(bytes, ENCODE_CHUNK_SIZE);
-    activeChunks := ?cs;
+    let n = bytes.size();
+    let chunkTotal = if (n == 0 or ENCODE_CHUNK_SIZE == 0) 1 else n / ENCODE_CHUNK_SIZE + (if (n % ENCODE_CHUNK_SIZE != 0) 1 else 0);
     jobState.activeJob := ?{
       id;
-      kind = #compress;
+      kind = #compress { chunkSize = ENCODE_CHUNK_SIZE };
       var chunkIdx = 0;
-      chunkTotal = cs.size();
+      chunkTotal;
     };
     List.clear(compressed);
 
@@ -330,10 +338,9 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     let id = jobState.nextJobId;
     jobState.nextJobId += 1;
 
-    activeChunks := ?cs;
     jobState.activeJob := ?{
       id;
-      kind = #decompress;
+      kind = #decompress { chunks = cs };
       var chunkIdx = 0;
       chunkTotal = cs.size();
     };
@@ -352,11 +359,11 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
       case (?job) if (job.id == id) {
         return ?(
           switch (job.kind) {
-            case (#compress) #compressing {
+            case (#compress _) #compressing {
               index = job.chunkIdx;
               total = job.chunkTotal;
             };
-            case (#decompress) #decompressing {
+            case (#decompress _) #decompressing {
               index = job.chunkIdx;
               total = job.chunkTotal;
             };
@@ -372,26 +379,13 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     };
   };
 
-  /// Discard a completed job record, freeing its slot in the history.
-  public func clearJob(id : JobId) : async () {
-    Map.remove(jobState.completedJobs, Nat.compare, id);
-  };
-
-  // ── Result retrieval ──────────────────────────────────────────────────────
-
-  /// Return a 2 MiB page of the decompressed bytes (0-indexed).
-  public query func getDecompressedData(page : Nat) : async [Nat8] {
-    let lo = page * PAGE_SIZE;
-    let n = List.size(decompressed);
-    if (lo >= n) return [];
-    let hi = Nat.min(lo + PAGE_SIZE, n);
-    Array.tabulate<Nat8>(
-      hi - lo,
-      func(i) {
-        let ?b = List.get(decompressed, lo + i) else Runtime.trap("getDecompressedData: out of bounds");
-        b;
-      },
-    );
+  /// Release all temporary canister data: raw input,
+  /// compressed output, and decompressed output.
+  /// Call this after retrieving results to reclaim heap space.
+  public func clearAll() : async () {
+    rawData := null;
+    List.clear(compressed);
+    List.clear(decompressed);
   };
 
 };

@@ -66,6 +66,9 @@ interface PerfService {
 /**
  * Ticks PocketIC until the given job transitions to done or failed.
  * Logs a warning on failure rather than throwing — perf runs tolerate partial data.
+ *
+ * Prints status every 10 ticks so we can observe whether the loop is progressing
+ * or the tick/query itself is the hang point.
  */
 async function awaitJob(
   pic: PocketIc,
@@ -75,8 +78,28 @@ async function awaitJob(
   maxTicks = 200000,
 ): Promise<void> {
   for (let i = 0; i < maxTicks; i++) {
+    const tickStart = Date.now();
     await pic.tick();
+    const tickMs = Date.now() - tickStart;
+
     const result = await actor.getJobStatus(jobId);
+
+    if (i % 10 === 0 || tickMs > 1000) {
+      const statusStr =
+        result.length === 0
+          ? "not-found"
+          : "done" in result[0]
+            ? "done"
+            : "failed" in result[0]
+              ? `failed: ${(result[0] as { failed: string }).failed}`
+              : "compressing" in result[0]
+                ? `compressing ${(result[0] as { compressing: { index: bigint; total: bigint } }).compressing.index}/${(result[0] as { compressing: { index: bigint; total: bigint } }).compressing.total}`
+                : `decompressing ${(result[0] as { decompressing: { index: bigint; total: bigint } }).decompressing.index}/${(result[0] as { decompressing: { index: bigint; total: bigint } }).decompressing.total}`;
+      console.error(
+        `[perf-debug] ${callName} tick=${i} tick_ms=${tickMs} status=${statusStr}`,
+      );
+    }
+
     if (result.length === 0) {
       console.error(`[perf-warn] ${callName}: job ${jobId} not found`);
       return;
