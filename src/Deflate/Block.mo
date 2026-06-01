@@ -71,8 +71,8 @@ module {
 
     // Frequency tables accumulated incrementally so buildFromFreqs skips a
     // second pass over the symbol list.
-    var lit_freqs : [var Nat] = Prim.Array_init<Nat>(286, 0);
-    var dist_freqs : [var Nat] = Prim.Array_init<Nat>(30, 0);
+    let lit_freqs : [var Nat] = Prim.Array_init<Nat>(286, 0);
+    let dist_freqs : [var Nat] = Prim.Array_init<Nat>(30, 0);
 
     // Precomputed RFC 1951 length/distance code tables (built once).
     let tables = CodeTables.CodeTables();
@@ -230,8 +230,10 @@ module {
     func resetState() {
       input_size := 0;
       sym_count := 0;
-      lit_freqs := Prim.Array_init<Nat>(286, 0);
-      dist_freqs := Prim.Array_init<Nat>(30, 0);
+      var k = 0;
+      while (k < 286) { lit_freqs[k] := 0; k += 1 };
+      k := 0;
+      while (k < 30) { dist_freqs[k] := 0; k += 1 };
     };
 
     public func clear() {
