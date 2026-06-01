@@ -61,19 +61,15 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   // ── Transient state ───────────────────────────────────────────────────────
 
-  transient let gzipEncoder = Gzip.EncoderBuilder().build();
-
   // Fixed Huffman maps bytes 0x90–0xFF to 9-bit codes → up to 12.5% expansion on
   // incompressible data. Keep input slices at 7/8 of outputChunkSize so that
   // finish() always returns #single regardless of byte-value distribution.
-  transient let ENCODE_CHUNK_SIZE : Nat = gzipEncoder.outputChunkSize() * 7 / 8;
+  transient let ENCODE_CHUNK_SIZE : Nat = Gzip.EncoderBuilder().build().outputChunkSize() * 7 / 8;
 
   // Decode is ~5–10× cheaper per byte than encode. Each Gzip stream costs ~7B
   // instructions. Start at 1 (same throughput as current) and tune upward with
   // perf data — e.g. set to 5 to batch 5 streams per tick at ~35B instructions.
   transient let DECODE_BATCH_SIZE : Nat = 5;
-
-  transient let gzipDecoder = Gzip.Decoder();
 
   /// Pre-split chunks for the active job (compress input or decompress input).
   transient var activeChunks : ?[[Nat8]] = null;
@@ -125,7 +121,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         activeJobId := null;
         activeChunks := null;
         timerHandle := null;
-        gzipDecoder.clear();
       };
       case null {};
     };
@@ -141,7 +136,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         return;
       };
       if (chunkIdx < chunkTotal) {
-        gzipEncoder.clear();
+        let gzipEncoder = Gzip.EncoderBuilder().build();
         gzipEncoder.encode(cs[chunkIdx]);
         switch (gzipEncoder.finish()) {
           case (#single bytes) List.add(compressed, bytes);
@@ -171,6 +166,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
       };
       let batchEnd = Nat.min(chunkIdx + DECODE_BATCH_SIZE, chunkTotal);
       label batch while (chunkIdx < batchEnd) {
+        let gzipDecoder = Gzip.Decoder();
         switch (gzipDecoder.decode(cs[chunkIdx])) {
           case (#err msg) { markJobFailed("decompress decode: " # msg); return };
           case (#ok _) {};
@@ -252,32 +248,28 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// that fit within the per-message instruction limit (~40 B instructions).
   public func compress() : async () {
     let bytes = switch (rawData) { case (?d) d; case null [] };
-    let cs = splitChunks(bytes, ENCODE_CHUNK_SIZE);
     List.clear(compressed);
-    for (chunk in cs.vals()) {
-      gzipEncoder.clear();
-      gzipEncoder.encode(chunk);
-      switch (gzipEncoder.finish()) {
-        case (#single b) List.add(compressed, b);
-        case (#chunked _) Runtime.trap("compress: chunk exceeded outputChunkSize");
-      };
+    let gzipEncoder = Gzip.EncoderBuilder().build();
+    gzipEncoder.encode(bytes);
+    switch (gzipEncoder.finish()) {
+      case (#single b) List.add(compressed, b);
+      case (#chunked _) Runtime.trap("compress: chunk exceeded outputChunkSize");
     };
   };
 
   /// Decompress compressed data in a single message (no timer). Best for small payloads.
   public func decompress() : async () {
     if (List.size(compressed) == 0) Runtime.trap("decompress: no compressed data");
-    gzipDecoder.clear();
     List.clear(decompressed);
-    for (chunk in List.values(compressed)) {
-      switch (gzipDecoder.decode(chunk)) {
-        case (#err msg) Runtime.trap("decompress decode: " # msg);
-        case (#ok _) {};
-      };
-      switch (gzipDecoder.finish()) {
-        case (#err msg) Runtime.trap("decompress finish: " # msg);
-        case (#ok result) List.addAll(decompressed, result.bytes.vals());
-      };
+    let ?chunk = List.first(compressed) else Runtime.trap("decompress: unexpectedly more than one chunk");
+    let gzipDecoder = Gzip.Decoder();
+    switch (gzipDecoder.decode(chunk)) {
+      case (#err msg) Runtime.trap("decompress decode: " # msg);
+      case (#ok _) {};
+    };
+    switch (gzipDecoder.finish()) {
+      case (#err msg) Runtime.trap("decompress finish: " # msg);
+      case (#ok result) List.addAll(decompressed, result.bytes.vals());
     };
   };
 
@@ -318,7 +310,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     chunkTotal := cs.size();
     jobKind := #decompress;
     activeJobId := ?id;
-    gzipDecoder.clear();
     List.clear(decompressed);
 
     timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);

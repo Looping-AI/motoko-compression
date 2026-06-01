@@ -89,7 +89,6 @@ module {
     public func finish() : BitBuffer {
       flush(true);
       bitbuffer.byteAlign();
-      clear();
       return bitbuffer;
     };
   };

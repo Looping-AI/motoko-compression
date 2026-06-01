@@ -207,6 +207,7 @@ module {
       bitbuffer.clear();
       List.clear(block_ends);
       header_written := false;
+      deflate.clear();
     };
 
     /// Flush the final Deflate block, append the Gzip footer, and return
