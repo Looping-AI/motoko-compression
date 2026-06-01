@@ -16,6 +16,7 @@
 import Array "mo:core/Array";
 import Error "mo:core/Error";
 import List "mo:core/List";
+import Map "mo:core/Map";
 import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
 import Nat64 "mo:core/Nat64";
@@ -39,6 +40,19 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   type CompletedJob = { #done; #failed : Text };
 
+  type ActiveJob = {
+    id : Nat;
+    kind : { #compress; #decompress };
+    var chunkIdx : Nat;
+    chunkTotal : Nat;
+  };
+
+  type JobState = {
+    var nextJobId : Nat;
+    var activeJob : ?ActiveJob;
+    completedJobs : Map.Map<Nat, CompletedJob>;
+  };
+
   // ── Constants ─────────────────────────────────────────────────────────────
 
   transient let MB = 1_024 * 1_024;
@@ -52,12 +66,11 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   let decompressed : List.List<Nat8> = List.empty();
 
   // Job queue
-  var nextJobId : Nat = 0;
-  var activeJobId : ?Nat = null;
-  var jobKind : { #compress; #decompress } = #compress;
-  var chunkIdx : Nat = 0;
-  var chunkTotal : Nat = 0;
-  var completedJobs : [(Nat, CompletedJob)] = [];
+  let jobState : JobState = {
+    var nextJobId = 0;
+    var activeJob = null;
+    completedJobs = Map.empty();
+  };
 
   // ── Transient state ───────────────────────────────────────────────────────
 
@@ -103,10 +116,10 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // ── Job lifecycle ─────────────────────────────────────────────────────────
 
   func markJobDone() {
-    switch (activeJobId) {
-      case (?id) {
-        completedJobs := Array.concat(completedJobs, [(id, #done)]);
-        activeJobId := null;
+    switch (jobState.activeJob) {
+      case (?job) {
+        Map.add(jobState.completedJobs, Nat.compare, job.id, #done);
+        jobState.activeJob := null;
         activeChunks := null;
         timerHandle := null;
       };
@@ -115,10 +128,10 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   };
 
   func markJobFailed(msg : Text) {
-    switch (activeJobId) {
-      case (?id) {
-        completedJobs := Array.concat(completedJobs, [(id, #failed msg)]);
-        activeJobId := null;
+    switch (jobState.activeJob) {
+      case (?job) {
+        Map.add(jobState.completedJobs, Nat.compare, job.id, #failed msg);
+        jobState.activeJob := null;
         activeChunks := null;
         timerHandle := null;
       };
@@ -131,18 +144,22 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   func tickCompress() : async () {
     var trapped = true;
     try {
+      let ?job = jobState.activeJob else {
+        markJobFailed("compress: no active job");
+        return;
+      };
       let ?cs = activeChunks else {
         markJobFailed("compress: no input chunks");
         return;
       };
-      if (chunkIdx < chunkTotal) {
+      if (job.chunkIdx < job.chunkTotal) {
         let gzipEncoder = Gzip.EncoderBuilder().build();
-        gzipEncoder.encode(cs[chunkIdx]);
+        gzipEncoder.encode(cs[job.chunkIdx]);
         switch (gzipEncoder.finish()) {
           case (#single bytes) List.add(compressed, bytes);
           case (#chunked _) Runtime.trap("tickCompress: chunk exceeded outputChunkSize");
         };
-        chunkIdx += 1;
+        job.chunkIdx += 1;
         timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
       } else {
         markJobDone();
@@ -160,14 +177,18 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   func tickDecompress() : async () {
     var trapped = true;
     try {
+      let ?job = jobState.activeJob else {
+        markJobFailed("decompress: no active job");
+        return;
+      };
       let ?cs = activeChunks else {
         markJobFailed("decompress: no input chunks");
         return;
       };
-      let batchEnd = Nat.min(chunkIdx + DECODE_BATCH_SIZE, chunkTotal);
-      label batch while (chunkIdx < batchEnd) {
+      let batchEnd = Nat.min(job.chunkIdx + DECODE_BATCH_SIZE, job.chunkTotal);
+      label batch while (job.chunkIdx < batchEnd) {
         let gzipDecoder = Gzip.Decoder();
-        switch (gzipDecoder.decode(cs[chunkIdx])) {
+        switch (gzipDecoder.decode(cs[job.chunkIdx])) {
           case (#err msg) { markJobFailed("decompress decode: " # msg); return };
           case (#ok _) {};
         };
@@ -175,9 +196,9 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
           case (#err msg) { markJobFailed("decompress finish: " # msg); return };
           case (#ok result) List.addAll(decompressed, result.bytes.vals());
         };
-        chunkIdx += 1;
+        job.chunkIdx += 1;
       };
-      if (chunkIdx < chunkTotal) {
+      if (job.chunkIdx < job.chunkTotal) {
         timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
       } else {
         markJobDone();
@@ -196,9 +217,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   system func postupgrade() {
     // Timers do not survive upgrades — mark any in-progress job as failed.
-    if (activeJobId != null) {
-      markJobFailed("canister upgraded mid-job");
-    };
+    markJobFailed("canister upgraded mid-job");
   };
 
   // ── Latency baseline ──────────────────────────────────────────────────────
@@ -278,17 +297,19 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Request a compression job. Returns the JobId immediately.
   /// Only one job may be active at a time — traps if one is already running.
   public func requestCompressJob() : async JobId {
-    assert activeJobId == null;
-    let id = nextJobId;
-    nextJobId += 1;
+    let null = jobState.activeJob else Runtime.trap("requestCompressJob: job already active");
+    let id = jobState.nextJobId;
+    jobState.nextJobId += 1;
 
     let bytes = switch (rawData) { case (?d) d; case null [] };
     let cs = splitChunks(bytes, ENCODE_CHUNK_SIZE);
     activeChunks := ?cs;
-    chunkIdx := 0;
-    chunkTotal := cs.size();
-    jobKind := #compress;
-    activeJobId := ?id;
+    jobState.activeJob := ?{
+      id;
+      kind = #compress;
+      var chunkIdx = 0;
+      chunkTotal = cs.size();
+    };
     List.clear(compressed);
 
     timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
@@ -299,17 +320,19 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Only one job may be active at a time — traps if one is already running.
   /// Traps if no compressed data is available.
   public func requestDecompressJob() : async JobId {
-    assert activeJobId == null;
+    let null = jobState.activeJob else Runtime.trap("requestDecompressJob: job already active");
     if (List.size(compressed) == 0) Runtime.trap("requestDecompressJob: no compressed data");
     let cs = List.toArray(compressed);
-    let id = nextJobId;
-    nextJobId += 1;
+    let id = jobState.nextJobId;
+    jobState.nextJobId += 1;
 
     activeChunks := ?cs;
-    chunkIdx := 0;
-    chunkTotal := cs.size();
-    jobKind := #decompress;
-    activeJobId := ?id;
+    jobState.activeJob := ?{
+      id;
+      kind = #decompress;
+      var chunkIdx = 0;
+      chunkTotal = cs.size();
+    };
     List.clear(decompressed);
 
     timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
@@ -321,36 +344,33 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Poll the status of a job by its JobId.
   /// Returns `null` if the id is unknown (never submitted or already cleared).
   public query func getJobStatus(id : JobId) : async ?JobStatus {
-    if (activeJobId == ?id) {
-      return ?(
-        switch (jobKind) {
-          case (#compress) #compressing { index = chunkIdx; total = chunkTotal };
-          case (#decompress) #decompressing {
-            index = chunkIdx;
-            total = chunkTotal;
-          };
-        }
-      );
-    };
-    for ((jid, status) in completedJobs.vals()) {
-      if (jid == id) {
+    switch (jobState.activeJob) {
+      case (?job) if (job.id == id) {
         return ?(
-          switch (status) {
-            case (#done) #done;
-            case (#failed msg) #failed msg;
+          switch (job.kind) {
+            case (#compress) #compressing {
+              index = job.chunkIdx;
+              total = job.chunkTotal;
+            };
+            case (#decompress) #decompressing {
+              index = job.chunkIdx;
+              total = job.chunkTotal;
+            };
           }
         );
       };
+      case _ {};
     };
-    null;
+    switch (Map.get(jobState.completedJobs, Nat.compare, id)) {
+      case (?#done) ?#done;
+      case (?#failed msg) ?(#failed msg);
+      case null null;
+    };
   };
 
   /// Discard a completed job record, freeing its slot in the history.
   public func clearJob(id : JobId) : async () {
-    completedJobs := Array.filter<(Nat, CompletedJob)>(
-      completedJobs,
-      func((jid, _)) { jid != id },
-    );
+    Map.remove(jobState.completedJobs, Nat.compare, id);
   };
 
   // ── Result retrieval ──────────────────────────────────────────────────────
