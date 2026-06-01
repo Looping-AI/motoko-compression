@@ -74,10 +74,14 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   // ── Transient state ───────────────────────────────────────────────────────
 
-  // Fixed Huffman maps bytes 0x90–0xFF to 9-bit codes → up to 12.5% expansion on
-  // incompressible data. Keep input slices at 7/8 of outputChunkSize so that
-  // finish() always returns #single regardless of byte-value distribution.
-  transient let ENCODE_CHUNK_SIZE : Nat = Gzip.EncoderBuilder().build().outputChunkSize() * 7 / 8;
+  // finish() falls back to DEFLATE stored blocks when Huffman output > raw size,
+  // so the worst-case expansion is just the stored-block overhead:
+  //   ceil(N / 65535) × 5 B headers + 10 B gzip header + 8 B gzip footer = ~23 B.
+  // Choose the largest N such that N + ceil(N/65535)×5 + 18 ≤ outputChunkSize.
+  transient let ENCODE_CHUNK_SIZE : Nat = do {
+    let s = Gzip.EncoderBuilder().build().outputChunkSize();
+    s - (s + 65534) / 65535 * 5 - 18;
+  };
 
   // Decode is ~5–10× cheaper per byte than encode. Each Gzip stream costs ~7B
   // instructions. Start at 1 (same throughput as current) and tune upward with

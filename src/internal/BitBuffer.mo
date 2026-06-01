@@ -274,6 +274,20 @@ module {
       };
     };
 
+    /// Truncate the write position back to `bitPos`.
+    /// Restores `acc` so the next `addBits` merges correctly into the
+    /// partial byte at `bitPos`. Traps if `bitPos > writeBit`.
+    public func truncate(bitPos : Nat) {
+      if (bitPos > writeBit) Runtime.trap("BitBuffer.truncate: bitPos exceeds writeBit");
+      let bytePos = bitPos / BYTE;
+      let bitOff = bitPos % BYTE;
+      writeBit := bitPos;
+      acc := if (bitOff == 0) 0 else Nat64.bitand(
+        Nat64.fromNat(Nat8.toNat(buf[bytePos])),
+        Nat64.bitshiftLeft(1, Nat64.fromNat(bitOff)) - 1,
+      );
+    };
+
     /// Discard the first `n` bits from the logical read position.
     /// Traps if `n > bitSize()`.
     public func dropBits(n : Nat) {

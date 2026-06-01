@@ -13,9 +13,11 @@ import Array "mo:core/Array";
 import Blob "mo:core/Blob";
 import List "mo:core/List";
 import Nat32 "mo:core/Nat32";
+import Prim "mo:⛔";
 import Text "mo:core/Text";
 
 import BitBuffer "../internal/BitBuffer";
+import Block "../Deflate/Block";
 import CRC32 "../internal/CRC32";
 import DeflateEncoder "../Deflate/Encoder";
 import Header "Header";
@@ -157,10 +159,25 @@ module {
     /// Byte offsets into `bitbuffer` recorded after each Deflate block flush.
     let block_ends = List.empty<Nat>();
 
+    /// Total raw bytes committed to Huffman output by all non-final blocks so far.
+    /// Accounts for LZSS lookahead lag: bytes still buffered in the LZSS encoder
+    /// across block boundaries are NOT counted here — they appear in the final block.
+    var committed_sym_bytes : Nat = 0;
+
+    /// Zero-copy references to slices passed to encode(). Held only until
+    /// finish() completes; used on the stored-block cold path to reconstruct
+    /// the final block's raw bytes without a per-byte buffer during encoding.
+    let raw_slices = List.empty<[Nat8]>();
+
+    /// Non-null when finish() took the stored-block path; holds the corrected
+    /// byte offset for the final block entry in block_ends.
+    var stored_block_end : ?Nat = null;
+
     let deflate = DeflateEncoder.Encoder(bitbuffer, deflate_options);
     deflate.setOnBlockFlushed(
       func(byte_offset : Nat) {
         List.add(block_ends, byte_offset);
+        committed_sym_bytes += deflate.lastFlushedSymBytes();
       }
     );
 
@@ -188,6 +205,7 @@ module {
         Header.encode(bitbuffer, header, deflate_options.lzss);
       };
       deflate.encode(bytes);
+      List.add(raw_slices, bytes); // store reference, no byte copy
     };
 
     /// Compress UTF-8 text.
@@ -206,12 +224,19 @@ module {
       crc32.reset();
       bitbuffer.clear();
       List.clear(block_ends);
+      List.clear(raw_slices);
+      committed_sym_bytes := 0;
+      stored_block_end := null;
       header_written := false;
       deflate.clear();
     };
 
     /// Flush the final Deflate block, append the Gzip footer, and return
     /// the compressed data split into block-aligned chunks.
+    ///
+    /// If the compressed final block is larger than storing the raw bytes
+    /// (incompressible input), the block is automatically replaced with DEFLATE
+    /// stored blocks at no extra cost on the compressible (hot) path.
     public func finish() : EncodedResponse {
       // Write the Gzip header if no data was ever encoded
       if (not header_written) {
@@ -219,8 +244,47 @@ module {
         Header.encode(bitbuffer, header, deflate_options.lzss);
       };
 
-      // Flush the final Deflate block (BFINAL=1)
-      ignore deflate.finish(); // calls flush(true) + byteAlign + clear
+      // Bytes in the final block = total input minus bytes already committed by non-final
+      // Huffman blocks. Accounts for LZSS lookahead bytes that cross block boundaries
+      // and only get emitted during the final lzss.flush() call.
+      let finalRawBytes : Nat = input_size - committed_sym_bytes;
+      let finalBlockBitStart = bitbuffer.bitSize();
+      ignore deflate.finish();
+
+      // ── Stored-block fallback ────────────────────────────────────────────
+      // Compare the Huffman-compressed final block against DEFLATE stored blocks.
+      // Stored-block cost: first block = 3b header + alignPad + 32b LEN/NLEN;
+      // each additional block = 40b (3b + 5b align + 32b LEN/NLEN); plus raw bytes.
+      let huffmanBits : Nat = bitbuffer.bitSize() - finalBlockBitStart;
+      let nStoredBlocks = (finalRawBytes + 65534) / 65535;
+      let alignPad : Nat = (8 - finalBlockBitStart % 8) % 8;
+      let storedBits = (35 + alignPad) + (if (nStoredBlocks > 0) (nStoredBlocks - 1 : Nat) else 0) * 40 + finalRawBytes * 8;
+      if (huffmanBits > storedBits) {
+        // Reconstruct the final block's raw bytes from accumulated slice refs.
+        let buf = Prim.Array_init<Nat8>(finalRawBytes, (0 : Nat8));
+        var pos = 0;
+        var skip : Nat = input_size - finalRawBytes;
+        let slices = List.toArray(raw_slices);
+        for (s in slices.vals()) {
+          if (pos < finalRawBytes) {
+            if (skip >= s.size()) {
+              skip := (skip - s.size() : Nat);
+            } else {
+              let sOff = skip;
+              skip := 0;
+              let s_avail : Nat = s.size() - sOff;
+              let buf_avail : Nat = finalRawBytes - pos;
+              let take = if (s_avail < buf_avail) s_avail else buf_avail;
+              var i = 0;
+              while (i < take) { buf[pos] := s[sOff + i]; pos += 1; i += 1 };
+            };
+          };
+        };
+        bitbuffer.truncate(finalBlockBitStart);
+        Block.emitStored(bitbuffer, buf, 0, finalRawBytes, true);
+        stored_block_end := ?bitbuffer.byteSize();
+      };
+      // ── End stored-block fallback ────────────────────────────────────────
 
       // Footer: CRC32 (4 bytes LE) + ISIZE (4 bytes LE, mod 2^32)
       let crc32_val = crc32.finish();
@@ -242,6 +306,20 @@ module {
         //
         // Degenerate case: if a single DEFLATE block exceeds `output_chunk_size`,
         // it is emitted as its own oversized chunk rather than being split mid-block.
+
+        // If the stored-block path was taken, the Huffman flush callback recorded
+        // an incorrect (too-large) byte offset in block_ends. Fix it before slicing.
+        switch (stored_block_end) {
+          case (?end) {
+            let old = List.toArray(block_ends);
+            List.clear(block_ends);
+            var k = 0;
+            while (k + 1 < old.size()) { List.add(block_ends, old[k]); k += 1 };
+            if (old.size() > 0) List.add(block_ends, end);
+          };
+          case null {};
+        };
+
         let ends = List.toArray(block_ends);
         let n = ends.size();
 

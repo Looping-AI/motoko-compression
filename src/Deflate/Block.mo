@@ -30,6 +30,10 @@ module {
 
   public type BlockInterface = {
     size : () -> Nat;
+    /// Raw bytes emitted as symbols so far in this block (literals × 1 + pointers × len).
+    /// Does NOT include bytes still in the LZSS lookahead; those appear only after the
+    /// final flush. Use this to compute how many raw bytes have been committed to output.
+    symBytes : () -> Nat;
     add : (Nat8) -> ();
     /// Bulk-feed the slice `data[off ..< off + len]`. Equivalent to calling
     /// `add` on each byte in turn, but routes through the LZSS bulk path.
@@ -56,6 +60,9 @@ module {
     block_limit : Nat,
   ) {
     var input_size : Nat = 0;
+    // Bytes represented by symbols emitted so far (literals=1 each, pointers=len each).
+    // Excludes bytes still in the LZSS lookahead that haven't been decided yet.
+    var sym_bytes : Nat = 0;
 
     // Flat symbol storage — no per-symbol heap allocation.
     // sym_v2[i] == 0  → literal:  sym_v1[i] = byte value (0..255)
@@ -92,18 +99,21 @@ module {
         sym_v1[sym_count] := bnat;
         sym_v2[sym_count] := 0; // literal sentinel
         sym_count += 1;
+        sym_bytes += 1;
         lit_freqs[bnat] += 1;
       };
       onPointer = func(offset : Nat, len : Nat) {
         sym_v1[sym_count] := offset;
         sym_v2[sym_count] := len; // len >= 3, never 0
         sym_count += 1;
+        sym_bytes += len;
         lit_freqs[tables.lengthCode[len - 3]] += 1;
         dist_freqs[tables.distCodeOf(offset)] += 1;
       };
     };
 
     public func size() : Nat { input_size };
+    public func symBytes() : Nat { sym_bytes };
 
     public func add(byte : Nat8) {
       input_size += 1;
@@ -230,6 +240,7 @@ module {
     func resetState() {
       input_size := 0;
       sym_count := 0;
+      sym_bytes := 0;
       var k = 0;
       while (k < 286) { lit_freqs[k] := 0; k += 1 };
       k := 0;
@@ -239,6 +250,41 @@ module {
     public func clear() {
       lzss.clear();
       resetState();
+    };
+  };
+
+  // ── Stored blocks ──────────────────────────────────────────────────────────
+
+  /// Emit one or more DEFLATE stored blocks (BTYPE=00) covering raw[off..off+len].
+  /// Stored blocks cap at 65535 bytes each (RFC 1951 §3.2.4).
+  /// Used by the Gzip encoder as a fallback when Huffman output exceeds raw size.
+  public func emitStored(
+    bitbuffer : BitBuffer.BitBuffer,
+    raw : [var Nat8],
+    off : Nat,
+    len : Nat,
+    is_final : Bool,
+  ) {
+    let max_block : Nat = 65535;
+    var written : Nat = 0;
+    while (written < len) {
+      let remaining : Nat = len - written;
+      let chunk_len = if (remaining > max_block) max_block else remaining;
+      let is_last = written + chunk_len >= len;
+      bitbuffer.addBits(1, if (is_last and is_final) 1 else 0); // BFINAL
+      bitbuffer.addBits(2, 0); // BTYPE = 00
+      bitbuffer.byteAlign();
+      let nlen : Nat = 0xFFFF - chunk_len;
+      bitbuffer.addBits(8, chunk_len % 256);
+      bitbuffer.addBits(8, chunk_len / 256);
+      bitbuffer.addBits(8, nlen % 256);
+      bitbuffer.addBits(8, nlen / 256);
+      var i = 0;
+      while (i < chunk_len) {
+        bitbuffer.addByte(raw[off + written + i]);
+        i += 1;
+      };
+      written += chunk_len;
     };
   };
 

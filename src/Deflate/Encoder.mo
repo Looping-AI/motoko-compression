@@ -42,6 +42,9 @@ module {
     /// block is flushed. Used by the Gzip encoder to track block boundaries.
     var on_block_flushed : ?(Nat -> ()) = null;
 
+    // sym_bytes captured from the block just before each flush (block resets after flush).
+    var last_flushed_sym_bytes : Nat = 0;
+
     public func setOnBlockFlushed(cb : (Nat) -> ()) {
       on_block_flushed := ?cb;
     };
@@ -71,6 +74,8 @@ module {
 
     /// Flush the current block.
     public func flush(is_final : Bool) {
+      // Capture sym_bytes before block.flush() calls resetState() and zeroes it.
+      last_flushed_sym_bytes := block.symBytes();
       // BFINAL + BTYPE are written by the block itself (it chooses its own
       // Huffman kind), so the header always precedes the block content.
       block.flush(bitbuffer, is_final);
@@ -80,10 +85,18 @@ module {
       };
     };
 
+    /// Raw bytes committed by the most recently flushed block.
+    /// Reflects sym_bytes captured just before the flush (before resetState clears it).
+    public func lastFlushedSymBytes() : Nat { last_flushed_sym_bytes };
+
     /// Reset the encoder state (does not touch the underlying BitBuffer).
     public func clear() {
       block.clear();
     };
+
+    /// Bytes accumulated in the current (not-yet-flushed) Deflate block.
+    /// Must be called before `finish()` — finish() flushes and clears the block.
+    public func currentBlockSize() : Nat { block.size() };
 
     /// Flush the final block, byte-align the buffer, and return it.
     public func finish() : BitBuffer {
