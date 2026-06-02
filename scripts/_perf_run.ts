@@ -46,7 +46,8 @@ const idlFactory = ({ IDL }: { IDL: any }) => {
     generateBytes: IDL.Func([IDL.Nat], [], []),
     requestCompressJob: IDL.Func([], [JobId], []),
     requestDecompressJob: IDL.Func([], [JobId], []),
-    getJobStatus: IDL.Func([JobId], [IDL.Opt(JobStatus)], ["query"]),
+    getJobStatus: IDL.Func([JobId], [IDL.Opt(JobStatus)], []),
+    clearAll: IDL.Func([], [], []),
   });
 };
 
@@ -61,6 +62,7 @@ interface PerfService {
   requestCompressJob: () => Promise<bigint>;
   requestDecompressJob: () => Promise<bigint>;
   getJobStatus: (id: bigint) => Promise<Array<JobStatusVariant>>;
+  clearAll: () => Promise<void>;
 }
 
 /**
@@ -138,6 +140,15 @@ try {
 
   const decompressId = await actor.requestDecompressJob();
   await awaitJob(pic, actor, decompressId, "requestDecompressJob");
+
+  await actor.clearAll();
+  await actor.generateBytes(BigInt(1 * 1024));
+
+  const compressId2 = await actor.requestCompressJob();
+  await awaitJob(pic, actor, compressId2, "requestCompressJob");
+
+  const decompressId2 = await actor.requestDecompressJob();
+  await awaitJob(pic, actor, decompressId2, "requestDecompressJob");
 } finally {
   await pic?.tearDown().catch(() => {});
   await server?.stop().catch(() => {});

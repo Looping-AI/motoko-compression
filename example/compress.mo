@@ -89,7 +89,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // Decode is ~5–10× cheaper per byte than encode. Each Gzip stream costs ~7B
   // instructions. Start at 1 (same throughput as current) and tune upward with
   // perf data — e.g. set to 5 to batch 5 streams per tick at ~35B instructions.
-  transient let DECODE_BATCH_SIZE : Nat = 5;
+  transient let DECODE_BATCH_SIZE : Nat = 3;
 
   transient var timerHandle : ?Timer.TimerId = null;
 
@@ -313,6 +313,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     let id = jobState.nextJobId;
     jobState.nextJobId += 1;
 
+    List.clear(compressed);
     let bytes = switch (rawData) { case (?d) d; case null [] };
     let n = bytes.size();
     let chunkTotal = if (n == 0 or ENCODE_CHUNK_SIZE == 0) 1 else n / ENCODE_CHUNK_SIZE + (if (n % ENCODE_CHUNK_SIZE != 0) 1 else 0);
@@ -322,7 +323,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
       var chunkIdx = 0;
       chunkTotal;
     };
-    List.clear(compressed);
 
     timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
     id;
@@ -334,6 +334,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   public func requestDecompressJob() : async JobId {
     let null = jobState.activeJob else Runtime.trap("requestDecompressJob: job already active");
     if (List.size(compressed) == 0) Runtime.trap("requestDecompressJob: no compressed data");
+    List.clear(decompressed);
+
     let cs = List.toArray(compressed);
     let id = jobState.nextJobId;
     jobState.nextJobId += 1;
@@ -344,7 +346,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
       var chunkIdx = 0;
       chunkTotal = cs.size();
     };
-    List.clear(decompressed);
 
     timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
     id;
@@ -354,7 +355,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   /// Poll the status of a job by its JobId.
   /// Returns `null` if the id is unknown (never submitted or already cleared).
-  public query func getJobStatus(id : JobId) : async ?JobStatus {
+  public func getJobStatus(id : JobId) : async ?JobStatus {
     switch (jobState.activeJob) {
       case (?job) if (job.id == id) {
         return ?(

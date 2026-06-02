@@ -42,7 +42,7 @@ module {
   /// complete DEFLATE blocks and can be fed to `Decoder.decode()` independently.
   /// Sized to stay safely within the 40B-instruction per-call limit on ICP with
   /// standard parameters (#balance LZSS, 32 KiB deflate block size).
-  let DEFAULT_OUTPUT_CHUNK_SIZE : Nat = 5_242_880; // 5 MiB
+  let DEFAULT_OUTPUT_CHUNK_SIZE : Nat = 6_291_456; // 6 MiB
 
   // ── Public types ─────────────────────────────────────────────────────────
 
@@ -128,7 +128,7 @@ module {
     /// If a single DEFLATE block already exceeds this size, it will be emitted
     /// as its own (oversized) chunk — set `deflateBlockSize` ≤ `outputChunkSize`.
     ///
-    /// Default: 5 MiB — chosen to stay safely within the 40B-instruction
+    /// Default: 6 MiB — chosen to stay safely within the 40B-instruction
     /// per-call limit with standard parameters (#balance LZSS, 32 KiB blocks).
     /// Use this value as the per-self-call input slice size when spreading
     /// compression across ICP messages.
