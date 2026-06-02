@@ -134,18 +134,24 @@ try {
   const actor = fixture.actor;
 
   await actor.generateBytes(payloadBytes);
+  pic.tick();
 
   const compressId = await actor.requestCompressJob();
   await awaitJob(pic, actor, compressId, "requestCompressJob");
+  pic.tick();
 
   const decompressId = await actor.requestDecompressJob();
   await awaitJob(pic, actor, decompressId, "requestDecompressJob");
+  pic.tick();
 
   await actor.clearAll();
+  pic.tick(); // ensure clearAll is processed before next run
   await actor.generateBytes(BigInt(1 * 1024));
+  pic.tick();
 
   const compressId2 = await actor.requestCompressJob();
   await awaitJob(pic, actor, compressId2, "requestCompressJob");
+  pic.tick();
 
   const decompressId2 = await actor.requestDecompressJob();
   await awaitJob(pic, actor, decompressId2, "requestDecompressJob");

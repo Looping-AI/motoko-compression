@@ -64,9 +64,9 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   // ── Stable state ──────────────────────────────────────────────────────────
 
-  transient var rawData : ?[Nat8] = null;
-  transient let compressed : List.List<[Nat8]> = List.empty();
-  transient let decompressed : List.List<Nat8> = List.empty();
+  var rawData : ?[Nat8] = null;
+  let compressed : List.List<[Nat8]> = List.empty();
+  let decompressed : List.List<[Nat8]> = List.empty();
 
   // Job queue
   let jobState : JobState = {
@@ -189,7 +189,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         };
         switch (gzipDecoder.finish()) {
           case (#err msg) { markJobFailed("decompress finish: " # msg); return };
-          case (#ok result) List.addAll(decompressed, result.bytes.vals());
+          case (#ok result) List.add(decompressed, result.bytes);
         };
         job.chunkIdx += 1;
       };
@@ -260,17 +260,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   /// Return a 2 MiB page of the decompressed bytes (0-indexed).
   public query func getDecompressedData(page : Nat) : async [Nat8] {
-    let lo = page * PAGE_SIZE;
-    let n = List.size(decompressed);
-    if (lo >= n) return [];
-    let hi = Nat.min(lo + PAGE_SIZE, n);
-    Array.tabulate<Nat8>(
-      hi - lo,
-      func(i) {
-        let ?b = List.get(decompressed, lo + i) else Runtime.trap("getDecompressedData: out of bounds");
-        b;
-      },
-    );
+    if (List.size(decompressed) == 0) return [];
+    pageOf(Array.flatten<Nat8>(List.toArray(decompressed)), page);
   };
 
   // ── Direct (single-message) compress / decompress ────────────────────────
@@ -300,7 +291,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     };
     switch (gzipDecoder.finish()) {
       case (#err msg) Runtime.trap("decompress finish: " # msg);
-      case (#ok result) List.addAll(decompressed, result.bytes.vals());
+      case (#ok result) List.add(decompressed, result.bytes);
     };
   };
 
