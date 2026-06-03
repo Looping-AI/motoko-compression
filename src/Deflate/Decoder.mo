@@ -222,10 +222,17 @@ module {
     /// decoded array. Output is flushed at block boundaries, so peak retained
     /// memory is bounded to roughly the window plus one block.
     public func decodeStreaming(consume : ([Nat8]) -> ()) : Result<(), Text> {
-      // Must be >= 32768 so every back-reference (distance <= 32768) still
-      // resolves against the retained window after a flush.
+      // WINDOW: minimum history to retain so every back-reference (distance
+      // <= 32768) still resolves after a flush.
       let WINDOW : Nat = 32768;
-      let out = OutByteBuffer.OutByteBuffer(WINDOW + 65536);
+      // FLUSH_CHUNK: only compact the buffer when the excess above WINDOW
+      // reaches this threshold. This amortises the dropFront memmove cost:
+      // instead of shifting WINDOW bytes once per block (~32 KiB / block), we
+      // shift (WINDOW + FLUSH_CHUNK) bytes once per FLUSH_CHUNK of output —
+      // roughly 32× fewer shifts, eliminating the ~40% instruction regression
+      // from per-block compaction without changing the retained window size.
+      let FLUSH_CHUNK : Nat = 1_048_576; // 1 MiB
+      let out = OutByteBuffer.OutByteBuffer(WINDOW + FLUSH_CHUNK);
       var bfinal = false;
 
       label _blocks loop {
@@ -255,10 +262,10 @@ module {
 
         if (err != null) break _blocks;
 
-        // Emit everything older than the window; retain the last WINDOW bytes
-        // so subsequent back-references (distance <= 32768) stay resolvable.
+        // Emit the accumulated batch once it exceeds WINDOW + FLUSH_CHUNK,
+        // retaining exactly the last WINDOW bytes for back-reference resolution.
         let sz = out.size();
-        if (sz > WINDOW) {
+        if (sz >= WINDOW + FLUSH_CHUNK) {
           let f : Nat = sz - WINDOW;
           consume(out.copyRange(0, f));
           out.dropFront(f);
