@@ -253,39 +253,4 @@ module {
     };
   };
 
-  // ── Stored blocks ──────────────────────────────────────────────────────────
-
-  /// Emit one or more DEFLATE stored blocks (BTYPE=00) covering raw[off..off+len].
-  /// Stored blocks cap at 65535 bytes each (RFC 1951 §3.2.4).
-  /// Used by the Gzip encoder as a fallback when Huffman output exceeds raw size.
-  public func emitStored(
-    bitbuffer : BitBuffer.BitBuffer,
-    raw : [var Nat8],
-    off : Nat,
-    len : Nat,
-    is_final : Bool,
-  ) {
-    let max_block : Nat = 65535;
-    var written : Nat = 0;
-    while (written < len) {
-      let remaining : Nat = len - written;
-      let chunk_len = if (remaining > max_block) max_block else remaining;
-      let is_last = written + chunk_len >= len;
-      bitbuffer.addBits(1, if (is_last and is_final) 1 else 0); // BFINAL
-      bitbuffer.addBits(2, 0); // BTYPE = 00
-      bitbuffer.byteAlign();
-      let nlen : Nat = 0xFFFF - chunk_len;
-      bitbuffer.addBits(8, chunk_len % 256);
-      bitbuffer.addBits(8, chunk_len / 256);
-      bitbuffer.addBits(8, nlen % 256);
-      bitbuffer.addBits(8, nlen / 256);
-      var i = 0;
-      while (i < chunk_len) {
-        bitbuffer.addByte(raw[off + written + i]);
-        i += 1;
-      };
-      written += chunk_len;
-    };
-  };
-
 };

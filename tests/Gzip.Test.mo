@@ -349,67 +349,6 @@ suite(
   },
 );
 
-// ── Suite: Stored-block fallback (incompressible data) ───────────────────
-
-suite(
-  "Stored-block fallback",
-  func() {
-
-    test(
-      "incompressible data round-trips correctly",
-      func() {
-        // Pseudo-random bytes: high entropy, Huffman will expand them.
-        let rand = Array.tabulate<Nat8>(
-          4096,
-          func(i) {
-            Nat8.fromNat((i * 2_654_435_761) % 256);
-          },
-        );
-        expect.array(roundTrip(rand, defaultBuilder()), Nat8.toText, Nat8.equal).equal(rand);
-      },
-    );
-
-    test(
-      "incompressible output never exceeds stored-block size",
-      func() {
-        let rand = Array.tabulate<Nat8>(
-          4096,
-          func(i) {
-            Nat8.fromNat((i * 2_654_435_761) % 256);
-          },
-        );
-        let encoder = defaultBuilder().build();
-        encoder.encode(rand);
-        let resp = encoder.finish();
-        let compressed = switch (resp) {
-          case (#single b) b;
-          case (#chunked c) c[0];
-        };
-        // Stored overhead: 1 block × 5B header + 10B gzip header + 8B gzip footer = 23B.
-        expect.bool(compressed.size() <= rand.size() + 23).isTrue();
-      },
-    );
-
-    test(
-      "compressible data is unaffected (still uses Huffman)",
-      func() {
-        // All-zero bytes compress very well; stored blocks would be much larger.
-        let zeros = Array.tabulate<Nat8>(4096, func(_) { 0 });
-        let encoder = defaultBuilder().build();
-        encoder.encode(zeros);
-        let resp = encoder.finish();
-        let compressed = switch (resp) {
-          case (#single b) b;
-          case (#chunked c) c[0];
-        };
-        // Huffman output should be far smaller than stored size (4096 + 23 bytes).
-        expect.bool(compressed.size() < zeros.size()).isTrue();
-      },
-    );
-
-  },
-);
-
 // ── Suite: Streaming decode (finishStreaming) ────────────────────────────
 
 suite(
