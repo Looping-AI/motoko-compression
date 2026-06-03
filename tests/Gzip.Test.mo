@@ -8,35 +8,8 @@ import Gzip "../src/Gzip/lib";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-/// Encode `data` with `enc`, feed all chunks through a decoder, return decoded bytes.
-func roundTrip(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
-  let encoder = enc.build();
-  encoder.encode(data);
-  let resp = encoder.finish();
-
-  let decoder = Gzip.Decoder();
-  let chunks = switch (resp) {
-    case (#single data) [data];
-    case (#chunked chunks) chunks;
-  };
-  for (chunk in chunks.vals()) {
-    switch (decoder.decode(chunk)) {
-      case (#err(msg)) Runtime.trap("decode error: " # msg);
-      case (#ok(_)) {};
-    };
-  };
-  switch (decoder.finish()) {
-    case (#err(msg)) Runtime.trap("finish error: " # msg);
-    case (#ok(result)) result.bytes;
-  };
-};
-
-func defaultBuilder() : Gzip.EncoderBuilder {
-  Gzip.EncoderBuilder();
-};
-
-/// Like `roundTrip` but decodes via the streaming API, collecting the chunks
-/// delivered to the `consume` callback back into a single array.
+/// Encode `data` with `enc`, decode via the streaming API, collecting chunks
+/// into a single array. Used by all round-trip tests.
 func roundTripStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
   let encoder = enc.build();
   encoder.encode(data);
@@ -69,6 +42,10 @@ func roundTripStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
   List.toArray(collected);
 };
 
+func defaultBuilder() : Gzip.EncoderBuilder {
+  Gzip.EncoderBuilder();
+};
+
 // ── Suite: Fixed-Huffman round-trips ─────────────────────────────────────
 
 suite(
@@ -78,14 +55,14 @@ suite(
     test(
       "empty input",
       func() {
-        expect.array(roundTrip([], defaultBuilder()), Nat8.toText, Nat8.equal).equal([]);
+        expect.array(roundTripStreaming([], defaultBuilder()), Nat8.toText, Nat8.equal).equal([]);
       },
     );
 
     test(
       "single byte",
       func() {
-        expect.array(roundTrip([42], defaultBuilder()), Nat8.toText, Nat8.equal).equal([42]);
+        expect.array(roundTripStreaming([42], defaultBuilder()), Nat8.toText, Nat8.equal).equal([42]);
       },
     );
 
@@ -93,7 +70,7 @@ suite(
       "hello world",
       func() {
         let data : [Nat8] = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100];
-        expect.array(roundTrip(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(roundTripStreaming(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
       },
     );
 
@@ -101,7 +78,7 @@ suite(
       "1 KB repeated bytes (high compression ratio)",
       func() {
         let data = Array.tabulate<Nat8>(1024, func(_) { 0xAA });
-        expect.array(roundTrip(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(roundTripStreaming(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
       },
     );
 
@@ -109,7 +86,7 @@ suite(
       "all 256 byte values",
       func() {
         let data = Array.tabulate<Nat8>(256, func(i) { Nat8.fromNat(i) });
-        expect.array(roundTrip(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(roundTripStreaming(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
       },
     );
 
@@ -127,7 +104,7 @@ suite(
       func() {
         let data : [Nat8] = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100];
         let enc = Gzip.EncoderBuilder().dynamicHuffman();
-        expect.array(roundTrip(data, enc), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(roundTripStreaming(data, enc), Nat8.toText, Nat8.equal).equal(data);
       },
     );
 
@@ -136,7 +113,7 @@ suite(
       func() {
         let data = Array.tabulate<Nat8>(1024, func(_) { 0xBB });
         let enc = Gzip.EncoderBuilder().dynamicHuffman();
-        expect.array(roundTrip(data, enc), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(roundTripStreaming(data, enc), Nat8.toText, Nat8.equal).equal(data);
       },
     );
 
@@ -154,7 +131,7 @@ suite(
       func() {
         let data = Array.tabulate<Nat8>(512, func(i) { Nat8.fromNat(i % 64) });
         let enc = Gzip.EncoderBuilder().lzss(#fast);
-        expect.array(roundTrip(data, enc), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(roundTripStreaming(data, enc), Nat8.toText, Nat8.equal).equal(data);
       },
     );
 
@@ -163,7 +140,7 @@ suite(
       func() {
         let data = Array.tabulate<Nat8>(512, func(i) { Nat8.fromNat(i % 64) });
         let enc = Gzip.EncoderBuilder().lzss(#balance);
-        expect.array(roundTrip(data, enc), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(roundTripStreaming(data, enc), Nat8.toText, Nat8.equal).equal(data);
       },
     );
 
@@ -172,7 +149,7 @@ suite(
       func() {
         let data = Array.tabulate<Nat8>(512, func(i) { Nat8.fromNat(i % 64) });
         let enc = Gzip.EncoderBuilder().lzss(#best);
-        expect.array(roundTrip(data, enc), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(roundTripStreaming(data, enc), Nat8.toText, Nat8.equal).equal(data);
       },
     );
 
@@ -199,7 +176,8 @@ suite(
           case (#chunked chunks) chunks[0];
         };
         ignore dec.decode(all);
-        switch (dec.finish()) {
+        let nop = func(_ : [Nat8]) {};
+        switch (dec.finishStreaming(nop)) {
           case (#ok(r)) {
             switch (r.header.os) {
               case (#Macintosh) {};
@@ -225,7 +203,8 @@ suite(
           case (#chunked chunks) chunks[0];
         };
         ignore dec.decode(all);
-        switch (dec.finish()) {
+        let nop = func(_ : [Nat8]) {};
+        switch (dec.finishStreaming(nop)) {
           case (#ok(r)) {
             switch (r.header.filename) {
               case (?"hello.txt") {};
@@ -268,10 +247,14 @@ suite(
             case (#ok(_)) {};
           };
         };
-        switch (decoder.finish()) {
+        let collected = List.empty<Nat8>();
+        let consume = func(out : [Nat8]) {
+          for (b in out.vals()) List.add(collected, b);
+        };
+        switch (decoder.finishStreaming(consume)) {
           case (#err(msg)) Runtime.trap("finish error: " # msg);
-          case (#ok(result)) {
-            expect.array(result.bytes, Nat8.toText, Nat8.equal).equal(data);
+          case (#ok(_)) {
+            expect.array(List.toArray(collected), Nat8.toText, Nat8.equal).equal(data);
           };
         };
       },
@@ -310,7 +293,8 @@ suite(
       func() {
         let decoder = Gzip.Decoder();
         ignore decoder.decode([0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]);
-        switch (decoder.finish()) {
+        let nop = func(_ : [Nat8]) {};
+        switch (decoder.finishStreaming(nop)) {
           case (#err(_)) {}; // expected
           case (#ok(_)) Runtime.trap("Expected error for invalid magic bytes");
         };
@@ -339,7 +323,8 @@ suite(
 
         let decoder = Gzip.Decoder();
         ignore decoder.decode(corrupted);
-        switch (decoder.finish()) {
+        let nop = func(_ : [Nat8]) {};
+        switch (decoder.finishStreaming(nop)) {
           case (#err(_)) {}; // expected
           case (#ok(_)) Runtime.trap("Expected error for corrupted data");
         };
@@ -363,7 +348,7 @@ suite(
     );
 
     test(
-      "hello world matches finish()",
+      "hello world",
       func() {
         let data : [Nat8] = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100];
         expect.array(roundTripStreaming(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);

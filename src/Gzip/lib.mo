@@ -11,7 +11,8 @@
 ///   let dec = Gzip.Decoder();
 ///   let data = switch (resp) { case (#single d) d; case (#chunked { chunks }) chunks[0] };
 ///   ignore dec.decode(data);
-///   let result = dec.finish();        // Result<DecodedResponse, Text>
+///   let collected = List.empty<Nat8>();
+///   let result = dec.finishStreaming(func(c) { List.addAll(collected, c.vals()) });
 
 import Header_ "Header";
 import Encoder_ "Encoder";
@@ -38,8 +39,6 @@ module {
   public let EncoderBuilder = Encoder_.EncoderBuilder;
 
   // ── Decoder ──────────────────────────────────────────────────────────────
-
-  public type DecodedResponse = Decoder_.DecodedResponse;
 
   /// Summary returned by `Decoder.finishStreaming()`.
   public type StreamedSummary = Decoder_.StreamedSummary;

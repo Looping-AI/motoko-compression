@@ -5,10 +5,11 @@
 ///
 /// Public API:
 ///   Decoder(inputBytes : [Nat8])
-///   decode() : Result<[Nat8], Text>
+///   decodeStreamingWithCapacity(initOutCap, consume) : Result<(), Text>
 ///   bytesConsumed() : Nat   — bytes read from input (for Gzip footer parsing)
 
 import Array "mo:core/Array";
+import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
 import Nat64 "mo:core/Nat64";
 import Prim "mo:⛔";
@@ -167,72 +168,30 @@ module {
 
     // ── Public API ────────────────────────────────────────────────────────
 
-    /// Decompress the full deflate stream and return the decoded bytes.
-    public func decode() : Result<[Nat8], Text> {
-      decodeWithCapacity(0);
-    };
-
-    /// Like `decode()` but pre-sizes the output buffer to `initOutCap` bytes.
-    /// Callers that know the decompressed size up front (e.g. Gzip via ISIZE)
-    /// pass it here to avoid repeated doubling growth and the associated
-    /// reallocations/copies. Pass `0` to use the default initial capacity.
-    public func decodeWithCapacity(initOutCap : Nat) : Result<[Nat8], Text> {
-      let out = OutByteBuffer.OutByteBuffer(if (initOutCap > 0) initOutCap else 65536);
-      var bfinal = false;
-
-      label _blocks loop {
-        if (bfinal) break _blocks;
-
-        if (acc.bitsLeft() == 0) {
-          err := ?"Deflate: stream ended before final block";
-          break _blocks;
-        };
-
-        bfinal := acc.readBit(); // BFINAL
-        let btype = acc.readBits(2); // BTYPE
-
-        if (btype == 0) {
-          decodeStoredBlock(out);
-        } else if (btype == 1) {
-          decodeCompressedBlock(out, fixedLit, fixedDist);
-        } else if (btype == 2) {
-          switch (loadDynamicHeader()) {
-            case (#ok((ld, dd))) decodeCompressedBlock(out, ld, dd);
-            case (#err(msg)) { err := ?msg; break _blocks };
-          };
-        } else {
-          err := ?"Deflate: invalid block type 3";
-          break _blocks;
-        };
-
-        if (err != null) break _blocks;
-      };
-
-      let resp = switch err {
-        case (?msg) #err(msg);
-        case null #ok(out.toArray());
-      };
-      return resp;
-    };
-
-    /// Streaming decode: decompress and emit output in bounded chunks via
-    /// `consume`, retaining only a 32 KiB sliding window (the maximum DEFLATE
-    /// back-reference distance) instead of the entire decoded output. This lets
-    /// callers process arbitrarily large streams without materialising the full
-    /// decoded array. Output is flushed at block boundaries, so peak retained
-    /// memory is bounded to roughly the window plus one block.
-    public func decodeStreaming(consume : ([Nat8]) -> ()) : Result<(), Text> {
+    /// Decompress and emit output in bounded chunks via `consume`, pre-sizing
+    /// the output buffer to `initOutCap` bytes (capped at WINDOW + FLUSH_CHUNK
+    /// so peak memory stays bounded). Pass 0 to use the default 64 KiB initial
+    /// capacity. Callers that know the decompressed size up front (e.g. Gzip
+    /// via ISIZE) pass it here to avoid over-allocating for typical payloads.
+    ///
+    /// Retains only a 32 KiB sliding window after each flush so arbitrarily
+    /// large streams can be processed without materializing the full output.
+    public func decodeStreamingWithCapacity(initOutCap : Nat, consume : ([Nat8]) -> ()) : Result<(), Text> {
       // WINDOW: minimum history to retain so every back-reference (distance
       // <= 32768) still resolves after a flush.
       let WINDOW : Nat = 32768;
       // FLUSH_CHUNK: only compact the buffer when the excess above WINDOW
-      // reaches this threshold. This amortises the dropFront memmove cost:
+      // reaches this threshold. This amortizes the dropFront memmove cost:
       // instead of shifting WINDOW bytes once per block (~32 KiB / block), we
       // shift (WINDOW + FLUSH_CHUNK) bytes once per FLUSH_CHUNK of output —
       // roughly 32× fewer shifts, eliminating the ~40% instruction regression
       // from per-block compaction without changing the retained window size.
       let FLUSH_CHUNK : Nat = 1_048_576; // 1 MiB
-      let out = OutByteBuffer.OutByteBuffer(WINDOW + FLUSH_CHUNK);
+      let maxCap = WINDOW + FLUSH_CHUNK;
+      // Initial capacity: use the caller's hint (e.g. Gzip ISIZE), capped at
+      // maxCap so we never over-allocate, with a 64 KiB floor when no hint.
+      let initCap : Nat = if (initOutCap > 0) Nat.min(initOutCap, maxCap) else 65536;
+      let out = OutByteBuffer.OutByteBuffer(initCap);
       var bfinal = false;
 
       label _blocks loop {

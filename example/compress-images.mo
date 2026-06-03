@@ -114,9 +114,12 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
         case (#err(msg)) Runtime.trap("_decompressBatch decode: " # msg);
         case (#ok(_)) {};
       };
-      switch (gzip_decoder.finish()) {
-        case (#err(msg)) Runtime.trap("_decompressBatch finish: " # msg);
-        case (#ok(result)) List.addAll(_decompress_buf, result.bytes.vals());
+      let consume = func(out : [Nat8]) {
+        List.addAll(_decompress_buf, out.vals());
+      };
+      switch (gzip_decoder.finishStreaming(consume)) {
+        case (#err(msg)) Runtime.trap("_decompressBatch finishStreaming: " # msg);
+        case (#ok(_)) {};
       };
     };
   };
@@ -133,9 +136,13 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
           case (#err(msg)) Runtime.trap("decodeImage decode: " # msg);
           case (#ok(_)) {};
         };
-        switch (gzip_decoder.finish()) {
-          case (#err(msg)) Runtime.trap("decodeImage finish: " # msg);
-          case (#ok(result)) Map.add(decoded_cache, Text.compare, name, result.bytes);
+        List.clear(_decompress_buf);
+        let consume = func(out : [Nat8]) {
+          List.addAll(_decompress_buf, out.vals());
+        };
+        switch (gzip_decoder.finishStreaming(consume)) {
+          case (#err(msg)) Runtime.trap("decodeImage finishStreaming: " # msg);
+          case (#ok(_)) Map.add(decoded_cache, Text.compare, name, List.toArray(_decompress_buf));
         };
       };
       case (#chunked cs) {

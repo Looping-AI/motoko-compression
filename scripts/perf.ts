@@ -81,7 +81,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
     },
     {
       file: "src/Deflate/Decoder.mo",
-      funcs: ["decode", "decodeWithCapacity", "bytesConsumed"],
+      funcs: ["decodeStreamingWithCapacity", "bytesConsumed"],
     },
   ],
   gzip: [
@@ -206,7 +206,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
     {
       file: "src/Deflate/Decoder.mo",
       funcs: [
-        "decode",
+        "decodeStreamingWithCapacity",
         "decodeStoredBlock",
         "decodeCompressedBlock",
         "loadDynamicHeader",

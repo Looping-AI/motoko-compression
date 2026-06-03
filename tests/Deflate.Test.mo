@@ -1,5 +1,6 @@
 import { test; suite; expect } "mo:test";
 import Array "mo:core/Array";
+import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
 import Nat "mo:core/Nat";
 import Runtime "mo:core/Runtime";
@@ -18,8 +19,10 @@ func roundTrip(data : [Nat8], options : Deflate.DeflateOptions) : [Nat8] {
   let bytes = bb.getBytes(0, bb.byteSize());
 
   let decoder = DeflateDecoder.Decoder(bytes);
-  switch (decoder.decode()) {
-    case (#ok(result)) result;
+  let collected = List.empty<Nat8>();
+  let consume = func(out : [Nat8]) { List.addAll(collected, out.vals()) };
+  switch (decoder.decodeStreamingWithCapacity(0, consume)) {
+    case (#ok()) List.toArray(collected);
     case (#err(msg)) Runtime.trap("Decode error: " # msg # " bytes=" # debug_show bytes);
   };
 };
@@ -314,8 +317,10 @@ suite(
 
 func decodeBytes(bytes : [Nat8]) : { #ok : [Nat8]; #err : Text } {
   let decoder = DeflateDecoder.Decoder(bytes);
-  switch (decoder.decode()) {
-    case (#ok(result)) #ok(result);
+  let collected = List.empty<Nat8>();
+  let consume = func(out : [Nat8]) { List.addAll(collected, out.vals()) };
+  switch (decoder.decodeStreamingWithCapacity(0, consume)) {
+    case (#ok()) #ok(List.toArray(collected));
     case (#err(msg)) #err(msg);
   };
 };

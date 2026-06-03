@@ -80,7 +80,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
 
   /// Internal: accumulate a batch of compressed chunks into the decoder buffer.
   /// External gzip data is ONE continuous stream, so decode() only accumulates bytes —
-  /// finish() is called once by decompress() after all batches complete.
+  /// finishStreaming() is called once by decompress() after all batches complete.
   /// Guarded so only this canister may call it — each await gives a fresh instruction budget.
   public shared ({ caller }) func _decodeBatch(batch : [[Nat8]]) : async () {
     assert caller == canisterId();
@@ -94,7 +94,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
 
   /// Decompress all accumulated chunks and cache the result in _decompressed.
   /// Spreads decode() work across ICP messages via self-calls (DECODE_BATCH_SIZE per call),
-  /// then calls finish() once to perform the actual decompression.
+  /// then calls finishStreaming() once to perform the actual decompression.
   public func decompress() : async () {
     let all = List.toArray(_chunks);
     let n = all.size();
@@ -105,9 +105,11 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
       await _decodeBatch(batch);
       i := hi;
     };
-    switch (gzip_decoder.finish()) {
-      case (#err(msg)) Runtime.trap("decompress finish: " # msg);
-      case (#ok(result)) _decompressed := ?result.bytes;
+    let buf = List.empty<Nat8>();
+    let consume = func(chunk : [Nat8]) { List.addAll(buf, chunk.vals()) };
+    switch (gzip_decoder.finishStreaming(consume)) {
+      case (#err(msg)) Runtime.trap("decompress finishStreaming: " # msg);
+      case (#ok(_)) _decompressed := ?List.toArray(buf);
     };
   };
 
