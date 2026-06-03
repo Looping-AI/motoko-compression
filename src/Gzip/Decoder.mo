@@ -67,21 +67,24 @@ module {
       };
 
       reader.clearRead();
-      let remaining = reader.readBytes(reader.byteSize());
+      // Slice the deflate data (plus 8-byte footer) in place from the reader's
+      // buffer instead of copying it into a fresh array. Valid because the gzip
+      // header is byte-aligned, so the read position is on a byte boundary.
+      let (store, start, len) = reader.readableSlice();
 
       // 2. Pre-size the output buffer from the gzip ISIZE field (last 4 bytes,
       //    LE, = uncompressed size mod 2^32) so the decoder allocates exactly
       //    what it needs. The streaming cap (WINDOW + FLUSH_CHUNK) is still
       //    applied inside decodeStreamingWithCapacity for large streams.
-      let rsize = remaining.size();
-      let outCapHint : Nat = if (rsize >= 4) {
-        let isizeSlice = Array.tabulate<Nat8>(4, func(k) { remaining[rsize - 4 + k] });
+      let outCapHint : Nat = if (len >= 4) {
+        let isizeSlice = Array.tabulate<Nat8>(4, func(k) { store[start + len - 4 + k] });
         Utils.leBytesToNat(isizeSlice);
       } else { 0 };
 
-      // 3. Deflate-decompress, accumulating CRC32 + size incrementally and
-      //    forwarding each chunk to the caller. No full output buffer is held.
-      let deflate = DeflateDecoder.Decoder(remaining);
+      // 3. Deflate-decompress straight from the slice, accumulating CRC32 + size
+      //    incrementally and forwarding each chunk to the caller. No full input
+      //    copy and no full output buffer is held.
+      let deflate = DeflateDecoder.fromSlice(store, start, len);
       let crc = CRC32.CRC32();
       var total : Nat = 0;
       let sink = func(chunk : [Nat8]) {
@@ -96,12 +99,12 @@ module {
 
       // 3. Locate the Gzip footer (8 bytes) immediately after the deflate data.
       let c = deflate.bytesConsumed();
-      if (c + 8 > remaining.size()) {
+      if (c + 8 > len) {
         return #err("Gzip: stream truncated — no footer");
       };
 
       // 4. Verify CRC32 (4 bytes, LE).
-      let crcSlice = Array.tabulate<Nat8>(4, func(k) { remaining[c + k] });
+      let crcSlice = Array.tabulate<Nat8>(4, func(k) { store[start + c + k] });
       let stored_crc32 = Nat32.fromNat(Utils.leBytesToNat(crcSlice));
       let actual_crc32 = crc.finish();
       if (stored_crc32 != actual_crc32) {
@@ -114,7 +117,7 @@ module {
       };
 
       // 5. Verify ISIZE (4 bytes, LE, mod 2^32).
-      let isizeSlice = Array.tabulate<Nat8>(4, func(k) { remaining[c + 4 + k] });
+      let isizeSlice = Array.tabulate<Nat8>(4, func(k) { store[start + c + 4 + k] });
       let stored_isize = Utils.leBytesToNat(isizeSlice);
       let actual_isize = total % 4294967296;
       if (stored_isize != actual_isize) {

@@ -18,7 +18,7 @@ func roundTrip(data : [Nat8], options : Deflate.DeflateOptions) : [Nat8] {
   let bb = encoder.finish();
   let bytes = bb.getBytes(0, bb.byteSize());
 
-  let decoder = DeflateDecoder.Decoder(bytes);
+  let decoder = DeflateDecoder.fromBytes(bytes);
   let collected = List.empty<Nat8>();
   let consume = func(out : [Nat8]) { List.addAll(collected, out.vals()) };
   switch (decoder.decodeStreamingWithCapacity(0, consume)) {
@@ -316,7 +316,7 @@ suite(
 // ── Suite: Decoder error paths ────────────────────────────────────────────
 
 func decodeBytes(bytes : [Nat8]) : { #ok : [Nat8]; #err : Text } {
-  let decoder = DeflateDecoder.Decoder(bytes);
+  let decoder = DeflateDecoder.fromBytes(bytes);
   let collected = List.empty<Nat8>();
   let consume = func(out : [Nat8]) { List.addAll(collected, out.vals()) };
   switch (decoder.decodeStreamingWithCapacity(0, consume)) {

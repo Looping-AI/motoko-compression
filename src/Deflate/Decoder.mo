@@ -4,7 +4,8 @@
 /// allocations, Nat64 bit accumulator, [var Nat8] output buffer.
 ///
 /// Public API:
-///   Decoder(inputBytes : [Nat8])
+///   fromBytes(inputBytes : [Nat8]) : Decoder
+///   fromSlice(src : [var Nat8], start, len) : Decoder   — zero-copy
 ///   decodeStreamingWithCapacity(initOutCap, consume) : Result<(), Text>
 ///   bytesConsumed() : Nat   — bytes read from input (for Gzip footer parsing)
 
@@ -152,9 +153,8 @@ module {
 
   // ── Decoder class ──────────────────────────────────────────────────────
 
-  public class Decoder(inputBytes : [Nat8]) {
+  public class Decoder(acc : BitAccumulator.BitAccumulator) {
 
-    let acc = BitAccumulator.BitAccumulator(inputBytes);
     var err : ?Text = null;
     let fixedLit : HuffmanDecoder.FastDecoder = buildFixedLitDecoder();
     let fixedDist : HuffmanDecoder.FastDecoder = buildFixedDistDecoder();
@@ -563,6 +563,20 @@ module {
       };
     };
 
+  };
+
+  // ── Constructors ────────────────────────────────────────────────────────
+
+  /// Build a decoder over an immutable compressed-byte array. The bytes are
+  /// copied into a fresh mutable buffer; use `fromSlice` to decode in place.
+  public func fromBytes(inputBytes : [Nat8]) : Decoder {
+    Decoder(BitAccumulator.fromArray(inputBytes));
+  };
+
+  /// Build a decoder over the slice `[start, start + len)` of `src` without
+  /// copying. The caller must keep `src` unmodified while decoding.
+  public func fromSlice(src : [var Nat8], start : Nat, len : Nat) : Decoder {
+    Decoder(BitAccumulator.fromSlice(src, start, len));
   };
 
 };

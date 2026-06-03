@@ -100,6 +100,18 @@ module {
     /// Ceiling of available bits / 8 (rounds up for a partial trailing byte).
     public func byteSize() : Nat { (bitSize() + 7) / 8 };
 
+    /// Expose the readable region as an in-place slice `(store, startByte, len)`
+    /// of the underlying buffer, avoiding the copy that `readBytes` performs.
+    /// Valid only when the read position is byte-aligned; traps otherwise.
+    /// `store[startByte ..< startByte + len]` are the `byteSize()` readable bytes.
+    public func readableSlice() : ([var Nat8], Nat, Nat) {
+      let startBit = bitbuffer.readBitPos() + offset;
+      if (startBit % 8 != 0) {
+        Runtime.trap("BitReader.readableSlice: read position not byte-aligned");
+      };
+      (bitbuffer.store(), startBit / 8, byteSize());
+    };
+
     // ── Alignment ─────────────────────────────────────────────────────────
 
     /// Skip the remaining bits in the last partial byte of readable data,

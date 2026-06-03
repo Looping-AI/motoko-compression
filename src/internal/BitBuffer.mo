@@ -205,6 +205,15 @@ module {
 
     // ── Read operations ───────────────────────────────────────────────────
 
+    /// Direct access to the backing store. Combined with `readBitPos()`, lets
+    /// byte-aligned consumers read the live region in place without copying.
+    /// The reference is only valid until the next write that grows `buf`.
+    public func store() : [var Nat8] { buf };
+
+    /// Absolute bit offset of the logical read position within `store()`
+    /// (i.e. how many bits have been dropped from the front via `dropBits`).
+    public func readBitPos() : Nat { readBit };
+
     /// Read the bit at logical position `i` (0 = first unread bit).
     public func getBit(i : Nat) : Bool {
       let abs = i + readBit;

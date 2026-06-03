@@ -416,7 +416,7 @@ suite(
       enc.encode(buf, sym);
       buf.byteAlign();
       let bytes = buf.getBytes(0, buf.byteSize());
-      let acc = BitAccumulator.BitAccumulator(bytes);
+      let acc = BitAccumulator.fromArray(bytes);
       dec.decodeRaw(acc);
     };
 
@@ -453,7 +453,7 @@ suite(
         enc.encode(buf, 3);
         buf.byteAlign();
         let bytes = buf.getBytes(0, buf.byteSize());
-        let acc = BitAccumulator.BitAccumulator(bytes);
+        let acc = BitAccumulator.fromArray(bytes);
         for (expected in [0, 1, 2, 3].vals()) {
           let sym = dec.decodeRaw(acc);
           expect.nat(sym).equal(expected);
@@ -490,7 +490,7 @@ suite(
         };
         buf.byteAlign();
         let bytes = buf.getBytes(0, buf.byteSize());
-        let acc = BitAccumulator.BitAccumulator(bytes);
+        let acc = BitAccumulator.fromArray(bytes);
         for (sym in syms.vals()) {
           if (enc.lookup(sym).bitwidth > 0) {
             let decoded = dec.decodeRaw(acc);
@@ -511,7 +511,7 @@ suite(
           case (#err(msg)) Runtime.trap("Decoder build failed: " # msg);
         };
         // bit 1 is unoccupied for a one-symbol tree
-        let acc = BitAccumulator.BitAccumulator([0xFF]);
+        let acc = BitAccumulator.fromArray([0xFF]);
         let result = dec.decodeRaw(acc);
         expect.nat(result).equal(Decoder.DECODE_ERROR);
       },

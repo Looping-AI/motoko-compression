@@ -10,26 +10,32 @@
 ///
 /// All hot operations are Nat64 arithmetic — no heap allocation, no bignum.
 
+import Array "mo:core/Array";
 import Nat8 "mo:core/Nat8";
 import Nat64 "mo:core/Nat64";
 import Runtime "mo:core/Runtime";
 
 module {
 
-  public class BitAccumulator(inputBytes : [Nat8]) {
+  /// Bit accumulator over a slice `[start, start + len)` of a `[var Nat8]`
+  /// backing store. The slice form lets callers (e.g. the Gzip decoder) feed
+  /// the deflate stream straight from an existing buffer with no intermediate
+  /// copy. Use the `fromArray` / `fromSlice` helpers below to construct one.
+  public class BitAccumulator(input : [var Nat8], start : Nat, len : Nat) {
     var hold : Nat64 = 0; // bit accumulator (LSB-first)
     var bits : Nat64 = 0; // number of valid bits currently in hold (0..63)
-    var pos : Nat = 0; // index of next byte to load from src
+    var pos : Nat = start; // absolute index of next byte to load from src
 
-    let src : [Nat8] = inputBytes;
-    let srcLen : Nat = inputBytes.size();
+    let src : [var Nat8] = input;
+    let base : Nat = start; // absolute index of the first slice byte
+    let endPos : Nat = start + len; // absolute one-past-the-last slice byte
 
     // ── Core hot operations ───────────────────────────────────────────────
 
     /// Load bytes from input into hold until bits > 56 or input is exhausted.
     /// After refill, hold has at most 64 valid bits in its low-order positions.
     public func refill() {
-      while (bits <= 56 and pos < srcLen) {
+      while (bits <= 56 and pos < endPos) {
         hold := hold | (Nat64.fromNat8(src[pos]) << bits);
         bits += 8;
         pos += 1;
@@ -77,7 +83,7 @@ module {
         bits -= 8;
         return b;
       };
-      if (pos < srcLen) {
+      if (pos < endPos) {
         let b = src[pos];
         pos += 1;
         return b;
@@ -113,29 +119,46 @@ module {
     };
 
     /// Raw input bytes — used by inlined refill loops.
-    public func getBytes() : [Nat8] { src };
+    public func getBytes() : [var Nat8] { src };
 
-    /// Length of raw input — used by inlined refill loops.
-    public func getBytesLen() : Nat { srcLen };
+    /// Absolute end index of the slice — used by inlined refill loops as the
+    /// `pos` upper bound (compared against the absolute `pos`).
+    public func getBytesLen() : Nat { endPos };
 
     // ── Size queries ──────────────────────────────────────────────────────
 
     /// Total bits remaining: bits in hold + bits still in input.
     public func bitsLeft() : Nat {
-      Nat64.toNat(bits) + (srcLen - pos) * 8;
+      Nat64.toNat(bits) + (endPos - pos) * 8;
     };
 
     /// Number of input bytes not yet loaded into hold.
     public func bytesLeft() : Nat {
-      srcLen - pos;
+      endPos - pos;
     };
 
-    /// Bit offset consumed so far, relative to the start of the input.
-    /// Useful for error reporting.
+    /// Bit offset consumed so far, relative to the start of the slice.
+    /// Useful for error reporting and for locating a trailing footer.
     public func bitPosition() : Nat {
-      pos * 8 - Nat64.toNat(bits);
+      (pos - base) * 8 - Nat64.toNat(bits);
     };
 
+  };
+
+  // ── Constructors ───────────────────────────────────────────────────────
+
+  /// Build an accumulator over an immutable byte array. The bytes are copied
+  /// into a fresh mutable buffer (`Array.toVarArray`); use `fromSlice` to avoid
+  /// the copy when the data already lives in a `[var Nat8]`.
+  public func fromArray(inputBytes : [Nat8]) : BitAccumulator {
+    BitAccumulator(Array.toVarArray<Nat8>(inputBytes), 0, inputBytes.size());
+  };
+
+  /// Build an accumulator over the slice `[start, start + len)` of `src`
+  /// without copying. The caller must keep `src` unmodified for the lifetime
+  /// of the accumulator.
+  public func fromSlice(src : [var Nat8], start : Nat, len : Nat) : BitAccumulator {
+    BitAccumulator(src, start, len);
   };
 
 };
