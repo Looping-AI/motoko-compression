@@ -189,9 +189,13 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
           case (#err msg) { markJobFailed("decompress decode: " # msg); return };
           case (#ok _) {};
         };
-        switch (gzipDecoder.finish()) {
-          case (#err msg) { markJobFailed("decompress finish: " # msg); return };
-          case (#ok result) List.add(decompressed, result.bytes);
+        let consume = func(chunk : [Nat8]) { List.add(decompressed, chunk) };
+        switch (gzipDecoder.finishStreaming(consume)) {
+          case (#err msg) {
+            markJobFailed("decompress finishStreaming: " # msg);
+            return;
+          };
+          case (#ok _summary) {};
         };
         job.chunkIdx += 1;
       };
@@ -315,6 +319,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   };
 
   /// Decompress compressed data in a single message (no timer). Best for small payloads.
+  /// Uses streaming decode to avoid materializing the full output array.
   public func decompress() : async () {
     if (List.size(compressed) == 0) Runtime.trap("decompress: no compressed data");
     List.clear(decompressed);
@@ -324,9 +329,10 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
       case (#err msg) Runtime.trap("decompress decode: " # msg);
       case (#ok _) {};
     };
-    switch (gzipDecoder.finish()) {
-      case (#err msg) Runtime.trap("decompress finish: " # msg);
-      case (#ok result) List.add(decompressed, result.bytes);
+    let consume = func(chunk : [Nat8]) { List.add(decompressed, chunk) };
+    switch (gzipDecoder.finishStreaming(consume)) {
+      case (#err msg) Runtime.trap("decompress finishStreaming: " # msg);
+      case (#ok _summary) {};
     };
   };
 

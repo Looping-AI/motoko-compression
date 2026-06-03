@@ -1,5 +1,6 @@
 import { test; suite; expect } "mo:test";
 import Array "mo:core/Array";
+import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
 import Runtime "mo:core/Runtime";
 
@@ -32,6 +33,40 @@ func roundTrip(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
 
 func defaultBuilder() : Gzip.EncoderBuilder {
   Gzip.EncoderBuilder();
+};
+
+/// Like `roundTrip` but decodes via the streaming API, collecting the chunks
+/// delivered to the `consume` callback back into a single array.
+func roundTripStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
+  let encoder = enc.build();
+  encoder.encode(data);
+  let resp = encoder.finish();
+
+  let decoder = Gzip.Decoder();
+  let chunks = switch (resp) {
+    case (#single data) [data];
+    case (#chunked chunks) chunks;
+  };
+  for (chunk in chunks.vals()) {
+    switch (decoder.decode(chunk)) {
+      case (#err(msg)) Runtime.trap("decode error: " # msg);
+      case (#ok(_)) {};
+    };
+  };
+
+  let collected = List.empty<Nat8>();
+  let consume = func(out : [Nat8]) {
+    for (b in out.vals()) List.add(collected, b);
+  };
+  switch (decoder.finishStreaming(consume)) {
+    case (#err(msg)) Runtime.trap("finishStreaming error: " # msg);
+    case (#ok(summary)) {
+      if (summary.size != List.size(collected)) {
+        Runtime.trap("finishStreaming size mismatch");
+      };
+    };
+  };
+  List.toArray(collected);
 };
 
 // ── Suite: Fixed-Huffman round-trips ─────────────────────────────────────
@@ -369,6 +404,62 @@ suite(
         };
         // Huffman output should be far smaller than stored size (4096 + 23 bytes).
         expect.bool(compressed.size() < zeros.size()).isTrue();
+      },
+    );
+
+  },
+);
+
+// ── Suite: Streaming decode (finishStreaming) ────────────────────────────
+
+suite(
+  "Streaming decode",
+  func() {
+
+    test(
+      "empty input",
+      func() {
+        expect.array(roundTripStreaming([], defaultBuilder()), Nat8.toText, Nat8.equal).equal([]);
+      },
+    );
+
+    test(
+      "hello world matches finish()",
+      func() {
+        let data : [Nat8] = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100];
+        expect.array(roundTripStreaming(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
+      },
+    );
+
+    test(
+      "1 KB repeated bytes (back-references)",
+      func() {
+        let data = Array.tabulate<Nat8>(1024, func(_) { 0xAA });
+        expect.array(roundTripStreaming(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
+      },
+    );
+
+    test(
+      "large multi-block input exercises window flush",
+      func() {
+        // 200 KiB spans many 32 KiB deflate blocks, forcing the sliding-window
+        // flush + compaction path and long-distance back-references.
+        let data = Array.tabulate<Nat8>(
+          200 * 1024,
+          func(i) { Nat8.fromNat((i * 31 + i / 251) % 256) },
+        );
+        expect.array(roundTripStreaming(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
+      },
+    );
+
+    test(
+      "incompressible large input round-trips",
+      func() {
+        let rand = Array.tabulate<Nat8>(
+          100 * 1024,
+          func(i) { Nat8.fromNat((i * 2_654_435_761) % 256) },
+        );
+        expect.array(roundTripStreaming(rand, defaultBuilder()), Nat8.toText, Nat8.equal).equal(rand);
       },
     );
 

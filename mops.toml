@@ -6,7 +6,7 @@ version = "0.1.0"
 core = "2.5.0"
 
 [toolchain]
-moc = "1.7.0"
+moc = "1.9.0"
 lintoko = "0.10.0"
 
 [dev-dependencies]

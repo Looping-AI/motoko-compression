@@ -86,7 +86,10 @@ const REGISTRY: Record<string, PatchTarget[]> = {
   ],
   gzip: [
     { file: "src/Gzip/Encoder.mo", funcs: ["encode", "finish"] },
-    { file: "src/Gzip/Decoder.mo", funcs: ["decode", "finish"] },
+    {
+      file: "src/Gzip/Decoder.mo",
+      funcs: ["decode", "finishStreaming"],
+    },
   ],
   lzss: [
     {
@@ -198,7 +201,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
   decompress: [
     {
       file: "src/Gzip/Decoder.mo",
-      funcs: ["finish"],
+      funcs: ["finishStreaming"],
     },
     {
       file: "src/Deflate/Decoder.mo",
@@ -238,10 +241,10 @@ const TOP_LEVEL: Partial<Record<string, string[]>> = {
     "gzip_encoder:encode",
     "gzip_encoder:finish",
     "gzip_decoder:decode",
-    "gzip_decoder:finish",
+    "gzip_decoder:finishStreaming",
   ],
   compress: ["gzip_encoder:encode", "gzip_encoder:finish"],
-  decompress: ["gzip_decoder:decode", "gzip_decoder:finish"],
+  decompress: ["gzip_decoder:decode", "gzip_decoder:finishStreaming"],
 };
 
 /**

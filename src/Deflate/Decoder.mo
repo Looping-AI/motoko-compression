@@ -215,6 +215,70 @@ module {
       return resp;
     };
 
+    /// Streaming decode: decompress and emit output in bounded chunks via
+    /// `consume`, retaining only a 32 KiB sliding window (the maximum DEFLATE
+    /// back-reference distance) instead of the entire decoded output. This lets
+    /// callers process arbitrarily large streams without materialising the full
+    /// decoded array. Output is flushed at block boundaries, so peak retained
+    /// memory is bounded to roughly the window plus one block.
+    public func decodeStreaming(consume : ([Nat8]) -> ()) : Result<(), Text> {
+      // Must be >= 32768 so every back-reference (distance <= 32768) still
+      // resolves against the retained window after a flush.
+      let WINDOW : Nat = 32768;
+      let out = OutByteBuffer.OutByteBuffer(WINDOW + 65536);
+      var bfinal = false;
+
+      label _blocks loop {
+        if (bfinal) break _blocks;
+
+        if (acc.bitsLeft() == 0) {
+          err := ?"Deflate: stream ended before final block";
+          break _blocks;
+        };
+
+        bfinal := acc.readBit(); // BFINAL
+        let btype = acc.readBits(2); // BTYPE
+
+        if (btype == 0) {
+          decodeStoredBlock(out);
+        } else if (btype == 1) {
+          decodeCompressedBlock(out, fixedLit, fixedDist);
+        } else if (btype == 2) {
+          switch (loadDynamicHeader()) {
+            case (#ok((ld, dd))) decodeCompressedBlock(out, ld, dd);
+            case (#err(msg)) { err := ?msg; break _blocks };
+          };
+        } else {
+          err := ?"Deflate: invalid block type 3";
+          break _blocks;
+        };
+
+        if (err != null) break _blocks;
+
+        // Emit everything older than the window; retain the last WINDOW bytes
+        // so subsequent back-references (distance <= 32768) stay resolvable.
+        let sz = out.size();
+        if (sz > WINDOW) {
+          let f : Nat = sz - WINDOW;
+          consume(out.copyRange(0, f));
+          out.dropFront(f);
+        };
+      };
+
+      switch err {
+        case (?msg) #err(msg);
+        case null {
+          // Flush the retained tail.
+          let sz = out.size();
+          if (sz > 0) {
+            consume(out.copyRange(0, sz));
+            out.dropFront(sz);
+          };
+          #ok(());
+        };
+      };
+    };
+
     /// Number of input bytes consumed after decode().
     /// Rounded up to the next byte boundary (callers use this to locate
     /// the Gzip footer that follows the deflate data).

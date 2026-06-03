@@ -123,6 +123,28 @@ module {
       Array.tabulate<Nat8>(len, func(i) { buf[i] });
     };
 
+    // ── Sliding-window streaming support ──────────────────────────────────
+
+    /// Copy `count` bytes starting at `start` into a fresh immutable array.
+    /// Used by streaming decoders to emit a flushed prefix without exposing
+    /// the mutable backing store. Caller must ensure `start + count <= size()`.
+    public func copyRange(start : Nat, count : Nat) : [Nat8] {
+      Array.tabulate<Nat8>(count, func(i) { buf[start + i] });
+    };
+
+    /// Drop the first `n` bytes, shifting the remaining `[n, len)` bytes to the
+    /// front and reducing the logical length by `n`. Capacity is retained.
+    /// Used after flushing a prefix so the buffer stays bounded to the window.
+    public func dropFront(n : Nat) {
+      if (n >= len) { len := 0; return };
+      let rem : Nat = len - n;
+      var i = 0;
+      // Forward copy is safe: destination index `i` is always < source index
+      // `n + i` (n > 0), so no source byte is overwritten before it is read.
+      while (i < rem) { buf[i] := buf[n + i]; i += 1 };
+      len := rem;
+    };
+
   };
 
 };

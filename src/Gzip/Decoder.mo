@@ -29,6 +29,15 @@ module {
     bytes : [Nat8];
   };
 
+  /// Returned by `Decoder.finishStreaming()` on success. Carries the header and
+  /// verified decoded-stream metadata, but not the bytes themselves — those are
+  /// delivered incrementally through the caller's `consume` callback.
+  public type StreamedSummary = {
+    header : Header.Header;
+    size : Nat;
+    crc32 : Nat32;
+  };
+
   // ── Decoder class ─────────────────────────────────────────────────────────
 
   /// Stateful Gzip decoder.
@@ -117,6 +126,73 @@ module {
 
       clear();
       #ok(result);
+    };
+
+    /// Streaming variant of `finish()`: decompress and deliver the decoded
+    /// output to `consume` in bounded chunks, never materialising the full
+    /// output array. CRC32 and ISIZE are verified incrementally as chunks are
+    /// produced. Returns the header plus the verified decoded size and CRC32.
+    ///
+    /// Calls `clear()` on success before returning.
+    public func finishStreaming(consume : ([Nat8]) -> ()) : Result<StreamedSummary, Text> {
+      // 1. Decode the Gzip header.
+      let header = switch (Header.decode(reader)) {
+        case (#err(msg)) return #err(msg);
+        case (#ok(h)) h;
+      };
+
+      reader.clearRead();
+      let remaining = reader.readBytes(reader.byteSize());
+
+      // 2. Deflate-decompress, accumulating CRC32 + size incrementally and
+      //    forwarding each chunk to the caller. No full output buffer is held.
+      let deflate = DeflateDecoder.Decoder(remaining);
+      let crc = CRC32.CRC32();
+      var total : Nat = 0;
+      let sink = func(chunk : [Nat8]) {
+        crc.update(chunk);
+        total += chunk.size();
+        consume(chunk);
+      };
+      switch (deflate.decodeStreaming(sink)) {
+        case (#err(msg)) return #err(msg);
+        case (#ok(())) {};
+      };
+
+      // 3. Locate the Gzip footer (8 bytes) immediately after the deflate data.
+      let c = deflate.bytesConsumed();
+      if (c + 8 > remaining.size()) {
+        return #err("Gzip: stream truncated — no footer");
+      };
+
+      // 4. Verify CRC32 (4 bytes, LE).
+      let crcSlice = Array.tabulate<Nat8>(4, func(k) { remaining[c + k] });
+      let stored_crc32 = Nat32.fromNat(Utils.leBytesToNat(crcSlice));
+      let actual_crc32 = crc.finish();
+      if (stored_crc32 != actual_crc32) {
+        return #err(
+          "Gzip: CRC32 mismatch — stored "
+          # debug_show stored_crc32
+          # ", computed "
+          # debug_show actual_crc32
+        );
+      };
+
+      // 5. Verify ISIZE (4 bytes, LE, mod 2^32).
+      let isizeSlice = Array.tabulate<Nat8>(4, func(k) { remaining[c + 4 + k] });
+      let stored_isize = Utils.leBytesToNat(isizeSlice);
+      let actual_isize = total % 4294967296;
+      if (stored_isize != actual_isize) {
+        return #err(
+          "Gzip: ISIZE mismatch — stored "
+          # debug_show stored_isize
+          # ", computed "
+          # debug_show actual_isize
+        );
+      };
+
+      clear();
+      #ok({ header; size = total; crc32 = actual_crc32 });
     };
 
     /// Reset the decoder state so it can be reused for a new stream.

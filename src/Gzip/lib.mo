@@ -41,6 +41,9 @@ module {
 
   public type DecodedResponse = Decoder_.DecodedResponse;
 
+  /// Summary returned by `Decoder.finishStreaming()`.
+  public type StreamedSummary = Decoder_.StreamedSummary;
+
   /// Gzip decoder.  Feed chunks with `decode()`, retrieve result with `finish()`.
   public let Decoder = Decoder_.Decoder;
 
