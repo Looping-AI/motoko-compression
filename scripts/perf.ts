@@ -85,7 +85,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
     },
   ],
   gzip: [
-    { file: "src/Gzip/Encoder.mo", funcs: ["encode", "finish"] },
+    { file: "src/Gzip/Encoder.mo", funcs: ["encode", "finishStreaming"] },
     {
       file: "src/Gzip/Decoder.mo",
       funcs: ["decode", "finishStreaming"],
@@ -182,7 +182,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
       // Top-level gzip encoder — one encode() + one finish() per run.
       // These are the tags summed by computeTopLevel() for the high-level summary.
       file: "src/Gzip/Encoder.mo",
-      funcs: ["encode", "finish"],
+      funcs: ["encode", "finishStreaming"],
     },
     {
       // LZSS encoder — the byte-by-byte hot loop. `encode` is a thin for-loop
@@ -239,11 +239,11 @@ const TOP_LEVEL: Partial<Record<string, string[]>> = {
   ],
   gzip: [
     "gzip_encoder:encode",
-    "gzip_encoder:finish",
+    "gzip_encoder:finishStreaming",
     "gzip_decoder:decode",
     "gzip_decoder:finishStreaming",
   ],
-  compress: ["gzip_encoder:encode", "gzip_encoder:finish"],
+  compress: ["gzip_encoder:encode", "gzip_encoder:finishStreaming"],
   decompress: ["gzip_decoder:decode", "gzip_decoder:finishStreaming"],
 };
 

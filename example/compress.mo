@@ -151,11 +151,9 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         let hi = Nat.min(lo + chunkSize, rawLen);
         let chunk = Array.tabulate<Nat8>(hi - lo, func(j) { rawData[lo + j] });
         let gzipEncoder = Gzip.EncoderBuilder().build();
+        gzipEncoder.setOnOutput(func(bytes) { List.add(compressed, bytes) });
         gzipEncoder.encode(chunk);
-        switch (gzipEncoder.finish()) {
-          case (#single bytes) List.add(compressed, bytes);
-          case (#chunked _) Runtime.trap("tickCompress: chunk exceeded outputChunkSize");
-        };
+        ignore gzipEncoder.finishStreaming();
         job.chunkIdx += 1;
         timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
       } else {
@@ -311,11 +309,9 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   public func compress() : async () {
     List.clear(compressed);
     let gzipEncoder = Gzip.EncoderBuilder().build();
+    gzipEncoder.setOnOutput(func(bytes) { List.add(compressed, bytes) });
     gzipEncoder.encode(rawData);
-    switch (gzipEncoder.finish()) {
-      case (#single b) List.add(compressed, b);
-      case (#chunked _) Runtime.trap("compress: chunk exceeded outputChunkSize");
-    };
+    ignore gzipEncoder.finishStreaming();
   };
 
   /// Decompress compressed data in a single message (no timer). Best for small payloads.
