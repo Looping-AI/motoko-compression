@@ -34,6 +34,9 @@ module {
 
   public type EncodedResponse = Encoder_.EncodedResponse;
 
+  /// Summary returned by `Encoder.finishStreaming()`.
+  public type EncodedSummary = Encoder_.EncodedSummary;
+
   /// Fluent builder for Gzip.Encoder.
   public type EncoderBuilder = Encoder_.EncoderBuilder;
   public let EncoderBuilder = Encoder_.EncoderBuilder;

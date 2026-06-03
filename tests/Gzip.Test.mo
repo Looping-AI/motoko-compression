@@ -1,4 +1,4 @@
-import { test; suite; expect } "mo:test";
+import { test; suite; expect; skip } "mo:test";
 import Array "mo:core/Array";
 import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
@@ -44,6 +44,85 @@ func roundTripStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
 
 func defaultBuilder() : Gzip.EncoderBuilder {
   Gzip.EncoderBuilder();
+};
+
+/// Return true iff `a` and `b` are the same length and have identical bytes.
+func bytesEqual(a : [Nat8], b : [Nat8]) : Bool {
+  if (a.size() != b.size()) return false;
+  var i = 0;
+  while (i < a.size()) {
+    if (a[i] != b[i]) return false;
+    i += 1;
+  };
+  true;
+};
+
+/// Encode `data` with `enc` using the streaming API.  Collects all chunks
+/// emitted via `setOnOutput` into a single flat array.  Validates that the
+/// returned `EncodedSummary` is consistent with the collected bytes.
+func encodeStreamingBytes(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
+  let encoder = enc.build();
+  let chunks = List.empty<[Nat8]>();
+  encoder.setOnOutput(func(chunk : [Nat8]) { List.add(chunks, chunk) });
+  encoder.encode(data);
+  let summary = encoder.finishStreaming();
+  let bytes = Array.flatten(List.toArray(chunks));
+  if (summary.compressed_size != bytes.size()) {
+    Runtime.trap("encodeStreamingBytes: summary.compressed_size mismatch");
+  };
+  if (summary.input_size != data.size()) {
+    Runtime.trap("encodeStreamingBytes: summary.input_size mismatch");
+  };
+  bytes;
+};
+
+/// Encode `data` with `enc` using the non-streaming `finish()`, flatten to bytes.
+func encodeFlatBytes(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
+  let encoder = enc.build();
+  encoder.encode(data);
+  switch (encoder.finish()) {
+    case (#single b) b;
+    case (#chunked chunks) Array.flatten(chunks);
+  };
+};
+
+/// Encode `data` streaming, assert byte-identical to `finish()`, then decode
+/// and return the decompressed bytes.
+func roundTripEncodeStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
+  let flat = encodeFlatBytes(data, enc);
+  let streamed = encodeStreamingBytes(data, enc);
+  if (not bytesEqual(flat, streamed)) {
+    Runtime.trap("roundTripEncodeStreaming: streamed output differs from finish()");
+  };
+  // Decode the streamed bytes to confirm they decompress correctly.
+  let decoder = Gzip.Decoder();
+  switch (decoder.decode(streamed)) {
+    case (#err msg) Runtime.trap("roundTripEncodeStreaming decode error: " # msg);
+    case (#ok _) {};
+  };
+  let collected = List.empty<Nat8>();
+  switch (decoder.finishStreaming(func(c) { List.addAll(collected, c.vals()) })) {
+    case (#err msg) Runtime.trap("roundTripEncodeStreaming finishStreaming error: " # msg);
+    case (#ok _) {};
+  };
+  List.toArray(collected);
+};
+
+/// Streaming encode + decode only — no `finish()` comparison.
+/// Use for large inputs where double-encoding is prohibitive.
+func fastRoundTripEncodeStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
+  let streamed = encodeStreamingBytes(data, enc);
+  let decoder = Gzip.Decoder();
+  switch (decoder.decode(streamed)) {
+    case (#err msg) Runtime.trap("fastRoundTripEncodeStreaming decode error: " # msg);
+    case (#ok _) {};
+  };
+  let collected = List.empty<Nat8>();
+  switch (decoder.finishStreaming(func(c) { List.addAll(collected, c.vals()) })) {
+    case (#err msg) Runtime.trap("fastRoundTripEncodeStreaming finishStreaming error: " # msg);
+    case (#ok _) {};
+  };
+  List.toArray(collected);
 };
 
 // ── Suite: Fixed-Huffman round-trips ─────────────────────────────────────
@@ -384,6 +463,74 @@ suite(
           func(i) { Nat8.fromNat((i * 2_654_435_761) % 256) },
         );
         expect.array(roundTripStreaming(rand, defaultBuilder()), Nat8.toText, Nat8.equal).equal(rand);
+      },
+    );
+
+  },
+);
+
+// ── Suite: Streaming encode (finishStreaming) ────────────────────────────
+
+suite(
+  "Streaming encode",
+  func() {
+
+    test(
+      "empty input",
+      func() {
+        expect.array(roundTripEncodeStreaming([], defaultBuilder()), Nat8.toText, Nat8.equal).equal([]);
+      },
+    );
+
+    test(
+      "hello world byte-identical to finish()",
+      func() {
+        let data : [Nat8] = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100];
+        expect.array(roundTripEncodeStreaming(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
+      },
+    );
+
+    test(
+      "1 KB repeated bytes (RLE)",
+      func() {
+        let data = Array.tabulate<Nat8>(1024, func(_) { 0xAA });
+        expect.array(roundTripEncodeStreaming(data, defaultBuilder()), Nat8.toText, Nat8.equal).equal(data);
+      },
+    );
+
+    test(
+      "large multi-block input exercises the 1 MiB flush threshold",
+      func() {
+        // 1.1 MiB spans multiple 32 KiB deflate blocks and forces the
+        // STREAM_FLUSH_THRESHOLD drain path. Uses fastRoundTripEncodeStreaming
+        // to skip the redundant finish() encode + bytesEqual comparison.
+        let data = Array.tabulate<Nat8>(
+          1126 * 1024,
+          func(i) { Nat8.fromNat((i * 31 + i / 251) % 256) },
+        );
+        let result = fastRoundTripEncodeStreaming(data, defaultBuilder());
+        expect.nat(result.size()).equal(data.size());
+      },
+    );
+
+    test(
+      "incompressible large input round-trips",
+      func() {
+        let rand = Array.tabulate<Nat8>(
+          100 * 1024,
+          func(i) { Nat8.fromNat((i * 2_654_435_761) % 256) },
+        );
+        expect.array(roundTripEncodeStreaming(rand, defaultBuilder()), Nat8.toText, Nat8.equal).equal(rand);
+      },
+    );
+
+    test(
+      "matches finish() across Huffman modes",
+      func() {
+        let data = Array.tabulate<Nat8>(64 * 1024, func(i) { Nat8.fromNat(i % 251) });
+        expect.array(roundTripEncodeStreaming(data, Gzip.EncoderBuilder().dynamicHuffman()), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(roundTripEncodeStreaming(data, Gzip.EncoderBuilder().fixedHuffman()), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(roundTripEncodeStreaming(data, Gzip.EncoderBuilder().autoHuffman()), Nat8.toText, Nat8.equal).equal(data);
       },
     );
 

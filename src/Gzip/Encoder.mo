@@ -13,6 +13,7 @@ import Array "mo:core/Array";
 import Blob "mo:core/Blob";
 import List "mo:core/List";
 import Nat32 "mo:core/Nat32";
+import Runtime "mo:core/Runtime";
 import Text "mo:core/Text";
 
 import BitBuffer "../internal/BitBuffer";
@@ -42,6 +43,10 @@ module {
   /// standard parameters (#balance LZSS, 32 KiB deflate block size).
   let DEFAULT_OUTPUT_CHUNK_SIZE : Nat = 6_291_456; // 6 MiB
 
+  /// Threshold at which the streaming encoder drains completed bytes to the
+  /// output callback. Balances memory use against drain overhead.
+  let STREAM_FLUSH_THRESHOLD : Nat = 1_048_576; // 1 MiB
+
   // ── Public types ─────────────────────────────────────────────────────────
 
   /// The result of `Encoder.finish()`.
@@ -53,6 +58,13 @@ module {
   public type EncodedResponse = {
     #single : [Nat8];
     #chunked : [[Nat8]];
+  };
+
+  /// Summary returned by `Encoder.finishStreaming()`.
+  public type EncodedSummary = {
+    input_size : Nat;
+    compressed_size : Nat;
+    crc32 : Nat32;
   };
 
   // ── EncoderBuilder ────────────────────────────────────────────────────────
@@ -157,10 +169,25 @@ module {
     /// Byte offsets into `bitbuffer` recorded after each Deflate block flush.
     let block_ends = List.empty<Nat>();
 
+    /// Streaming output callback — set via `setOnOutput`.
+    var on_output : ?([Nat8] -> ()) = null;
+    /// Total bytes drained to `on_output` so far in this streaming session.
+    var streamed_out : Nat = 0;
+
     let deflate = DeflateEncoder.Encoder(bitbuffer, deflate_options);
     deflate.setOnBlockFlushed(
       func(byte_offset : Nat) {
         List.add(block_ends, byte_offset);
+        switch (on_output) {
+          case (?sink) {
+            if (bitbuffer.byteSize() >= STREAM_FLUSH_THRESHOLD) {
+              let chunk = bitbuffer.drainCompleteBytes();
+              streamed_out += chunk.size();
+              sink(chunk);
+            };
+          };
+          case null {};
+        };
       }
     );
 
@@ -199,6 +226,12 @@ module {
       encode(Blob.toArray(b));
     };
 
+    /// Register a callback that receives compressed bytes as they are produced.
+    /// Once set, use `finishStreaming()` instead of `finish()`.
+    public func setOnOutput(cb : [Nat8] -> ()) {
+      on_output := ?cb;
+    };
+
     /// Reset the encoder state (does not free the bitbuffer allocation).
     public func clear() {
       input_size := 0;
@@ -206,12 +239,49 @@ module {
       bitbuffer.clear();
       List.clear(block_ends);
       header_written := false;
+      on_output := null;
+      streamed_out := 0;
       deflate.clear();
+    };
+
+    /// Flush the final Deflate block, append the Gzip footer, and stream all
+    /// remaining bytes to the registered `on_output` callback.
+    /// Traps if `setOnOutput` was not called first.
+    /// Returns a summary with `input_size`, `compressed_size`, and `crc32`.
+    public func finishStreaming() : EncodedSummary {
+      let sink = switch (on_output) {
+        case (?s) s;
+        case null Runtime.trap("Gzip.Encoder.finishStreaming: call setOnOutput first");
+      };
+      if (not header_written) {
+        header_written := true;
+        Header.encode(bitbuffer, header, deflate_options.lzss);
+      };
+      ignore deflate.finish();
+      let crc32_val = crc32.finish();
+      bitbuffer.addBytes(Utils.natToLeBytes(Nat32.toNat(crc32_val), 4));
+      bitbuffer.addBytes(Utils.natToLeBytes(input_size % 4294967296, 4));
+      // Drain all remaining bytes (byteAlign already done by deflate.finish footer).
+      let remaining = bitbuffer.drainCompleteBytes();
+      streamed_out += remaining.size();
+      sink(remaining);
+      let summary : EncodedSummary = {
+        input_size;
+        compressed_size = streamed_out;
+        crc32 = crc32_val;
+      };
+      clear();
+      summary;
     };
 
     /// Flush the final Deflate block, append the Gzip footer, and return
     /// the compressed data split into block-aligned chunks.
+    /// Traps if `setOnOutput` was previously called (use `finishStreaming()` instead).
     public func finish() : EncodedResponse {
+      switch (on_output) {
+        case (?_) Runtime.trap("Gzip.Encoder.finish: setOnOutput was called; use finishStreaming() instead");
+        case null {};
+      };
       // Write the Gzip header if no data was ever encoded
       if (not header_written) {
         header_written := true;

@@ -304,6 +304,27 @@ module {
       readBit += n;
     };
 
+    /// Drain all complete bytes from the write buffer, returning them as a
+    /// fresh array.  Any partial trailing byte (when `writeBit % 8 != 0`) is
+    /// relocated to `buf[0]` and `writeBit` is set to the remaining bit count,
+    /// so subsequent writes continue correctly.
+    ///
+    /// Traps if `readBit != 0` (only valid on the encode path where nothing
+    /// has been read back from the buffer).
+    public func drainCompleteBytes() : [Nat8] {
+      if (readBit != 0) Runtime.trap("BitBuffer.drainCompleteBytes: readBit != 0");
+      let totalBytes = writeBit / BYTE;
+      let partialBits = writeBit % BYTE;
+      let result = Array.tabulate<Nat8>(totalBytes, func(i) { buf[i] });
+      if (partialBits != 0) {
+        buf[0] := buf[totalBytes];
+      };
+      writeBit := partialBits;
+      // acc already holds only the partial-byte bits (low `partialBits` bits);
+      // no change needed — it is consistent with buf[0].
+      result;
+    };
+
     /// Reset the buffer to empty, zeroing the live region.
     public func clear() {
       let live : Nat = (writeBit + BYTE - 1) / BYTE;
