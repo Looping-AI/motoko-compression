@@ -46,7 +46,7 @@ module {
         case (#ok(e)) e;
         case (#err(msg)) return #err("DynamicHuffmanCodec buildFromFreqs distance: " # msg);
       };
-      return #ok(Symbol.Encoder(le, de));
+      #ok(Symbol.Encoder(le, de));
     };
 
     /// Everything `save` computes BEFORE writing any bits. Reused by
@@ -96,7 +96,7 @@ module {
       };
       let bwcc = Nat.max(4, bw_max_idx + 1);
 
-      return #ok({ codes; sym_freq; bwe; bwcc; lcc; dcc });
+      #ok({ codes; sym_freq; bwe; bwcc; lcc; dcc });
     };
 
     /// Exact number of bits the dynamic block header occupies, computed from a
@@ -209,7 +209,7 @@ module {
         };
       };
 
-      return codes;
+      codes;
     };
 
   };
@@ -253,7 +253,7 @@ module {
         sym += 1;
       };
 
-      return #ok(Symbol.Encoder(le, db.build()));
+      #ok(Symbol.Encoder(le, db.build()));
     };
 
     public func buildFromFreqs(_ : [var Nat], _ : [var Nat]) : Result<Symbol.Encoder, Text> {
@@ -261,7 +261,7 @@ module {
     };
 
     public func save(_ : BitBuffer, _ : Symbol.Encoder) : Result<(), Text> {
-      return #ok();
+      #ok();
     };
   };
 

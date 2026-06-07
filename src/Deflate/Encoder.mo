@@ -102,7 +102,7 @@ module {
     public func finish() : BitBuffer {
       flush(true);
       bitbuffer.byteAlign();
-      return bitbuffer;
+      bitbuffer;
     };
   };
 

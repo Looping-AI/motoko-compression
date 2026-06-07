@@ -185,7 +185,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   /// Decompress and return the image stored under `name`.
   /// Returns null if no image is stored under that name.
   public func getImage(name : Text) : async ?[Nat8] {
-    return await getImagePage(name, 0);
+    await getImagePage(name, 0);
   };
 
   // >5 MiB Images

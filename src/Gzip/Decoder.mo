@@ -198,7 +198,7 @@ module {
       };
       clear();
 
-      return #ok(#done(summary));
+      #ok(#done(summary));
     };
 
     /// Decompress and deliver the decoded output to `consume` in bounded chunks,

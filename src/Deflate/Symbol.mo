@@ -103,7 +103,7 @@ module {
       case (#literal(byte)) Nat8.toNat(byte);
       case (#pointer(_, length)) lenCode(length);
     };
-    return r;
+    r;
   };
 
   /// Returns the distance code (0..29) for `symbol`, or `NO_DISTANCE` for
@@ -114,7 +114,7 @@ module {
       case (#pointer(distance, _)) distCode(distance);
       case _ NO_DISTANCE;
     };
-    return r;
+    r;
   };
 
   // ── Encoder class ──────────────────────────────────────────────────────
