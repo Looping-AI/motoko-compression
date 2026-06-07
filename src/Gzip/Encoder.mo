@@ -206,7 +206,17 @@ module {
     public func encode(bytes : [Nat8]) {
       if (bytes.size() == 0) return;
 
-      bitbuffer.reserve(bitbuffer.byteSize() + bytes.size() + 25);
+      // In streaming mode the buffer is drained every STREAM_FLUSH_THRESHOLD
+      // bytes, so its live size stays well below the input slice size. Cap the
+      // reserve so the backing array never grows beyond ~2× the flush threshold
+      // even when a large slice (e.g. 6 MiB) is passed in a single call.
+      // Without streaming (finish() path) the full input size is kept in the
+      // buffer, so pre-grow by the whole slice as before.
+      let reserveTarget = switch (on_output) {
+        case (?_) bitbuffer.byteSize() + STREAM_FLUSH_THRESHOLD + 25;
+        case null bitbuffer.byteSize() + bytes.size() + 25;
+      };
+      bitbuffer.reserve(reserveTarget);
       input_size += bytes.size();
       crc32.update(bytes);
       if (not header_written) {
