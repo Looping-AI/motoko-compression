@@ -88,7 +88,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
     { file: "src/Gzip/Encoder.mo", funcs: ["encode", "finishStreaming"] },
     {
       file: "src/Gzip/Decoder.mo",
-      funcs: ["decode", "finishStreaming"],
+      funcs: ["decode", "start", "step"],
     },
   ],
   lzss: [
@@ -201,7 +201,7 @@ const REGISTRY: Record<string, PatchTarget[]> = {
   decompress: [
     {
       file: "src/Gzip/Decoder.mo",
-      funcs: ["finishStreaming"],
+      funcs: ["decode", "start", "step"],
     },
     {
       file: "src/Deflate/Decoder.mo",
@@ -241,10 +241,15 @@ const TOP_LEVEL: Partial<Record<string, string[]>> = {
     "gzip_encoder:encode",
     "gzip_encoder:finishStreaming",
     "gzip_decoder:decode",
-    "gzip_decoder:finishStreaming",
+    "gzip_decoder:start",
+    "gzip_decoder:step",
   ],
   compress: ["gzip_encoder:encode", "gzip_encoder:finishStreaming"],
-  decompress: ["gzip_decoder:decode", "gzip_decoder:finishStreaming"],
+  decompress: [
+    "gzip_decoder:decode",
+    "gzip_decoder:start",
+    "gzip_decoder:step",
+  ],
 };
 
 /**
@@ -255,7 +260,7 @@ const TOP_LEVEL: Partial<Record<string, string[]>> = {
 const PAYLOAD_BYTES: Record<string, number> = {
   huffman: 10 * 1024,
   deflate: 10 * 1024,
-  gzip: 35 * 1024 * 1024,
+  gzip: 100 * 1024 * 1024,
   lzss: 10 * 1024,
   bitbuffer: 10 * 1024, // 10 KiB — fine-grained primitive
   utils: 10 * 1024, // 10 KiB — fine-grained primitive
@@ -389,17 +394,43 @@ function findFuncBrace(
   // After the param list, scan for:
   //   `{`  → function body opening brace  → return its line index.
   //   `=`  → expression-body (no brace)   → return null.
+  //
+  // Track `<>` and `{}` depth so that structural types in the return-type
+  // annotation (e.g. `Result<{ #more; #done : T }, Text>`) are not mistaken
+  // for the function body opening brace.
+  let angleDepth = 0;
+  let structBraceDepth = 0;
   while (i < combined.length) {
     const ch = combined[i];
     const next = combined[i + 1] ?? "";
     const prev = combined[i - 1] ?? "";
-    if (ch === "{") {
-      const before = combined.slice(0, i);
-      const newlinesBefore = (before.match(/\n/g) ?? []).length;
-      const lineStartInCombined = before.lastIndexOf("\n") + 1;
-      const braceCharIdx = i - lineStartInCombined;
-      return { funcIdx, braceIdx: funcIdx + newlinesBefore, braceCharIdx };
+
+    if (
+      ch === "<" &&
+      next !== "=" &&
+      next !== "<" &&
+      prev !== "!" &&
+      prev !== "<"
+    ) {
+      angleDepth++;
+    } else if (ch === ">" && prev !== "=" && next !== "=" && next !== ">") {
+      if (angleDepth > 0) angleDepth--;
+    } else if (ch === "{") {
+      if (angleDepth > 0 || structBraceDepth > 0) {
+        // Inside a generic type parameter or a nested structural type — not the body.
+        structBraceDepth++;
+      } else {
+        // Top-level `{` with no open `<>` or `{}`: this is the function body.
+        const before = combined.slice(0, i);
+        const newlinesBefore = (before.match(/\n/g) ?? []).length;
+        const lineStartInCombined = before.lastIndexOf("\n") + 1;
+        const braceCharIdx = i - lineStartInCombined;
+        return { funcIdx, braceIdx: funcIdx + newlinesBefore, braceCharIdx };
+      }
+    } else if (ch === "}") {
+      if (structBraceDepth > 0) structBraceDepth--;
     }
+
     // Detect expression-body `=` (but not `==`, `!=`, `<=`, `>=`).
     if (
       ch === "=" &&
@@ -1321,6 +1352,8 @@ function writeJsonl(marks: Mark[], path: string): void {
 // ── Main ────────────────────────────────────────────────────────────────────────
 
 async function main() {
+  const t0 = Date.now();
+
   // Step 1 — validate before touching any files.
   console.log(`\nValidating ${component} targets...`);
   validateTargets();
@@ -1485,6 +1518,7 @@ async function main() {
     }
 
     const topLevel = computeTopLevel(marks, intervals, component);
+    const leadTimeMs = Date.now() - t0;
     if (topLevel) {
       const HR2 = "─".repeat(72);
       console.log(`\n${HR2}`);
@@ -1492,6 +1526,9 @@ async function main() {
       console.log(HR2);
       console.log(` ${"metric".padEnd(28)} ${"value".padStart(18)}`);
       console.log(HR2);
+      console.log(
+        ` ${"lead_time".padEnd(28)} ${`${(leadTimeMs / 1000).toFixed(1)} s`.padStart(18)}`,
+      );
       console.log(
         ` ${"work_instrs".padEnd(28)} ${topLevel.work_instrs.toLocaleString("en-US").padStart(18)}`,
       );

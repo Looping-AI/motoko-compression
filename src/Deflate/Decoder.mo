@@ -166,33 +166,58 @@ module {
       HuffmanDecoder.bakePayloads(fixedDist, distPayload);
     };
 
+    // ── Resumable streaming state ─────────────────────────────────────────
+    // WINDOW: minimum history to retain so every back-reference (distance
+    // <= 32768) still resolves after a flush.
+    let WINDOW : Nat = 32768;
+    // FLUSH_CHUNK: only compact the buffer when the excess above WINDOW
+    // reaches this threshold. This amortizes the dropFront memmove cost:
+    // instead of shifting WINDOW bytes once per block (~32 KiB / block), we
+    // shift (WINDOW + FLUSH_CHUNK) bytes once per FLUSH_CHUNK of output —
+    // roughly 32× fewer shifts.
+    let FLUSH_CHUNK : Nat = 1_048_576; // 1 MiB
+
+    // Output buffer + block-loop position persist across `decodeBounded` calls
+    // so decoding can suspend at block boundaries and resume on a later message.
+    var out_ : ?OutByteBuffer.OutByteBuffer = null;
+    var bfinal : Bool = false;
+    var done : Bool = false;
+
     // ── Public API ────────────────────────────────────────────────────────
 
-    /// Decompress and emit output in bounded chunks via `consume`, pre-sizing
-    /// the output buffer to `initOutCap` bytes (capped at WINDOW + FLUSH_CHUNK
-    /// so peak memory stays bounded). Pass 0 to use the default 64 KiB initial
-    /// capacity. Callers that know the decompressed size up front (e.g. Gzip
-    /// via ISIZE) pass it here to avoid over-allocating for typical payloads.
+    /// Decode blocks until the stream ends, an error occurs, or at least
+    /// `maxOutBytes` have been emitted via `consume` during this call, then
+    /// return `#more` (suspend) or `#done`. State (output window + accumulator
+    /// position) persists between calls, so a large stream can be decompressed
+    /// across many bounded messages.
+    ///
+    /// `initOutCap` pre-sizes the output buffer on the first call (e.g. Gzip
+    /// ISIZE), capped at WINDOW + FLUSH_CHUNK; pass 0 for the 64 KiB default.
+    /// Ignored on subsequent calls once the buffer exists.
     ///
     /// Retains only a 32 KiB sliding window after each flush so arbitrarily
-    /// large streams can be processed without materializing the full output.
-    public func decodeStreamingWithCapacity(initOutCap : Nat, consume : ([Nat8]) -> ()) : Result<(), Text> {
-      // WINDOW: minimum history to retain so every back-reference (distance
-      // <= 32768) still resolves after a flush.
-      let WINDOW : Nat = 32768;
-      // FLUSH_CHUNK: only compact the buffer when the excess above WINDOW
-      // reaches this threshold. This amortizes the dropFront memmove cost:
-      // instead of shifting WINDOW bytes once per block (~32 KiB / block), we
-      // shift (WINDOW + FLUSH_CHUNK) bytes once per FLUSH_CHUNK of output —
-      // roughly 32× fewer shifts, eliminating the ~40% instruction regression
-      // from per-block compaction without changing the retained window size.
-      let FLUSH_CHUNK : Nat = 1_048_576; // 1 MiB
+    /// large streams never materialize the full output.
+    public func decodeBounded(
+      initOutCap : Nat,
+      maxOutBytes : Nat,
+      consume : ([Nat8]) -> (),
+    ) : Result<{ #more; #done }, Text> {
+      switch err { case (?msg) return #err(msg); case null {} };
+      if (done) return #ok(#done);
+
       let maxCap = WINDOW + FLUSH_CHUNK;
-      // Initial capacity: use the caller's hint (e.g. Gzip ISIZE), capped at
-      // maxCap so we never over-allocate, with a 64 KiB floor when no hint.
-      let initCap : Nat = if (initOutCap > 0) Nat.min(initOutCap, maxCap) else 65536;
-      let out = OutByteBuffer.OutByteBuffer(initCap);
-      var bfinal = false;
+      let out = switch (out_) {
+        case (?o) o;
+        case null {
+          // Initial capacity: use the caller's hint (e.g. Gzip ISIZE), capped
+          // at maxCap so we never over-allocate, 64 KiB floor when no hint.
+          let initCap : Nat = if (initOutCap > 0) Nat.min(initOutCap, maxCap) else 65536;
+          let o = OutByteBuffer.OutByteBuffer(initCap);
+          out_ := ?o;
+          o;
+        };
+      };
+      var emitted : Nat = 0;
 
       label _blocks loop {
         if (bfinal) break _blocks;
@@ -228,19 +253,40 @@ module {
           let f : Nat = sz - WINDOW;
           consume(out.copyRange(0, f));
           out.dropFront(f);
+          emitted += f;
+        };
+
+        // Suspend at a block boundary once the per-call output budget is met,
+        // unless this was the final block (then fall through to flush the tail).
+        if (not bfinal and emitted >= maxOutBytes) {
+          return #ok(#more);
         };
       };
 
       switch err {
         case (?msg) #err(msg);
         case null {
-          // Flush the retained tail.
+          // Final block reached: flush the retained tail.
           let sz = out.size();
           if (sz > 0) {
             consume(out.copyRange(0, sz));
             out.dropFront(sz);
           };
-          #ok(());
+          done := true;
+          #ok(#done);
+        };
+      };
+    };
+
+    /// Decompress the whole stream in one call, emitting output in bounded
+    /// chunks via `consume`. Thin wrapper that drives `decodeBounded` to
+    /// completion; see `decodeBounded` for the resumable variant.
+    public func decodeStreamingWithCapacity(initOutCap : Nat, consume : ([Nat8]) -> ()) : Result<(), Text> {
+      loop {
+        switch (decodeBounded(initOutCap, FLUSH_CHUNK, consume)) {
+          case (#err(msg)) return #err(msg);
+          case (#ok(#more)) {};
+          case (#ok(#done)) return #ok(());
         };
       };
     };

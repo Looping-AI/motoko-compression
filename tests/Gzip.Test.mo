@@ -1,4 +1,4 @@
-import { test; suite; expect; skip } "mo:test";
+import { test; suite; expect } "mo:test";
 import Array "mo:core/Array";
 import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
@@ -531,6 +531,78 @@ suite(
         expect.array(roundTripEncodeStreaming(data, Gzip.EncoderBuilder().dynamicHuffman()), Nat8.toText, Nat8.equal).equal(data);
         expect.array(roundTripEncodeStreaming(data, Gzip.EncoderBuilder().fixedHuffman()), Nat8.toText, Nat8.equal).equal(data);
         expect.array(roundTripEncodeStreaming(data, Gzip.EncoderBuilder().autoHuffman()), Nat8.toText, Nat8.equal).equal(data);
+      },
+    );
+
+  },
+);
+
+// ── Suite: Multi-step (resumable) streaming decode ──────────────────────────
+
+/// Encode `data` streaming into fragments, then decode it across multiple
+/// `step(maxOutBytes, consume)` calls — exactly as the example canister drives
+/// the decoder across timer messages. Returns the reassembled output.
+func multiStepDecode(data : [Nat8], maxOutBytes : Nat) : [Nat8] {
+  // Encode into fragments of one continuous gzip stream.
+  let encoder = Gzip.EncoderBuilder().build();
+  let frags = List.empty<[Nat8]>();
+  encoder.setOnOutput(func(chunk : [Nat8]) { List.add(frags, chunk) });
+  encoder.encode(data);
+  ignore encoder.finishStreaming();
+
+  // One decoder fed every fragment, then driven step-by-step.
+  let decoder = Gzip.Decoder();
+  for (frag in List.values(frags)) {
+    switch (decoder.decode(frag)) {
+      case (#err msg) Runtime.trap("multiStepDecode decode error: " # msg);
+      case (#ok _) {};
+    };
+  };
+  switch (decoder.start()) {
+    case (#err msg) Runtime.trap("multiStepDecode start error: " # msg);
+    case (#ok _) {};
+  };
+
+  let collected = List.empty<Nat8>();
+  let consume = func(out : [Nat8]) { List.addAll(collected, out.vals()) };
+  var steps = 0;
+  label drive loop {
+    switch (decoder.step(maxOutBytes, consume)) {
+      case (#err msg) Runtime.trap("multiStepDecode step error: " # msg);
+      case (#ok(#more)) { steps += 1 };
+      case (#ok(#done summary)) {
+        steps += 1;
+        if (summary.size != List.size(collected)) {
+          Runtime.trap("multiStepDecode: summary.size mismatch");
+        };
+        break drive;
+      };
+    };
+  };
+  // A >2 MiB input with a sub-MiB budget must take more than one step.
+  if (data.size() > 2 * 1024 * 1024 and steps < 2) {
+    Runtime.trap("multiStepDecode: expected multiple steps, got " # debug_show steps);
+  };
+  List.toArray(collected);
+};
+
+suite(
+  "Multi-step streaming decode",
+  func() {
+
+    test(
+      ">2 MiB input decodes byte-correct across multiple steps",
+      func() {
+        let n = 3 * 1024 * 1024;
+        let data = Array.tabulate<Nat8>(n, func(i) { Nat8.fromNat((i * 31 + i / 251) % 256) });
+        // 512 KiB output budget forces several resumptions.
+        let result = multiStepDecode(data, 512 * 1024);
+        expect.nat(result.size()).equal(n);
+        // Spot-check bytes at the boundaries and a few interior offsets.
+        expect.nat8(result[0]).equal(data[0]);
+        expect.nat8(result[n / 3]).equal(data[n / 3]);
+        expect.nat8(result[n / 2]).equal(data[n / 2]);
+        expect.nat8(result[n - 1]).equal(data[n - 1]);
       },
     );
 

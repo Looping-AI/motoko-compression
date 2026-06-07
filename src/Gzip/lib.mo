@@ -41,12 +41,20 @@ module {
   public type EncoderBuilder = Encoder_.EncoderBuilder;
   public let EncoderBuilder = Encoder_.EncoderBuilder;
 
+  /// Stateful Gzip encoder (built via `EncoderBuilder().build()`).
+  public type Encoder = Encoder_.Encoder;
+
   // ── Decoder ──────────────────────────────────────────────────────────────
 
-  /// Summary returned by `Decoder.finishStreaming()`.
+  /// Summary returned by `Decoder.finishStreaming()` / `Decoder.step()`.
   public type StreamedSummary = Decoder_.StreamedSummary;
 
-  /// Gzip decoder.  Feed chunks with `decode()`, retrieve result with `finish()`.
+  /// Gzip decoder. Feed chunks with `decode()`, then either drive the whole
+  /// stream with `finishStreaming()`, or decode incrementally across messages
+  /// with `start()` + repeated `step(maxOutBytes, consume)`.
   public let Decoder = Decoder_.Decoder;
+
+  /// Stateful Gzip decoder type (constructed via `Decoder()`).
+  public type Decoder = Decoder_.Decoder;
 
 };
