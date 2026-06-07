@@ -33,6 +33,7 @@ module {
   public class Encoder(bitbuffer : BitBuffer, options : DeflateOptions) {
 
     let block = Block.block(
+      bitbuffer,
       LzssEncoder.Encoder(options.lzss),
       options.force_huffman_kind,
       options.deflate_block_size,

@@ -75,6 +75,11 @@ module {
     /// Number of bytes needed to hold the current unread bits.
     public func byteSize() : Nat { (bitSize() + BYTE - 1) / BYTE };
 
+    /// Absolute write position in bits (total bits appended). On the encode
+    /// path `readBit == 0`, so this equals the logical bit length. Used to
+    /// record a patch point for `setBitTrue`.
+    public func writeBitPos() : Nat { writeBit };
+
     // ── Write operations ─────────────────────────────────────────────────
 
     /// Append the low `n` bits of `value`, LSB first.
@@ -169,6 +174,22 @@ module {
 
       if (newPartial != 0) {
         buf[physByte + completeBytes] := Nat64.toNat8(Nat64.bitand(acc, 255));
+      };
+    };
+
+    /// Set the bit at absolute write position `pos` to 1, patching a
+    /// previously-written 0 bit in place (e.g. DEFLATE's BFINAL flag, which
+    /// the fixed direct-emit path writes as 0 before the block's finality is
+    /// known). Only valid on the encode path (`readBit == 0`); `pos` must be
+    /// < writeBit and the target bit must currently be 0.
+    public func setBitTrue(pos : Nat) {
+      let byteIdx = pos / BYTE;
+      let bitIdx = pos % BYTE;
+      buf[byteIdx] := Nat8.bitor(buf[byteIdx], Nat8.bitshiftLeft((1 : Nat8), Nat8.fromNat(bitIdx)));
+      // Keep the accumulator consistent if the patched bit is still in the
+      // current partial byte (acc mirrors the low bits of buf[writeBit/8]).
+      if (byteIdx == writeBit / BYTE) {
+        acc := Nat64.bitor(acc, Nat64.bitshiftLeft((1 : Nat64), Nat64.fromNat(bitIdx)));
       };
     };
 

@@ -6,12 +6,12 @@ This repository is the current `mo:core`-based migration of [edjcase/motoko_comp
 
 ## Status
 
-| Algorithm | Encode | Decode | Public entry point |
-| --------- | ------ | ------ | ------------------ |
-| Gzip      | ✅     | ✅     | `mo:motoko-compression/Gzip` |
+| Algorithm | Encode | Decode | Public entry point              |
+| --------- | ------ | ------ | ------------------------------- |
+| Gzip      | ✅     | ✅     | `mo:motoko-compression/Gzip`    |
 | DEFLATE   | ✅     | ✅     | `mo:motoko-compression/Deflate` |
-| LZSS      | ✅     | ✅     | `mo:motoko-compression/LZSS` |
-| Huffman   | ✅     | ✅     | internal building blocks |
+| LZSS      | ✅     | ✅     | `mo:motoko-compression/LZSS`    |
+| Huffman   | ✅     | ✅     | internal building blocks        |
 
 ## Installation
 
@@ -23,6 +23,7 @@ mops add motoko-compression
 import Gzip "mo:motoko-compression/Gzip";
 import Deflate "mo:motoko-compression/Deflate";
 import LZSS "mo:motoko-compression/LZSS";
+
 ```
 
 ## Core concepts
@@ -42,7 +43,8 @@ The Gzip API has two complementary modes:
 {
   #single : [Nat8];
   #chunked : [[Nat8]];
-}
+};
+
 ```
 
 `#chunked` does **not** mean “many independent gzip files”. It is one gzip stream split at safe DEFLATE block boundaries so a single `Gzip.Decoder` can receive the fragments across multiple calls.
@@ -97,6 +99,7 @@ switch (decoder.finishStreaming(func(chunk : [Nat8]) { List.addAll(output, chunk
 };
 
 let roundTrip = List.toArray(output);
+
 ```
 
 ### Streaming encode without materializing the full compressed payload
@@ -112,13 +115,13 @@ let part1 : [Nat8] = [1, 2, 3, 4];
 let part2 : [Nat8] = [5, 6, 7, 8];
 
 let fragments = List.empty<[Nat8]>();
-let encoder = Gzip.EncoderBuilder()
-  .outputChunkSize(1_024 * 1_024)
-  .build();
+let encoder = Gzip.EncoderBuilder().outputChunkSize(1_024 * 1_024).build();
 
-encoder.setOnOutput(func(chunk : [Nat8]) {
-  List.add(fragments, chunk);
-});
+encoder.setOnOutput(
+  func(chunk : [Nat8]) {
+    List.add(fragments, chunk);
+  }
+);
 
 encoder.encode(part1);
 encoder.encode(part2);
@@ -128,6 +131,7 @@ let gzipStreamFragments : [[Nat8]] = List.toArray(fragments);
 
 // `gzipStreamFragments` are fragments of one gzip stream.
 // Feed them all to the same decoder in order.
+
 ```
 
 ### Resumable decode across multiple messages
@@ -144,9 +148,11 @@ let input : [Nat8] = [1, 2, 3, 4, 5, 6, 7, 8];
 let fragments = List.empty<[Nat8]>();
 
 let encoder = Gzip.EncoderBuilder().build();
-encoder.setOnOutput(func(chunk : [Nat8]) {
-  List.add(fragments, chunk);
-});
+encoder.setOnOutput(
+  func(chunk : [Nat8]) {
+    List.add(fragments, chunk);
+  }
+);
 encoder.encode(input);
 ignore encoder.finishStreaming();
 
@@ -182,6 +188,7 @@ label drive loop {
     };
   };
 };
+
 ```
 
 ## Gzip builder options
@@ -228,12 +235,18 @@ let compressed = bitBuffer.getBytes(0, bitBuffer.byteSize());
 let decoder = Deflate.buildDecoder(compressed);
 let output = List.empty<Nat8>();
 
-switch (decoder.decodeStreamingWithCapacity(0, func(chunk : [Nat8]) {
-  List.addAll(output, chunk.vals());
-})) {
+switch (
+  decoder.decodeStreamingWithCapacity(
+    0,
+    func(chunk : [Nat8]) {
+      List.addAll(output, chunk.vals());
+    },
+  )
+) {
   case (#ok()) {};
   case (#err(msg)) Runtime.trap("deflate decode failed: " # msg);
 };
+
 ```
 
 ## Raw LZSS
@@ -263,6 +276,7 @@ encoder.encode(input, sink);
 encoder.flush(sink);
 
 let roundTrip = List.toArray(output);
+
 ```
 
 Compression levels are:

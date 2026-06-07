@@ -48,17 +48,24 @@ module {
   };
 
   /// Construct a block. `force = null` enables per-block fixed/dynamic auto-select.
-  public func block(lzss : LzssEncoder.Encoder, force : ?HuffmanKind, block_limit : Nat) : BlockInterface {
-    Compress(lzss, force, block_limit);
+  public func block(bitbuffer : BitBuffer, lzss : LzssEncoder.Encoder, force : ?HuffmanKind, block_limit : Nat) : BlockInterface {
+    Compress(bitbuffer, lzss, force, block_limit);
   };
 
   // ── Compressed block ───────────────────────────────────────────────────────
 
   public class Compress(
+    bb : BitBuffer,
     lzss : LzssEncoder.Encoder,
     force : ?HuffmanKind,
     block_limit : Nat,
   ) {
+    // Direct-emit fixed path: when the Huffman kind is forced to #fixed, emit
+    // DEFLATE bits straight to the bit-buffer as LZSS produces symbols — no
+    // symbol buffer, no frequency counting, no second pass. #dynamic and auto
+    // still need frequencies first, so they keep the buffered two-pass path.
+    let direct : Bool = switch (force) { case (?#fixed) true; case _ false };
+
     var input_size : Nat = 0;
     // Bytes represented by symbols emitted so far (literals=1 each, pointers=len each).
     // Excludes bytes still in the LZSS lookahead that haven't been decided yet.
@@ -71,7 +78,8 @@ module {
     //
     // The final flush drains the LZSS lookahead (≤ MATCH_MAX_SIZE = 258 bytes
     // that accumulated across non-final blocks), so add that headroom.
-    let sym_cap : Nat = block_limit + LzssCommon.MATCH_MAX_SIZE;
+    // The direct fixed path never buffers symbols, so allocate nothing for it.
+    let sym_cap : Nat = if (direct) 0 else block_limit + LzssCommon.MATCH_MAX_SIZE;
     let sym_v1 : [var Nat] = Prim.Array_init<Nat>(sym_cap, 0);
     let sym_v2 : [var Nat] = Prim.Array_init<Nat>(sym_cap, 0);
     var sym_count : Nat = 0;
@@ -92,8 +100,29 @@ module {
       case (#err(msg)) Runtime.trap("Deflate.Compress: fixed build failed: " # msg);
     };
 
+    // Fixed-code bitwidth/bits tables hoisted for the direct-emit hot path.
+    let fixedLit_bw = fixedEnc.literal.bitwidths;
+    let fixedLit_bv = fixedEnc.literal.bits;
+    let fixedDist_bw = fixedEnc.distance.bitwidths;
+    let fixedDist_bv = fixedEnc.distance.bits;
+
+    // ── Direct-emit (fixed) block header state ──────────────────────────────
+    // The fixed block header (BFINAL + BTYPE=01) is written lazily at the first
+    // symbol of each block. BFINAL is unknown then (finality is only known at
+    // flush), so it is written as 0 and patched to 1 on the final block via
+    // `bb.setBitTrue(bfinal_pos)`.
+    var header_written : Bool = false;
+    var bfinal_pos : Nat = 0;
+
+    func writeFixedHeader(is_final : Bool) {
+      bfinal_pos := bb.writeBitPos();
+      bb.addBits(1, if (is_final) 1 else 0); // BFINAL
+      bb.addBits(2, 1); // BTYPE = 01 (fixed)
+      header_written := true;
+    };
+
     // Direct callbacks — no LzssEntry variant alloc per symbol.
-    let sink : LzssCommon.MatchSink = {
+    let bufferedSink : LzssCommon.MatchSink = {
       onLiteral = func(b : Nat8) {
         let bnat = Nat8.toNat(b);
         sym_v1[sym_count] := bnat;
@@ -111,6 +140,27 @@ module {
         dist_freqs[tables.distCodeOf(offset)] += 1;
       };
     };
+
+    // Fixed direct-emit callbacks — write DEFLATE bits straight to `bb`.
+    let directSink : LzssCommon.MatchSink = {
+      onLiteral = func(b : Nat8) {
+        if (not header_written) writeFixedHeader(false);
+        let s = Nat8.toNat(b);
+        bb.addBits(fixedLit_bw[s], fixedLit_bv[s]);
+        sym_bytes += 1;
+      };
+      onPointer = func(offset : Nat, len : Nat) {
+        if (not header_written) writeFixedHeader(false);
+        let lIdx : Nat = len - 3;
+        let lCode = tables.lengthCode[lIdx];
+        bb.addBits2(fixedLit_bw[lCode], fixedLit_bv[lCode], tables.lengthExtraBits[lIdx], tables.lengthExtraVal[lIdx]);
+        let dCode = tables.distCodeOf(offset);
+        bb.addBits2(fixedDist_bw[dCode], fixedDist_bv[dCode], tables.distExtraBits[dCode], offset - tables.distBase[dCode]);
+        sym_bytes += len;
+      };
+    };
+
+    let sink : LzssCommon.MatchSink = if (direct) directSink else bufferedSink;
 
     public func size() : Nat { input_size };
     public func symBytes() : Nat { sym_bytes };
@@ -187,6 +237,22 @@ module {
     };
 
     public func flush(bitbuffer : BitBuffer, is_final : Bool) {
+      if (direct) {
+        // Fixed direct-emit: symbols were already written to `bb` as they
+        // arrived; only the lazy header (for empty blocks), the BFINAL patch,
+        // and the End-of-block marker remain.
+        if (is_final) lzss.flush(sink);
+        if (not header_written) {
+          // Empty block — finality is known here, so write BFINAL directly.
+          writeFixedHeader(is_final);
+        } else if (is_final) {
+          bb.setBitTrue(bfinal_pos); // promote BFINAL 0 → 1 on the final block
+        };
+        bb.addBits(fixedLit_bw[256], fixedLit_bv[256]); // End-of-block (code 256)
+        resetState();
+        return;
+      };
+
       if (is_final) lzss.flush(sink);
 
       switch (force) {
@@ -241,10 +307,14 @@ module {
       input_size := 0;
       sym_count := 0;
       sym_bytes := 0;
-      var k = 0;
-      while (k < 286) { lit_freqs[k] := 0; k += 1 };
-      k := 0;
-      while (k < 30) { dist_freqs[k] := 0; k += 1 };
+      header_written := false;
+      // The direct fixed path never accumulates frequencies, so skip zeroing.
+      if (not direct) {
+        var k = 0;
+        while (k < 286) { lit_freqs[k] := 0; k += 1 };
+        k := 0;
+        while (k < 30) { dist_freqs[k] := 0; k += 1 };
+      };
     };
 
     public func clear() {
