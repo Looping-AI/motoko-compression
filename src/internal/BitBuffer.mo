@@ -133,50 +133,6 @@ module {
 
     /// Append two adjacent bit fields in a single accumulator merge & drain.
     ///
-    /// Equivalent to `addBits(n1, v1); addBits(n2, v2);` but pays the
-    /// `acc` merge, `ensureCapacity` check, and partial-byte writeback cost
-    /// once instead of twice.  Used by the DEFLATE symbol-emit loop to fuse
-    /// (literal-code, length-extra) and (distance-code, distance-extra)
-    /// pairs.
-    ///
-    /// Either `n1` or `n2` may be 0 (no-op for that field).
-    /// Requires `(writeBit % 8) + n1 + n2 <= 64` — comfortably satisfied
-    /// for DEFLATE (max 15-bit Huffman code + max 13-bit extra = 28 bits).
-    public func addBits2(n1 : Nat, v1 : Nat, n2 : Nat, v2 : Nat) {
-      let n = n1 + n2;
-      if (n == 0) return;
-      let bitOff = writeBit % BYTE;
-      let physByte = writeBit / BYTE;
-
-      // Combine v1 (low n1 bits) and v2 (next n2 bits) into a single field.
-      let mask1 : Nat64 = Nat64.bitshiftLeft((1 : Nat64), Nat64.fromNat(n1)) - 1;
-      let mask2 : Nat64 = Nat64.bitshiftLeft((1 : Nat64), Nat64.fromNat(n2)) - 1;
-      let w1 : Nat64 = Nat64.bitand(Nat64.fromNat(v1), mask1);
-      let w2 : Nat64 = Nat64.bitand(Nat64.fromNat(v2), mask2);
-      let combined : Nat64 = Nat64.bitor(w1, Nat64.bitshiftLeft(w2, Nat64.fromNat(n1)));
-      acc := Nat64.bitor(acc, Nat64.bitshiftLeft(combined, Nat64.fromNat(bitOff)));
-
-      writeBit += n;
-
-      let totalInAcc = bitOff + n;
-      let completeBytes = totalInAcc / BYTE;
-      let newPartial = totalInAcc % BYTE;
-      let needBytes = completeBytes + (if (newPartial != 0) 1 else 0);
-
-      ensureCapacity(physByte + needBytes);
-
-      var i = 0;
-      while (i < completeBytes) {
-        buf[physByte + i] := Nat64.toNat8(Nat64.bitand(acc, 255));
-        acc := Nat64.bitshiftRight(acc, 8);
-        i += 1;
-      };
-
-      if (newPartial != 0) {
-        buf[physByte + completeBytes] := Nat64.toNat8(Nat64.bitand(acc, 255));
-      };
-    };
-
     /// Append four adjacent bit fields in a single accumulator merge & drain.
     ///
     /// Equivalent to two `addBits2` calls but pays the `acc` merge,

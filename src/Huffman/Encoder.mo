@@ -72,8 +72,8 @@ module {
   public class Encoder(table : [var Code]) {
 
     // Parallel flat arrays for the hot symbol-emit path.  These mirror
-    // `table` but use raw `Nat` values so callers can do two indexed reads
-    // and feed `BitBuffer.addBits` / `addBits2` directly — avoiding the
+    // `table` but use raw `Nat` values so callers can do indexed reads
+    // and feed `BitBuffer.addBits` / `addBits4` directly — avoiding the
     // `Code` record lookup and per-symbol `Nat16.toNat` conversion that
     // `encode` performs.
     let _n : Nat = table.size();
