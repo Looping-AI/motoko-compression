@@ -118,6 +118,16 @@ module {
     // Motoko's Nat has no bitwise ops; we use modulo.
     let WMASK32 : Nat32 = Nat32.fromNat(WSIZE - 1);
 
+    // Adaptive chain shortening for #balance: once a run of consecutive literals
+    // exceeds ADAPT_THRESHOLD the chain budget decays in three steps toward
+    // ADAPT_MIN (32→16→8→4). On incompressible data this eliminates most dead-end
+    // chain walks; compressible data resets litRun on every match so the full
+    // chain is always used where matches exist. #fast and #best are untouched.
+    let ADAPT : Bool = switch level { case (#balance) true; case _ false };
+    let ADAPT_THRESHOLD : Nat = 64;
+    let ADAPT_STEP : Nat = 32;
+    let ADAPT_MIN : Nat = 4;
+
     // Fast `p mod WSIZE` for positions guaranteed to fit in Nat32 (WPHYS < 2^17).
     func pmod(p : Nat) : Nat {
       Nat32.toNat(Nat32.bitand(Nat32.fromNat(p), WMASK32));
@@ -154,6 +164,9 @@ module {
     var insH : Nat32 = 0;
     var lastHashedPos : Nat = 0;
     var insHValid : Bool = false;
+    // Count of consecutive literals since the last emitted pointer. Used by
+    // the adaptive chain shortener (ADAPT). Reset to 0 on every match.
+    var litRun : Nat = 0;
 
     // Insert the 3-byte string at position `p` into the hash chain.
     // Requires window[p .. p+2] to be valid. Returns the previous head value
@@ -214,7 +227,11 @@ module {
       var bestLen : Nat = MIN_MATCH - 1; // require strictly greater
       var bestPos : Nat = 0;
       var cur : Nat = startMatch;
-      var chainLen : Nat = MAX_CHAIN;
+      var chainLen : Nat = if (ADAPT and litRun >= ADAPT_THRESHOLD) {
+        if (litRun >= ADAPT_THRESHOLD + 2 * ADAPT_STEP) ADAPT_MIN // 4  at litRun 128+
+        else if (litRun >= ADAPT_THRESHOLD + ADAPT_STEP) MAX_CHAIN / 4 // 8  at litRun  96+
+        else MAX_CHAIN / 2; // 16 at litRun  64+
+      } else MAX_CHAIN;
       var shortened : Bool = false;
       let scanStart = strstart;
       // Earliest legal match position (distance must be <= WSIZE). Kept as a
@@ -312,10 +329,12 @@ module {
           strstart += m.len;
           lookahead -= m.len;
           emitted := true;
+          litRun := 0; // match found — next chain walk gets full budget
         };
       };
       if (not emitted) {
         sink.onLiteral(window[strstart]);
+        litRun += 1;
         strstart += 1;
         lookahead -= 1;
       };
@@ -399,6 +418,7 @@ module {
       strstart := 0;
       lookahead := 0;
       insHValid := false;
+      litRun := 0;
     };
 
   }; // end class Encoder
