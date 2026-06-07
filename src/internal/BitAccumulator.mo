@@ -132,11 +132,6 @@ module {
       Nat64.toNat(bits) + (endPos - pos) * 8;
     };
 
-    /// Number of input bytes not yet loaded into hold.
-    public func bytesLeft() : Nat {
-      endPos - pos;
-    };
-
     /// Bit offset consumed so far, relative to the start of the slice.
     /// Useful for error reporting and for locating a trailing footer.
     public func bitPosition() : Nat {

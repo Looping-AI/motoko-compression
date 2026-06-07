@@ -45,17 +45,6 @@ persistent actor {
         );
 
         await test(
-          "skipBits(9) traps when only 8 bits available",
-          func() : async () {
-            var trapped = false;
-            try { await helper.skipBitsOverflow() } catch (err) {
-              if (Error.code(err) == #canister_error) { trapped := true };
-            };
-            expect.bool(trapped).isTrue();
-          },
-        );
-
-        await test(
           "peekByte traps on empty reader",
           func() : async () {
             var trapped = false;

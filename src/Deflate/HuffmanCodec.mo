@@ -259,10 +259,6 @@ module {
     public func buildFromFreqs(_ : [var Nat], _ : [var Nat]) : Result<Symbol.Encoder, Text> {
       build();
     };
-
-    public func save(_ : BitBuffer, _ : Symbol.Encoder) : Result<(), Text> {
-      #ok();
-    };
   };
 
 };

@@ -106,30 +106,6 @@ suite(
 );
 
 suite(
-  "skipBits",
-  func() {
-    test(
-      "skipBits advances offset",
-      func() {
-        let r = BitReader.fromBytes([0xA5 : Nat8]);
-        r.skipBits(3);
-        expect.nat(r.getPosition()).equal(3);
-      },
-    );
-
-    test(
-      "skipBits then readBit reads correct bit",
-      func() {
-        // 0xA5 bits: 1,0,1,0,0,1,0,1 — after skipping 3, next bit is bit[3]=0
-        let r = BitReader.fromBytes([0xA5 : Nat8]);
-        r.skipBits(3);
-        expect.bool(r.readBit()).isFalse();
-      },
-    );
-  },
-);
-
-suite(
   "peekByte / readByte",
   func() {
     test(

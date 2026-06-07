@@ -2,7 +2,6 @@
 ///
 /// Bits are consumed LSB-first (DEFLATE convention).
 /// `offset` tracks how many bits have been read from the front of the buffer.
-/// `tailBits` hides that many bits at the end, reducing the visible window.
 ///
 /// All reads are bounds-checked; violating the bounds traps.
 
@@ -15,13 +14,11 @@ module {
   public class BitReader(initCapacity : Nat) {
     var offset = 0;
     let bitbuffer = BitBuffer.BitBuffer(initCapacity);
-    var tailBits = 0;
 
-    // Invariant: available = bitbuffer.bitSize() - tailBits
+    // Invariant: available = bitbuffer.bitSize()
     // (readable bits at offset = 0, i.e. the upper bound on reads).
     // isValid(n) ≡ n + offset <= available.  Kept in sync by addBytes,
-    // clearRead, hideTailBits, and clear so the hot read path never calls
-    // bitbuffer.bitSize().
+    // clearRead, and clear so the hot read path never calls bitbuffer.bitSize().
     var available = 0;
 
     // ── Bit-level reads ───────────────────────────────────────────────────
@@ -54,14 +51,6 @@ module {
       let bits = peekBits(n);
       offset += n;
       bits;
-    };
-
-    /// Advance the read position by `n` bits without returning a value.
-    public func skipBits(n : Nat) {
-      if (n + offset > available) {
-        Runtime.trap("BitReader.skipBits: out of bounds");
-      };
-      offset += n;
     };
 
     // ── Byte-level reads ──────────────────────────────────────────────────
@@ -144,10 +133,9 @@ module {
       offset := 0;
     };
 
-    /// Reset to a fully empty state (clears buffer, offset, and tail mask).
+    /// Reset to a fully empty state (clears buffer, offset, and available count).
     public func clear() {
       offset := 0;
-      tailBits := 0;
       available := 0;
       bitbuffer.clear();
     };
@@ -158,14 +146,6 @@ module {
     public func addBytes(bytes : [Nat8]) {
       bitbuffer.addBytes(bytes);
       available += bytes.size() * 8;
-    };
-
-    // ── Tail masking ──────────────────────────────────────────────────────
-
-    /// Hide the last `n` bits from reads (reduces visible `bitSize` by `n`).
-    public func hideTailBits(n : Nat) {
-      available := available + tailBits - n;
-      tailBits := n;
     };
 
   };

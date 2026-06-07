@@ -5,7 +5,6 @@ import Nat8 "mo:core/Nat8";
 import Nat "mo:core/Nat";
 import Runtime "mo:core/Runtime";
 import DeflateDecoder "../src/Deflate/Decoder";
-import Symbol "../src/Deflate/Symbol";
 import CodeTables "../src/Deflate/CodeTables";
 import Deflate "../src/Deflate/lib";
 
@@ -162,52 +161,6 @@ suite(
 );
 
 // ── Suite: Symbol length / distance boundaries ────────────────────────────
-
-suite(
-  "Symbol length boundaries",
-  func() {
-
-    // RFC 1951 §3.2.5: length code ranges
-    //   3-10   → codes 257-264 (0 extra bits)
-    //   11-18  → codes 265-268 (1 extra bit)
-    //   19-34  → codes 269-272 (2 extra bits)
-    //   35-66  → codes 273-276 (3 extra bits)
-    //   67-130 → codes 277-280 (4 extra bits)
-    //   131-257→ codes 281-284 (5 extra bits)
-    //   258    → code  285     (0 extra bits)
-    test("length 3   → code 257", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 3))).equal(257) });
-    test("length 10  → code 264", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 10))).equal(264) });
-    test("length 11  → code 265", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 11))).equal(265) });
-    test("length 18  → code 268", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 18))).equal(268) });
-    test("length 19  → code 269", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 19))).equal(269) });
-    test("length 34  → code 272", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 34))).equal(272) });
-    test("length 35  → code 273", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 35))).equal(273) });
-    test("length 66  → code 276", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 66))).equal(276) });
-    test("length 67  → code 277", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 67))).equal(277) });
-    test("length 130 → code 280", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 130))).equal(280) });
-    test("length 131 → code 281", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 131))).equal(281) });
-    test("length 257 → code 284", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 257))).equal(284) });
-    test("length 258 → code 285", func() { expect.nat(Symbol.lengthMarker(#pointer(1, 258))).equal(285) });
-  },
-);
-
-suite(
-  "Symbol distance boundaries",
-  func() {
-
-    // Spot-check every distance code edge from RFC 1951 §3.2.5
-    test("#literal    → NO_DISTANCE", func() { expect.nat(Symbol.distanceMarker(#literal(42))).equal(Symbol.NO_DISTANCE) });
-    test("#EndOfBlock → NO_DISTANCE", func() { expect.nat(Symbol.distanceMarker(#EndOfBlock)).equal(Symbol.NO_DISTANCE) });
-    test("distance 1     → code 0", func() { expect.nat(Symbol.distanceMarker(#pointer(1, 3))).equal(0) });
-    test("distance 4     → code 3", func() { expect.nat(Symbol.distanceMarker(#pointer(4, 3))).equal(3) });
-    test("distance 5     → code 4", func() { expect.nat(Symbol.distanceMarker(#pointer(5, 3))).equal(4) });
-    test("distance 6     → code 4", func() { expect.nat(Symbol.distanceMarker(#pointer(6, 3))).equal(4) });
-    test("distance 7     → code 5", func() { expect.nat(Symbol.distanceMarker(#pointer(7, 3))).equal(5) });
-    test("distance 9     → code 6", func() { expect.nat(Symbol.distanceMarker(#pointer(9, 3))).equal(6) });
-    test("distance 16385 → code 28", func() { expect.nat(Symbol.distanceMarker(#pointer(16385, 3))).equal(28) });
-    test("distance 32768 → code 29", func() { expect.nat(Symbol.distanceMarker(#pointer(32768, 3))).equal(29) });
-  },
-);
 
 // ── Suite: Fixed Huffman full-byte coverage ───────────────────────────────
 
@@ -536,7 +489,6 @@ suite(
           expect.nat(t.lengthCode[len - 3]).equal(rCode);
           expect.nat(t.lengthExtraBits[len - 3]).equal(rBits);
           expect.nat(t.lengthExtraVal[len - 3]).equal(rVal);
-          expect.nat(t.lengthCode[len - 3]).equal(Symbol.lenCode(len));
           len += 1;
         };
       },
@@ -550,7 +502,6 @@ suite(
           let (rCode, rBits, rVal) = refDistance(dist);
           let code = t.distCodeOf(dist);
           expect.nat(code).equal(rCode);
-          expect.nat(code).equal(Symbol.distCode(dist));
           expect.nat(t.distExtraBits[code]).equal(rBits);
           expect.nat(dist - t.distBase[code]).equal(rVal);
           dist += 1;

@@ -21,11 +21,6 @@ persistent actor class TrapCanister() {
     ignore r.readBits(9); // traps: only 8 bits available
   };
 
-  public func skipBitsOverflow() : async () {
-    let r = BitReader.fromBytes([0xA5 : Nat8]);
-    r.skipBits(9); // traps: only 8 bits available
-  };
-
   public func peekByteOnEmpty() : async () {
     let r = BitReader.BitReader(0);
     ignore r.peekByte(); // traps: needs 8 bits, none available
