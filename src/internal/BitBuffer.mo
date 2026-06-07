@@ -177,6 +177,62 @@ module {
       };
     };
 
+    /// Append four adjacent bit fields in a single accumulator merge & drain.
+    ///
+    /// Equivalent to two `addBits2` calls but pays the `acc` merge,
+    /// `ensureCapacity` check, and partial-byte writeback cost once instead
+    /// of twice.  Used by the DEFLATE pointer-emit path to fuse
+    /// (length-code, length-extra, distance-code, distance-extra) into one
+    /// operation.
+    ///
+    /// Any `nN` may be 0 (no-op for that field).
+    /// Requires `(writeBit % 8) + n1 + n2 + n3 + n4 <= 64` — satisfied for
+    /// DEFLATE (max 15-bit code + 5-bit extra + 15-bit code + 13-bit extra =
+    /// 48 bits; with 7-bit partial offset the worst case is 55 ≤ 64).
+    public func addBits4(n1 : Nat, v1 : Nat, n2 : Nat, v2 : Nat, n3 : Nat, v3 : Nat, n4 : Nat, v4 : Nat) {
+      let n = n1 + n2 + n3 + n4;
+      if (n == 0) return;
+      let bitOff = writeBit % BYTE;
+      let physByte = writeBit / BYTE;
+
+      let mask1 : Nat64 = Nat64.bitshiftLeft((1 : Nat64), Nat64.fromNat(n1)) - 1;
+      let mask2 : Nat64 = Nat64.bitshiftLeft((1 : Nat64), Nat64.fromNat(n2)) - 1;
+      let mask3 : Nat64 = Nat64.bitshiftLeft((1 : Nat64), Nat64.fromNat(n3)) - 1;
+      let mask4 : Nat64 = Nat64.bitshiftLeft((1 : Nat64), Nat64.fromNat(n4)) - 1;
+      let w1 : Nat64 = Nat64.bitand(Nat64.fromNat(v1), mask1);
+      let w2 : Nat64 = Nat64.bitand(Nat64.fromNat(v2), mask2);
+      let w3 : Nat64 = Nat64.bitand(Nat64.fromNat(v3), mask3);
+      let w4 : Nat64 = Nat64.bitand(Nat64.fromNat(v4), mask4);
+      let combined : Nat64 = Nat64.bitor(
+        Nat64.bitor(w1, Nat64.bitshiftLeft(w2, Nat64.fromNat(n1))),
+        Nat64.bitor(
+          Nat64.bitshiftLeft(w3, Nat64.fromNat(n1 + n2)),
+          Nat64.bitshiftLeft(w4, Nat64.fromNat(n1 + n2 + n3)),
+        ),
+      );
+      acc := Nat64.bitor(acc, Nat64.bitshiftLeft(combined, Nat64.fromNat(bitOff)));
+
+      writeBit += n;
+
+      let totalInAcc = bitOff + n;
+      let completeBytes = totalInAcc / BYTE;
+      let newPartial = totalInAcc % BYTE;
+      let needBytes = completeBytes + (if (newPartial != 0) 1 else 0);
+
+      ensureCapacity(physByte + needBytes);
+
+      var i = 0;
+      while (i < completeBytes) {
+        buf[physByte + i] := Nat64.toNat8(Nat64.bitand(acc, 255));
+        acc := Nat64.bitshiftRight(acc, 8);
+        i += 1;
+      };
+
+      if (newPartial != 0) {
+        buf[physByte + completeBytes] := Nat64.toNat8(Nat64.bitand(acc, 255));
+      };
+    };
+
     /// Set the bit at absolute write position `pos` to 1, patching a
     /// previously-written 0 bit in place (e.g. DEFLATE's BFINAL flag, which
     /// the fixed direct-emit path writes as 0 before the block's finality is

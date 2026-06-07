@@ -153,9 +153,17 @@ module {
         if (not header_written) writeFixedHeader(false);
         let lIdx : Nat = len - 3;
         let lCode = tables.lengthCode[lIdx];
-        bb.addBits2(fixedLit_bw[lCode], fixedLit_bv[lCode], tables.lengthExtraBits[lIdx], tables.lengthExtraVal[lIdx]);
         let dCode = tables.distCodeOf(offset);
-        bb.addBits2(fixedDist_bw[dCode], fixedDist_bv[dCode], tables.distExtraBits[dCode], offset - tables.distBase[dCode]);
+        bb.addBits4(
+          fixedLit_bw[lCode],
+          fixedLit_bv[lCode],
+          tables.lengthExtraBits[lIdx],
+          tables.lengthExtraVal[lIdx],
+          fixedDist_bw[dCode],
+          fixedDist_bv[dCode],
+          tables.distExtraBits[dCode],
+          offset - tables.distBase[dCode],
+        );
         sym_bytes += len;
       };
     };
@@ -194,8 +202,8 @@ module {
     };
 
     // Encode buffered symbols (then EndOfBlock) using `enc`. Reads the
-    // precomputed length/distance code tables; emission is a pair of indexed
-    // reads + a fused `addBits2` per pointer.
+    // precomputed length/distance code tables; emission is a fused `addBits4`
+    // per pointer (all four fields in one accumulator merge).
     func emitSymbols(bitbuffer : BitBuffer, enc : Symbol.Encoder) {
       let lit_bw = enc.literal.bitwidths;
       let lit_bv = enc.literal.bits;
@@ -212,16 +220,20 @@ module {
         } else {
           // Pointer: sym_v1[i] = backward_offset, sym_v2[i] = length
           let dist = sym_v1[i];
-          // ── Length code (table lookup, index = len - 3) ─────────────────
+          // ── Length + distance codes fused into one accumulator merge ────
           let lIdx : Nat = len - 3;
           let lCode = tables.lengthCode[lIdx];
-          // Fused literal-code + length-extra emit.
-          bitbuffer.addBits2(lit_bw[lCode], lit_bv[lCode], tables.lengthExtraBits[lIdx], tables.lengthExtraVal[lIdx]);
-
-          // ── Distance code (table lookup) ────────────────────────────────
           let dCode = tables.distCodeOf(dist);
-          // Fused distance-code + distance-extra emit.
-          bitbuffer.addBits2(dist_bw[dCode], dist_bv[dCode], tables.distExtraBits[dCode], dist - tables.distBase[dCode]);
+          bitbuffer.addBits4(
+            lit_bw[lCode],
+            lit_bv[lCode],
+            tables.lengthExtraBits[lIdx],
+            tables.lengthExtraVal[lIdx],
+            dist_bw[dCode],
+            dist_bv[dCode],
+            tables.distExtraBits[dCode],
+            dist - tables.distBase[dCode],
+          );
         };
         i += 1;
       };
