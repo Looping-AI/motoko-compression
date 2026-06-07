@@ -378,11 +378,8 @@ module {
           bits -= litRootBits64;
           let lsub : Nat64 = lw - litRootBits64;
           let loff = Nat64.toNat(lv >> 5);
-          while (bits <= 56 and pos < srcLen) {
-            hold := hold | (Nat64.fromNat8(src[pos]) << bits);
-            bits += 8;
-            pos += 1;
-          };
+          // No refill needed: top-of-loop refill guarantees ≥57 bits;
+          // a full match consumes ≤48, so we always have enough here.
           let lv2 : Nat64 = litTbl[loff + Nat64.toNat(hold & (((1 : Nat64) << lsub) - 1))];
           let lw2 : Nat64 = lv2 & 31;
           if (lw2 > lsub) {
@@ -423,11 +420,6 @@ module {
           let lenExtra : Nat64 = (lpayload >> 2) & 0xF;
           var length : Nat64 = lpayload >> 6;
           if (lenExtra > 0) {
-            while (bits <= 56 and pos < srcLen) {
-              hold := hold | (Nat64.fromNat8(src[pos]) << bits);
-              bits += 8;
-              pos += 1;
-            };
             let lemask : Nat64 = ((1 : Nat64) << lenExtra) - 1;
             length += hold & lemask;
             hold := hold >> lenExtra;
@@ -435,11 +427,6 @@ module {
           };
 
           // ── Inline distDec.decodeRaw ─────────────────────────────────
-          while (bits <= 56 and pos < srcLen) {
-            hold := hold | (Nat64.fromNat8(src[pos]) << bits);
-            bits += 8;
-            pos += 1;
-          };
           let dv : Nat64 = distTbl[Nat64.toNat(hold & distMask)];
           let dw : Nat64 = dv & 31;
           var dpayload : Nat64 = 0;
@@ -456,11 +443,6 @@ module {
             bits -= distRootBits64;
             let dsub : Nat64 = dw - distRootBits64;
             let doff = Nat64.toNat(dv >> 5);
-            while (bits <= 56 and pos < srcLen) {
-              hold := hold | (Nat64.fromNat8(src[pos]) << bits);
-              bits += 8;
-              pos += 1;
-            };
             let dv2 : Nat64 = distTbl[doff + Nat64.toNat(hold & (((1 : Nat64) << dsub) - 1))];
             let dw2 : Nat64 = dv2 & 31;
             if (dw2 > dsub) {
@@ -478,11 +460,6 @@ module {
           let distExtra : Nat64 = dpayload & 0xF;
           var distance : Nat64 = dpayload >> 4;
           if (distExtra > 0) {
-            while (bits <= 56 and pos < srcLen) {
-              hold := hold | (Nat64.fromNat8(src[pos]) << bits);
-              bits += 8;
-              pos += 1;
-            };
             let demask : Nat64 = ((1 : Nat64) << distExtra) - 1;
             distance += hold & demask;
             hold := hold >> distExtra;
