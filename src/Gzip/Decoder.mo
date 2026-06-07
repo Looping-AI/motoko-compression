@@ -9,6 +9,7 @@
 /// `finishStreaming()`.  This avoids partial-block reads that would trap in BitReader.
 
 import Array "mo:core/Array";
+import List "mo:core/List";
 import Nat32 "mo:core/Nat32";
 import Result "mo:core/Result";
 
@@ -41,7 +42,11 @@ module {
   /// `finishStreaming()` performs the actual decompression and footer verification.
   public class Decoder() {
 
-    let reader = BitReader.BitReader();
+    // Compressed input fragments collected by decode() calls.
+    // We defer concatenation until start() so that no doubling reallocations
+    // occur in BitBuffer while the caller feeds the stream in chunks.
+    let chunks_ : List.List<[Nat8]> = List.empty();
+    var total_bytes_ : Nat = 0;
 
     // ── In-progress streaming-decode state (set by start, used by step) ──────
     var header_ : ?Header.Header = null;
@@ -59,7 +64,10 @@ module {
     ///
     /// Returns `#ok` always; errors are only surfaced by `start()`/`step()`.
     public func decode(bytes : [Nat8]) : Result<(), Text> {
-      reader.addBytes(bytes);
+      if (bytes.size() > 0) {
+        List.add(chunks_, bytes);
+        total_bytes_ += bytes.size();
+      };
       #ok();
     };
 
@@ -67,6 +75,16 @@ module {
     /// decoder over the buffered input. Call once after feeding all input via
     /// `decode()`, then call `step()` repeatedly until it returns `#done`.
     public func start() : Result<Header.Header, Text> {
+      // Build one BitReader from the accumulated fragments: one pre-sized
+      // allocation + one sequential copy, no doubling reallocations.
+      let reader = BitReader.BitReader(total_bytes_);
+      for (chunk in List.values(chunks_)) {
+        reader.addBytes(chunk);
+      };
+      // Fragments are fully copied; release them to allow GC.
+      List.clear(chunks_);
+      total_bytes_ := 0;
+
       // 1. Decode the Gzip header.
       let header = switch (Header.decode(reader)) {
         case (#err(msg)) return #err(msg);
@@ -209,7 +227,8 @@ module {
 
     /// Reset the decoder state so it can be reused for a new stream.
     public func clear() {
-      reader.clear();
+      List.clear(chunks_);
+      total_bytes_ := 0;
       header_ := null;
       deflate_ := null;
       crc_ := null;

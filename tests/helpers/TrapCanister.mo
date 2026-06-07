@@ -12,7 +12,7 @@ import LZSS "../../src/LZSS/lib";
 persistent actor class TrapCanister() {
 
   public func peekBitOnEmpty() : async () {
-    let r = BitReader.BitReader();
+    let r = BitReader.BitReader(0);
     ignore r.peekBit(); // traps: out of bounds on empty reader
   };
 
@@ -27,7 +27,7 @@ persistent actor class TrapCanister() {
   };
 
   public func peekByteOnEmpty() : async () {
-    let r = BitReader.BitReader();
+    let r = BitReader.BitReader(0);
     ignore r.peekByte(); // traps: needs 8 bits, none available
   };
 

@@ -12,9 +12,9 @@ import BitBuffer "BitBuffer";
 
 module {
 
-  public class BitReader() {
+  public class BitReader(initCapacity : Nat) {
     var offset = 0;
-    let bitbuffer = BitBuffer.new();
+    let bitbuffer = BitBuffer.BitBuffer(initCapacity);
     var tailBits = 0;
 
     // Invariant: available = bitbuffer.bitSize() - tailBits
@@ -172,7 +172,7 @@ module {
 
   /// Convenience constructor: create a BitReader pre-loaded with `bytes`.
   public func fromBytes(bytes : [Nat8]) : BitReader {
-    let reader = BitReader();
+    let reader = BitReader(bytes.size());
     reader.addBytes(bytes);
     reader;
   };

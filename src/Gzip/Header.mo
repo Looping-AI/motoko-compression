@@ -27,7 +27,6 @@ import Utils "../internal/utils";
 module {
 
   type BitBuffer = BitBuffer.BitBuffer;
-  type BitReader = BitReader.BitReader;
   type CompressionLevel = Common.CompressionLevel;
   type Result<A, B> = Result.Result<A, B>;
 
@@ -172,7 +171,7 @@ module {
 
   /// Decode a Gzip header from `reader`, advancing the read position past it.
   /// Returns `#err` for invalid magic or compression method.
-  public func decode(reader : BitReader) : Result<Header, Text> {
+  public func decode(reader : BitReader.BitReader) : Result<Header, Text> {
 
     // Magic
     if (reader.readByte() != 0x1f or reader.readByte() != 0x8b) {

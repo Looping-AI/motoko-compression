@@ -300,7 +300,7 @@ suite(
     test(
       "addBytes appends data for reading",
       func() {
-        let r = BitReader.BitReader();
+        let r = BitReader.BitReader(0);
         r.addBytes([0xA5 : Nat8]);
         expect.nat(r.bitSize()).equal(8);
         expect.nat8(r.readByte()).equal(0xA5);

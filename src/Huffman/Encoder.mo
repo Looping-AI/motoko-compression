@@ -10,13 +10,11 @@ import Runtime "mo:core/Runtime";
 import Prim "mo:⛔";
 
 import BitBuffer "../internal/BitBuffer";
-import BitReader "../internal/BitReader";
 import Common "Common";
 
 module {
   type Result<A, B> = Result.Result<A, B>;
   type BitBuffer = BitBuffer.BitBuffer;
-  type BitReader = BitReader.BitReader;
 
   let { reverseCodeBits } = Common;
 
