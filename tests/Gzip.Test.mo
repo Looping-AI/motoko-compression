@@ -320,7 +320,7 @@ func multiStepDecode(data : [Nat8], maxOutBytes : Nat) : [Nat8] {
 
   var steps = 0;
   label drive loop {
-    switch (decoder.step(maxOutBytes)) {
+    switch (decoder.step(#custom(maxOutBytes))) {
       case (#err msg) Runtime.trap("multiStepDecode step error: " # msg);
       case (#ok(#more)) { steps += 1 };
       case (#ok(#done)) {

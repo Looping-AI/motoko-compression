@@ -45,14 +45,15 @@
 ///     case (#ok(_))    {};
 ///   };
 ///
-///   // Each timer run: budget maxOutBytes of decompressed output per step.
-///   switch (dec.step(6_000_000)) {
-///     case (#ok(#more))           rescheduleTimer();
-///     case (#ok(#done))  {
+///   // Each timer run: #default uses the internal 21 MiB budget; #custom(n) overrides it.
+///   switch (dec.step(#default)) {
+///     case (#err(msg)) Runtime.trap(msg);
+///     case (#ok(#more)) rescheduleTimer();
+///     case (#ok(#done)) {
+///.      // Do something with the output — either:
 ///       let output = dec.decompressed();          // [Nat8] — all bytes merged into one array
 ///       for (chunk in dec.chunks().vals()) { … }; // — or iterate [[Nat8]] without the merge allocation
 ///     };
-///     case (#err(msg))            Runtime.trap(msg);
 ///   };
 
 import Blob "mo:core/Blob";
@@ -107,20 +108,12 @@ module {
 
   /// Compress UTF-8 text in one call.
   public func compressText(enc : Encoder, t : Text) : [Nat8] {
-    enc.encode(Blob.toArray(Text.encodeUtf8(t)));
-    enc.finish();
-    let out = enc.compressed();
-    enc.clear();
-    out;
+    compress(enc, Blob.toArray(Text.encodeUtf8(t)));
   };
 
   /// Compress a Blob in one call.
   public func compressBlob(enc : Encoder, b : Blob) : [Nat8] {
-    enc.encode(Blob.toArray(b));
-    enc.finish();
-    let out = enc.compressed();
-    enc.clear();
-    out;
+    compress(enc, Blob.toArray(b));
   };
 
   /// Decompress `bytes` in one call, returning all output as a single array.

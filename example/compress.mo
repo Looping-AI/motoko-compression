@@ -79,10 +79,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // the per-message instruction limit.
   transient let ENCODE_INPUT_SLICE : Nat = 6 * MB;
 
-  // Decompressed output bytes produced per decompress tick. The decoder
-  // suspends at the first block boundary past this budget.
-  transient let DECODE_OUTPUT_BUDGET : Nat = 21 * MB;
-
   // Live streaming codecs — always-live singletons; reused across jobs via
   // clear(). Transient: an upgrade discards them and `postupgrade` fails any
   // in-progress job accordingly.
@@ -176,7 +172,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         return;
       };
 
-      switch (decoder.step(DECODE_OUTPUT_BUDGET)) {
+      switch (decoder.step(#default)) {
         case (#err msg) { markJobFailed("decompress step: " # msg); return };
         case (#ok(#more)) {
           job.offset := decoder.decompressedSize();

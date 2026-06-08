@@ -41,6 +41,10 @@ module {
     let inputChunks : List.List<[Nat8]> = List.empty();
     var totalBytes : Nat = 0;
 
+    // Default after performance testing.
+    // Giving ~25B instructions per 21 MiB chunk with standard parameters.
+    let DECODE_OUTPUT_BUDGET : Nat = 21 * 1024 * 1024;
+
     // Decompressed output accumulated across step() calls.
     let decompressedChunks : List.List<[Nat8]> = List.empty();
 
@@ -110,12 +114,17 @@ module {
       #ok(parsedHeader);
     };
 
-    /// Decompress at most `maxOutBytes` of output, accumulating it internally,
+    /// Decompress at most `budget` bytes of output, accumulating it internally,
     /// then return `#more` (call again) or `#done` when decompression is complete.
+    /// Pass `#default` to use the internal default (initially 21 MiB).
     /// CRC32 and ISIZE are verified; on `#done` the streaming state is reset
     /// (but decompressed output is kept until `clear()` is called).
     /// Must be preceded by `start()`.
-    public func step(maxOutBytes : Nat) : Result<{ #more; #done }, Text> {
+    public func step(budget : { #default; #custom : Nat }) : Result<{ #more; #done }, Text> {
+      let limit = switch (budget) {
+        case (#default) DECODE_OUTPUT_BUDGET;
+        case (#custom n) n;
+      };
       let ?deflate = deflateState else {
         return #err("Gzip.Decoder.step: call start() first");
       };
@@ -129,7 +138,7 @@ module {
         List.add(decompressedChunks, chunk);
       };
 
-      switch (deflate.decodeBounded(outCapHint, maxOutBytes, sink)) {
+      switch (deflate.decodeBounded(outCapHint, limit, sink)) {
         case (#err(msg)) {
           return #err(msg);
         };
@@ -203,9 +212,8 @@ module {
         case (#ok(_)) {};
       };
       // A large per-step budget so the whole stream decodes in one driving loop.
-      let WHOLE : Nat = 0xFFFF_FFFF_FFFF;
       loop {
-        switch (step(WHOLE)) {
+        switch (step(#custom(0xFFFF_FFFF_FFFF))) {
           case (#err(msg)) return #err(msg);
           case (#ok(#more)) {};
           case (#ok(#done)) return #ok(());
