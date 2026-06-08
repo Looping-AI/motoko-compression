@@ -99,11 +99,10 @@ module {
     /// Must be called before `finish()` — finish() flushes and clears the block.
     public func currentBlockSize() : Nat { block.size() };
 
-    /// Flush the final block, byte-align the buffer, and return it.
-    public func finish() : BitBuffer {
+    /// Flush the final block and byte-align the buffer.
+    public func finish() {
       flush(true);
       bitbuffer.byteAlign();
-      bitbuffer;
     };
   };
 

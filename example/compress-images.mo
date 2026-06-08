@@ -110,10 +110,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   public shared ({ caller }) func _decompressBatch(batch : [[Nat8]]) : async () {
     assert caller == canisterId();
     for (chunk in batch.vals()) {
-      switch (gzipDecoder.decode(chunk)) {
-        case (#err(msg)) Runtime.trap("_decompressBatch decode: " # msg);
-        case (#ok(_)) {};
-      };
+      gzipDecoder.decode(chunk);
       switch (gzipDecoder.finish()) {
         case (#err(msg)) Runtime.trap("_decompressBatch finish: " # msg);
         case (#ok(_)) {};

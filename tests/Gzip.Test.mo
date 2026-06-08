@@ -16,18 +16,11 @@ func roundTripStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
   let compressed = encoder.compressed();
 
   let decoder = Gzip.Decoder();
-  switch (decoder.decode(compressed)) {
-    case (#err(msg)) Runtime.trap("decode error: " # msg);
-    case (#ok(_)) {};
-  };
+  decoder.decode(compressed);
 
   switch (decoder.finish()) {
     case (#err(msg)) Runtime.trap("finish error: " # msg);
-    case (#ok(summary)) {
-      if (summary.size != decoder.decompressedSize()) {
-        Runtime.trap("finish size mismatch");
-      };
-    };
+    case (#ok(_)) {};
   };
   decoder.decompressed();
 };
@@ -48,10 +41,7 @@ func encodeStreamingBytes(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
 func roundTripEncodeStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
   let compressed = encodeStreamingBytes(data, enc);
   let decoder = Gzip.Decoder();
-  switch (decoder.decode(compressed)) {
-    case (#err msg) Runtime.trap("roundTripEncodeStreaming decode error: " # msg);
-    case (#ok _) {};
-  };
+  decoder.decode(compressed);
   switch (decoder.finish()) {
     case (#err msg) Runtime.trap("roundTripEncodeStreaming finish error: " # msg);
     case (#ok _) {};
@@ -64,10 +54,7 @@ func roundTripEncodeStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8]
 func fastRoundTripEncodeStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
   let compressed = encodeStreamingBytes(data, enc);
   let decoder = Gzip.Decoder();
-  switch (decoder.decode(compressed)) {
-    case (#err msg) Runtime.trap("fastRoundTripEncodeStreaming decode error: " # msg);
-    case (#ok _) {};
-  };
+  decoder.decode(compressed);
   switch (decoder.finish()) {
     case (#err msg) Runtime.trap("fastRoundTripEncodeStreaming finish error: " # msg);
     case (#ok _) {};
@@ -140,7 +127,7 @@ suite(
         expect.nat8(compressed[0]).equal(0x1f);
         expect.nat8(compressed[1]).equal(0x8b);
         let dec = Gzip.Decoder();
-        ignore dec.decode(compressed);
+        dec.decode(compressed);
         switch (dec.finish()) {
           case (#err msg) Runtime.trap(msg);
           case (#ok _) {};
@@ -168,7 +155,7 @@ suite(
 
         // Both compressed outputs decompress back to their original input.
         let dec = Gzip.Decoder();
-        ignore dec.decode(compA);
+        dec.decode(compA);
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("reuse test decode A: " # msg);
           case (#ok _) {};
@@ -176,7 +163,7 @@ suite(
         expect.array(dec.decompressed(), Nat8.toText, Nat8.equal).equal(dataA);
         dec.clear();
 
-        ignore dec.decode(compB);
+        dec.decode(compB);
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("reuse test decode B: " # msg);
           case (#ok _) {};
@@ -199,7 +186,7 @@ suite(
       "invalid magic bytes → #err",
       func() {
         let decoder = Gzip.Decoder();
-        ignore decoder.decode([0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]);
+        decoder.decode([0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]);
         switch (decoder.finish()) {
           case (#err(_)) {}; // expected
           case (#ok(_)) Runtime.trap("Expected error for invalid magic bytes");
@@ -224,7 +211,7 @@ suite(
         );
 
         let decoder = Gzip.Decoder();
-        ignore decoder.decode(corrupted);
+        decoder.decode(corrupted);
         switch (decoder.finish()) {
           case (#err(_)) {}; // expected
           case (#ok(_)) Runtime.trap("Expected error for corrupted data");
@@ -325,10 +312,7 @@ func multiStepDecode(data : [Nat8], maxOutBytes : Nat) : [Nat8] {
 
   // One decoder fed the compressed bytes, then driven step-by-step.
   let decoder = Gzip.Decoder();
-  switch (decoder.decode(compressed)) {
-    case (#err msg) Runtime.trap("multiStepDecode decode error: " # msg);
-    case (#ok _) {};
-  };
+  decoder.decode(compressed);
   switch (decoder.start()) {
     case (#err msg) Runtime.trap("multiStepDecode start error: " # msg);
     case (#ok _) {};
@@ -339,11 +323,8 @@ func multiStepDecode(data : [Nat8], maxOutBytes : Nat) : [Nat8] {
     switch (decoder.step(maxOutBytes)) {
       case (#err msg) Runtime.trap("multiStepDecode step error: " # msg);
       case (#ok(#more)) { steps += 1 };
-      case (#ok(#done summary)) {
+      case (#ok(#done)) {
         steps += 1;
-        if (summary.size != decoder.decompressedSize()) {
-          Runtime.trap("multiStepDecode: summary.size mismatch");
-        };
         break drive;
       };
     };
@@ -406,7 +387,7 @@ suite(
 
         let dec = Gzip.Decoder();
 
-        ignore dec.decode(compA);
+        dec.decode(compA);
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("decoder reuse test A: " # msg);
           case (#ok _) {};
@@ -414,7 +395,7 @@ suite(
         expect.array(dec.decompressed(), Nat8.toText, Nat8.equal).equal(dataA);
         dec.clear();
 
-        ignore dec.decode(compB);
+        dec.decode(compB);
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("decoder reuse test B: " # msg);
           case (#ok _) {};

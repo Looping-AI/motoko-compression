@@ -182,8 +182,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
           job.offset := decoder.decompressedSize();
           timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
         };
-        case (#ok(#done summary)) {
-          job.offset := summary.size;
+        case (#ok(#done)) {
+          job.offset := decoder.decompressedSize();
           markJobDone();
         };
       };
@@ -301,14 +301,10 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   public func decompress() : async () {
     if (encoder.chunks().size() == 0) Runtime.trap("decompress: no compressed data");
     decoder.clear();
-    switch (decoder.decode(encoder.compressed())) {
-      case (#err msg) Runtime.trap("decompress decode: " # msg);
-      case (#ok _) {};
-    };
-
+    decoder.decode(encoder.compressed());
     switch (decoder.finish()) {
       case (#err msg) Runtime.trap("decompress finish: " # msg);
-      case (#ok _summary) {};
+      case (#ok _) {};
     };
   };
 
@@ -350,10 +346,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     // parse the header. Per-tick step() does the heavy decompression work.
     decoder.clear();
     for (chunk in encoder.chunks().vals()) {
-      switch (decoder.decode(chunk)) {
-        case (#err msg) Runtime.trap("requestDecompressJob: decode: " # msg);
-        case (#ok _) {};
-      };
+      decoder.decode(chunk);
     };
     switch (decoder.start()) {
       case (#err msg) Runtime.trap("requestDecompressJob: start: " # msg);

@@ -84,10 +84,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
   public shared ({ caller }) func _decodeBatch(batch : [[Nat8]]) : async () {
     assert caller == canisterId();
     for (chunk in batch.vals()) {
-      switch (gzipDecoder.decode(chunk)) {
-        case (#err(msg)) Runtime.trap("_decodeBatch: " # msg);
-        case (#ok(_)) {};
-      };
+      gzipDecoder.decode(chunk);
     };
   };
 

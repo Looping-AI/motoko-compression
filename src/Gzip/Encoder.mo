@@ -195,7 +195,7 @@ module {
     /// then call `clear()` to reset the encoder for reuse.
     public func finish() {
       ensureHeaderWritten();
-      ignore deflate.finish();
+      deflate.finish();
       let crc32Val = crc32.finish();
       writeFooter(crc32Val);
       List.add(outputChunks, bitbuffer.drainCompleteBytes());

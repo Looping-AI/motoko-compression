@@ -25,15 +25,6 @@ module {
 
   // ── Public types ─────────────────────────────────────────────────────────
 
-  /// Returned by `Decoder.finish()` / `Decoder.step()` on success. Carries the
-  /// header and verified decoded-stream metadata, but not the bytes themselves —
-  /// those are available via `decompressed()` or `chunks()`.
-  public type StreamedSummary = {
-    header : Header.Header;
-    size : Nat;
-    crc32 : Nat32;
-  };
-
   // ── Decoder class ─────────────────────────────────────────────────────────
 
   /// Stateful Gzip decoder.
@@ -66,14 +57,12 @@ module {
     // ── Public API ──────────────────────────────────────────────────────────
 
     /// Add compressed bytes to the internal buffer.
-    ///
-    /// Returns `#ok` always; errors are only surfaced by `start()`/`step()`.
-    public func decode(bytes : [Nat8]) : Result<(), Text> {
+    /// Errors are only surfaced by `start()`/`step()`.
+    public func decode(bytes : [Nat8]) {
       if (bytes.size() > 0) {
         List.add(inputChunks, bytes);
         totalBytes += bytes.size();
       };
-      #ok();
     };
 
     /// Begin a streaming decode: parse the Gzip header and prepare the deflate
@@ -122,11 +111,11 @@ module {
     };
 
     /// Decompress at most `maxOutBytes` of output, accumulating it internally,
-    /// then return `#more` (call again) or `#done` with the verified
-    /// `StreamedSummary`. CRC32 and ISIZE are verified incrementally;
-    /// on `#done` the streaming state is reset (but decompressed output is kept
-    /// until `clear()` is called). Must be preceded by `start()`.
-    public func step(maxOutBytes : Nat) : Result<{ #more; #done : StreamedSummary }, Text> {
+    /// then return `#more` (call again) or `#done` when decompression is complete.
+    /// CRC32 and ISIZE are verified; on `#done` the streaming state is reset
+    /// (but decompressed output is kept until `clear()` is called).
+    /// Must be preceded by `start()`.
+    public func step(maxOutBytes : Nat) : Result<{ #more; #done }, Text> {
       let ?deflate = deflateState else {
         return #err("Gzip.Decoder.step: call start() first");
       };
@@ -190,18 +179,6 @@ module {
         );
       };
 
-      let parsedHeader = switch (header) {
-        case (?h) h;
-        case null {
-          return #err("Gzip.Decoder.step: missing header");
-        };
-      };
-      let summary : StreamedSummary = {
-        header = parsedHeader;
-        size = total;
-        crc32 = actualCrc32;
-      };
-
       // Reset streaming state; decompressed output remains readable via
       // decompressed() / chunks() until clear() is called.
       header := null;
@@ -212,7 +189,7 @@ module {
       sliceLen := 0;
       outCapHint := 0;
 
-      #ok(#done(summary));
+      #ok(#done);
     };
 
     /// Decompress the buffered input in one shot, accumulating output internally.
@@ -220,7 +197,7 @@ module {
     ///
     /// One-shot wrapper that drives `start()` + `step()` to completion; use the
     /// `start`/`step` pair directly to spread decoding across messages.
-    public func finish() : Result<StreamedSummary, Text> {
+    public func finish() : Result<(), Text> {
       switch (start()) {
         case (#err(msg)) return #err(msg);
         case (#ok(_)) {};
@@ -231,7 +208,7 @@ module {
         switch (step(WHOLE)) {
           case (#err(msg)) return #err(msg);
           case (#ok(#more)) {};
-          case (#ok(#done(summary))) return #ok(summary);
+          case (#ok(#done)) return #ok(());
         };
       };
     };
