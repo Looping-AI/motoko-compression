@@ -45,18 +45,18 @@ module {
     // Compressed input fragments collected by decode() calls.
     // We defer concatenation until start() so that no doubling reallocations
     // occur in BitBuffer while the caller feeds the stream in chunks.
-    let chunks_ : List.List<[Nat8]> = List.empty();
-    var total_bytes_ : Nat = 0;
+    let chunks : List.List<[Nat8]> = List.empty();
+    var totalBytes : Nat = 0;
 
     // ── In-progress streaming-decode state (set by start, used by step) ──────
-    var header_ : ?Header.Header = null;
-    var deflate_ : ?DeflateDecoder.Decoder = null;
-    var crc_ : ?CRC32.CRC32 = null;
-    var total_ : Nat = 0;
-    var store_ : ?[var Nat8] = null;
-    var sliceStart_ : Nat = 0;
-    var sliceLen_ : Nat = 0;
-    var outCapHint_ : Nat = 0;
+    var header : ?Header.Header = null;
+    var deflateState : ?DeflateDecoder.Decoder = null;
+    var crcState : ?CRC32.CRC32 = null;
+    var total : Nat = 0;
+    var inputStore : ?[var Nat8] = null;
+    var sliceStart : Nat = 0;
+    var sliceLen : Nat = 0;
+    var outCapHint : Nat = 0;
 
     // ── Public API ──────────────────────────────────────────────────────────
 
@@ -65,8 +65,8 @@ module {
     /// Returns `#ok` always; errors are only surfaced by `start()`/`step()`.
     public func decode(bytes : [Nat8]) : Result<(), Text> {
       if (bytes.size() > 0) {
-        List.add(chunks_, bytes);
-        total_bytes_ += bytes.size();
+        List.add(chunks, bytes);
+        totalBytes += bytes.size();
       };
       #ok();
     };
@@ -77,16 +77,16 @@ module {
     public func start() : Result<Header.Header, Text> {
       // Build one BitReader from the accumulated fragments: one pre-sized
       // allocation + one sequential copy, no doubling reallocations.
-      let reader = BitReader.BitReader(total_bytes_);
-      for (chunk in List.values(chunks_)) {
+      let reader = BitReader.BitReader(totalBytes);
+      for (chunk in List.values(chunks)) {
         reader.addBytes(chunk);
       };
       // Fragments are fully copied; release them to allow GC.
-      List.clear(chunks_);
-      total_bytes_ := 0;
+      List.clear(chunks);
+      totalBytes := 0;
 
       // 1. Decode the Gzip header.
-      let header = switch (Header.decode(reader)) {
+      let parsedHeader = switch (Header.decode(reader)) {
         case (#err(msg)) return #err(msg);
         case (#ok(h)) h;
       };
@@ -95,25 +95,25 @@ module {
       // Slice the deflate data (plus 8-byte footer) in place from the reader's
       // buffer instead of copying it into a fresh array. Valid because the gzip
       // header is byte-aligned, so the read position is on a byte boundary.
-      let (store, start, len) = reader.readableSlice();
+      let (rawStore, rawStart, rawLen) = reader.readableSlice();
 
       // 2. Pre-size the output buffer from the gzip ISIZE field (last 4 bytes,
       //    LE, = uncompressed size mod 2^32). The streaming cap is still applied
       //    inside the deflate decoder for large streams.
-      let outCapHint : Nat = if (len >= 4) {
-        let isizeSlice = Array.tabulate<Nat8>(4, func(k) { store[start + len - 4 + k] });
+      let capHint : Nat = if (rawLen >= 4) {
+        let isizeSlice = Array.tabulate<Nat8>(4, func(k) { rawStore[rawStart + rawLen - 4 + k] });
         Utils.leBytesToNat(isizeSlice);
       } else { 0 };
 
-      header_ := ?header;
-      deflate_ := ?DeflateDecoder.fromSlice(store, start, len);
-      crc_ := ?CRC32.CRC32();
-      total_ := 0;
-      store_ := ?store;
-      sliceStart_ := start;
-      sliceLen_ := len;
-      outCapHint_ := outCapHint;
-      #ok(header);
+      header := ?parsedHeader;
+      deflateState := ?DeflateDecoder.fromSlice(rawStore, rawStart, rawLen);
+      crcState := ?CRC32.CRC32();
+      total := 0;
+      inputStore := ?rawStore;
+      sliceStart := rawStart;
+      sliceLen := rawLen;
+      outCapHint := capHint;
+      #ok(parsedHeader);
     };
 
     /// Decompress at most `maxOutBytes` of output, delivering it to `consume`
@@ -122,20 +122,20 @@ module {
     /// on `#done` the footer is checked and the decoder is reset via `clear()`.
     /// Must be preceded by `start()`.
     public func step(maxOutBytes : Nat, consume : ([Nat8]) -> ()) : Result<{ #more; #done : StreamedSummary }, Text> {
-      let ?deflate = (deflate_) else {
+      let ?deflate = deflateState else {
         return #err("Gzip.Decoder.step: call start() first");
       };
-      let ?crc = (crc_) else {
+      let ?crc = crcState else {
         return #err("Gzip.Decoder.step: call start() first");
       };
 
       let sink = func(chunk : [Nat8]) {
         crc.update(chunk);
-        total_ += chunk.size();
+        total += chunk.size();
         consume(chunk);
       };
 
-      switch (deflate.decodeBounded(outCapHint_, maxOutBytes, sink)) {
+      switch (deflate.decodeBounded(outCapHint, maxOutBytes, sink)) {
         case (#err(msg)) {
           return #err(msg);
         };
@@ -146,14 +146,14 @@ module {
       };
 
       // Deflate is complete — verify the Gzip footer (8 bytes) that follows.
-      let store = switch (store_) {
+      let store = switch (inputStore) {
         case (?s) s;
         case null {
           return #err("Gzip.Decoder.step: missing input slice");
         };
       };
-      let start = sliceStart_;
-      let len = sliceLen_;
+      let start = sliceStart;
+      let len = sliceLen;
       let c = deflate.bytesConsumed();
       if (c + 8 > len) {
         return #err("Gzip: stream truncated — no footer");
@@ -175,7 +175,7 @@ module {
       // Verify ISIZE (4 bytes, LE, mod 2^32).
       let isizeSlice = Array.tabulate<Nat8>(4, func(k) { store[start + c + 4 + k] });
       let stored_isize = Utils.leBytesToNat(isizeSlice);
-      let actual_isize = total_ % 4294967296;
+      let actual_isize = total % 4294967296;
       if (stored_isize != actual_isize) {
         return #err(
           "Gzip: ISIZE mismatch — stored "
@@ -185,15 +185,15 @@ module {
         );
       };
 
-      let header = switch (header_) {
+      let parsedHeader = switch (header) {
         case (?h) h;
         case null {
           return #err("Gzip.Decoder.step: missing header");
         };
       };
       let summary : StreamedSummary = {
-        header;
-        size = total_;
+        header = parsedHeader;
+        size = total;
         crc32 = actual_crc32;
       };
       clear();
@@ -227,16 +227,16 @@ module {
 
     /// Reset the decoder state so it can be reused for a new stream.
     public func clear() {
-      List.clear(chunks_);
-      total_bytes_ := 0;
-      header_ := null;
-      deflate_ := null;
-      crc_ := null;
-      total_ := 0;
-      store_ := null;
-      sliceStart_ := 0;
-      sliceLen_ := 0;
-      outCapHint_ := 0;
+      List.clear(chunks);
+      totalBytes := 0;
+      header := null;
+      deflateState := null;
+      crcState := null;
+      total := 0;
+      inputStore := null;
+      sliceStart := 0;
+      sliceLen := 0;
+      outCapHint := 0;
     };
   };
 

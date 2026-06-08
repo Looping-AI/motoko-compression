@@ -178,10 +178,10 @@ module {
             List.add(codes, { symbol = 16; count = (n - 3 : Nat); bitwidth = 2 });
             run.count -= n;
           };
-          var _j = 0;
-          while (_j < run.count) {
+          var j = 0;
+          while (j < run.count) {
             List.add(codes, { ZERO_CODE with symbol = run.value });
-            _j += 1;
+            j += 1;
           };
         } else {
           // Zeros: use code 18 (11-138) then code 17 (3-10) then literals
@@ -193,10 +193,10 @@ module {
           if (run.count >= 3) {
             List.add(codes, { symbol = 17; count = (run.count - 3 : Nat); bitwidth = 3 });
           } else {
-            var _j = 0;
-            while (_j < run.count) {
+            var j = 0;
+            while (j < run.count) {
               List.add(codes, ZERO_CODE);
-              _j += 1;
+              j += 1;
             };
           };
         };

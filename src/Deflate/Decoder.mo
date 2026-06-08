@@ -179,7 +179,7 @@ module {
 
     // Output buffer + block-loop position persist across `decodeBounded` calls
     // so decoding can suspend at block boundaries and resume on a later message.
-    var out_ : ?OutByteBuffer.OutByteBuffer = null;
+    var outBuf : ?OutByteBuffer.OutByteBuffer = null;
     var bfinal : Bool = false;
     var done : Bool = false;
 
@@ -206,25 +206,25 @@ module {
       if (done) return #ok(#done);
 
       let maxCap = WINDOW + FLUSH_CHUNK;
-      let out = switch (out_) {
+      let out = switch (outBuf) {
         case (?o) o;
         case null {
           // Initial capacity: use the caller's hint (e.g. Gzip ISIZE), capped
           // at maxCap so we never over-allocate, 64 KiB floor when no hint.
           let initCap : Nat = if (initOutCap > 0) Nat.min(initOutCap, maxCap) else 65536;
           let o = OutByteBuffer.OutByteBuffer(initCap);
-          out_ := ?o;
+          outBuf := ?o;
           o;
         };
       };
       var emitted : Nat = 0;
 
-      label _blocks loop {
-        if (bfinal) break _blocks;
+      label blocks loop {
+        if (bfinal) break blocks;
 
         if (acc.bitsLeft() == 0) {
           err := ?"Deflate: stream ended before final block";
-          break _blocks;
+          break blocks;
         };
 
         bfinal := acc.readBit(); // BFINAL
@@ -237,14 +237,14 @@ module {
         } else if (btype == 2) {
           switch (loadDynamicHeader()) {
             case (#ok((ld, dd))) decodeCompressedBlock(out, ld, dd);
-            case (#err(msg)) { err := ?msg; break _blocks };
+            case (#err(msg)) { err := ?msg; break blocks };
           };
         } else {
           err := ?"Deflate: invalid block type 3";
-          break _blocks;
+          break blocks;
         };
 
-        if (err != null) break _blocks;
+        if (err != null) break blocks;
 
         // Emit the accumulated batch once it exceeds WINDOW + FLUSH_CHUNK,
         // retaining exactly the last WINDOW bytes for back-reference resolution.
@@ -354,7 +354,7 @@ module {
       var olen = out.size();
       var ocap = out.capacity();
 
-      label _syms loop {
+      label syms loop {
         // ── Inline litDec.decodeRaw ──────────────────────────────────────
         while (bits <= 56 and pos < srcLen) {
           hold := hold | (Nat64.fromNat8(src[pos]) << bits);
@@ -366,7 +366,7 @@ module {
         var lpayload : Nat64 = 0;
         if (lw > 15) {
           err := ?"Deflate: invalid literal/length Huffman code";
-          break _syms;
+          break syms;
         };
         if (lw <= litRootBits64) {
           hold := hold >> lw;
@@ -384,7 +384,7 @@ module {
           let lw2 : Nat64 = lv2 & 31;
           if (lw2 > lsub) {
             err := ?"Deflate: invalid literal/length Huffman code";
-            break _syms;
+            break syms;
           };
           hold := hold >> lw2;
           bits -= lw2;
@@ -411,10 +411,10 @@ module {
             ocap := out.capacity();
           };
         } else if (lkind == 2) {
-          break _syms; // end-of-block
+          break syms; // end-of-block
         } else if (lkind == 3) {
           err := ?"Deflate: invalid length code";
-          break _syms;
+          break syms;
         } else {
           // Length code: base + extra-bit count baked into the payload.
           let lenExtra : Nat64 = (lpayload >> 2) & 0xF;
@@ -432,7 +432,7 @@ module {
           var dpayload : Nat64 = 0;
           if (dw > 15) {
             err := ?"Deflate: invalid distance Huffman code";
-            break _syms;
+            break syms;
           };
           if (dw <= distRootBits64) {
             hold := hold >> dw;
@@ -447,7 +447,7 @@ module {
             let dw2 : Nat64 = dv2 & 31;
             if (dw2 > dsub) {
               err := ?"Deflate: invalid distance Huffman code";
-              break _syms;
+              break syms;
             };
             hold := hold >> dw2;
             bits -= dw2;

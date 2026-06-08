@@ -72,46 +72,46 @@ module {
   /// Fluent builder for `Encoder`.
   public class EncoderBuilder() = self {
 
-    var _header : Header = Header.defaultHeader();
+    var hdr : Header = Header.defaultHeader();
 
     // lzss: #balance matches zlib's default. #fast is counter-intuitively slower: a smaller
     //   window triggers slideWindow() more often, multiplying WASM bounds checks across the window array.
     // force_huffman_kind: null auto-selects fixed vs dynamic Huffman, gives best ratio; fixed is typically fastest.
-    var _deflate_opts : DeflateOptions = {
+    var deflateOpts : DeflateOptions = {
       lzss = #balance;
       deflate_block_size = DEFAULT_DEFLATE_BLOCK_SIZE;
       force_huffman_kind = ?#fixed;
     };
 
-    var _output_chunk_size : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
+    var chunkSize : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
 
     /// Override the Gzip header fields.
     public func header(h : Header) : EncoderBuilder {
-      _header := h;
+      hdr := h;
       self;
     };
 
     /// Force dynamic Huffman tables for every block (better ratio, slightly slower).
     public func dynamicHuffman() : EncoderBuilder {
-      _deflate_opts := { _deflate_opts with force_huffman_kind = ?#dynamic };
+      deflateOpts := { deflateOpts with force_huffman_kind = ?#dynamic };
       self;
     };
 
     /// Force fixed Huffman tables for every block (faster, slightly larger output).
     public func fixedHuffman() : EncoderBuilder {
-      _deflate_opts := { _deflate_opts with force_huffman_kind = ?#fixed };
+      deflateOpts := { deflateOpts with force_huffman_kind = ?#fixed };
       self;
     };
 
     /// Auto-select fixed vs dynamic Huffman per block (default).
     public func autoHuffman() : EncoderBuilder {
-      _deflate_opts := { _deflate_opts with force_huffman_kind = null };
+      deflateOpts := { deflateOpts with force_huffman_kind = null };
       self;
     };
 
     /// Set the LZSS compression level.
     public func lzss(level : CompressionLevel) : EncoderBuilder {
-      _deflate_opts := { _deflate_opts with lzss = level };
+      deflateOpts := { deflateOpts with lzss = level };
       self;
     };
 
@@ -123,7 +123,7 @@ module {
     /// The LZSS 32 KiB back-reference window spans all blocks regardless.
     /// Default: 32 KiB (matches zlib's default).
     public func deflateBlockSize(size : Nat) : EncoderBuilder {
-      _deflate_opts := { _deflate_opts with deflate_block_size = size };
+      deflateOpts := { deflateOpts with deflate_block_size = size };
       self;
     };
 
@@ -143,13 +143,13 @@ module {
     /// Use this value as the per-self-call input slice size when spreading
     /// compression across ICP messages.
     public func outputChunkSize(size : Nat) : EncoderBuilder {
-      _output_chunk_size := size;
+      chunkSize := size;
       self;
     };
 
     /// Build the configured `Encoder`.
     public func build() : Encoder {
-      Encoder(_header, _deflate_opts, _output_chunk_size);
+      Encoder(hdr, deflateOpts, chunkSize);
     };
   };
 

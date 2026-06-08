@@ -76,14 +76,14 @@ module {
     // and feed `BitBuffer.addBits` / `addBits4` directly — avoiding the
     // `Code` record lookup and per-symbol `Nat16.toNat` conversion that
     // `encode` performs.
-    let _n : Nat = table.size();
-    public let bitwidths : [var Nat] = Prim.Array_init<Nat>(_n, 0);
-    public let bits : [var Nat] = Prim.Array_init<Nat>(_n, 0);
-    var _initI : Nat = 0;
-    while (_initI < _n) {
-      bitwidths[_initI] := table[_initI].bitwidth;
-      bits[_initI] := Nat16.toNat(table[_initI].bits);
-      _initI += 1;
+    let n : Nat = table.size();
+    public let bitwidths : [var Nat] = Prim.Array_init<Nat>(n, 0);
+    public let bits : [var Nat] = Prim.Array_init<Nat>(n, 0);
+    var i : Nat = 0;
+    while (i < n) {
+      bitwidths[i] := table[i].bitwidth;
+      bits[i] := Nat16.toNat(table[i].bits);
+      i += 1;
     };
 
     public func encode(bitbuffer : BitBuffer, symbol : Nat) {
@@ -202,11 +202,11 @@ module {
         var weighted_nodes = deepCopy(nodes);
 
         // Run max_bitwidth - 1 iterations (Itertools.range(0, max_bitwidth-1) was exclusive)
-        var _j = 1;
-        while (_j < max_bitwidth) {
+        var j = 1;
+        while (j < max_bitwidth) {
           package(weighted_nodes);
           weighted_nodes := merge(weighted_nodes, deepCopy(nodes));
-          _j += 1;
+          j += 1;
         };
 
         package(weighted_nodes);

@@ -14,47 +14,47 @@
 ///   let collected = List.empty<Nat8>();
 ///   let result = dec.finishStreaming(func(c) { List.addAll(collected, c.vals()) });
 
-import Header_ "Header";
-import Encoder_ "Encoder";
-import Decoder_ "Decoder";
+import HeaderFile "Header";
+import EncoderFile "Encoder";
+import DecoderFile "Decoder";
 
 module {
 
   // ── Header ───────────────────────────────────────────────────────────────
 
-  public type ExtraField = Header_.ExtraField;
-  public type Os = Header_.Os;
-  public type Header = Header_.Header;
+  public type ExtraField = HeaderFile.ExtraField;
+  public type Os = HeaderFile.Os;
+  public type Header = HeaderFile.Header;
 
-  public let defaultHeader = Header_.defaultHeader;
-  public let osToByte = Header_.osToByte;
-  public let byteToOs = Header_.byteToOs;
+  public let defaultHeader = HeaderFile.defaultHeader;
+  public let osToByte = HeaderFile.osToByte;
+  public let byteToOs = HeaderFile.byteToOs;
 
   // ── Encoder ──────────────────────────────────────────────────────────────
 
-  public type EncodedResponse = Encoder_.EncodedResponse;
+  public type EncodedResponse = EncoderFile.EncodedResponse;
 
   /// Summary returned by `Encoder.finishStreaming()`.
-  public type EncodedSummary = Encoder_.EncodedSummary;
+  public type EncodedSummary = EncoderFile.EncodedSummary;
 
   /// Fluent builder for Gzip.Encoder.
-  public type EncoderBuilder = Encoder_.EncoderBuilder;
-  public let EncoderBuilder = Encoder_.EncoderBuilder;
+  public type EncoderBuilder = EncoderFile.EncoderBuilder;
+  public let EncoderBuilder = EncoderFile.EncoderBuilder;
 
   /// Stateful Gzip encoder (built via `EncoderBuilder().build()`).
-  public type Encoder = Encoder_.Encoder;
+  public type Encoder = EncoderFile.Encoder;
 
   // ── Decoder ──────────────────────────────────────────────────────────────
 
   /// Summary returned by `Decoder.finishStreaming()` / `Decoder.step()`.
-  public type StreamedSummary = Decoder_.StreamedSummary;
+  public type StreamedSummary = DecoderFile.StreamedSummary;
 
   /// Gzip decoder. Feed chunks with `decode()`, then either drive the whole
   /// stream with `finishStreaming()`, or decode incrementally across messages
   /// with `start()` + repeated `step(maxOutBytes, consume)`.
-  public let Decoder = Decoder_.Decoder;
+  public let Decoder = DecoderFile.Decoder;
 
   /// Stateful Gzip decoder type (constructed via `Decoder()`).
-  public type Decoder = Decoder_.Decoder;
+  public type Decoder = DecoderFile.Decoder;
 
 };

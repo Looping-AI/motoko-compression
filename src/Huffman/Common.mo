@@ -19,12 +19,12 @@ module {
     var prev = code.bits;
     var curr = 0 : Nat16;
 
-    var _j = 0;
-    while (_j < code.bitwidth) {
+    var j = 0;
+    while (j < code.bitwidth) {
       curr <<= (1 : Nat16);
       curr |= prev & (1 : Nat16);
       prev >>= (1 : Nat16);
-      _j += 1;
+      j += 1;
     };
 
     {
