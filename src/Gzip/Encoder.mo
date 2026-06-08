@@ -161,40 +161,40 @@ module {
   /// the compressed `EncodedResponse`.
   public class Encoder(header : Header, deflate_options : DeflateOptions, output_chunk_size : Nat) {
 
-    var input_size = 0;
+    var inputSize = 0;
     let crc32 = CRC32.CRC32();
     let bitbuffer = BitBuffer.new();
-    var header_written = false;
+    var headerWritten = false;
 
     /// Byte offsets into `bitbuffer` recorded after each Deflate block flush.
-    let block_ends = List.empty<Nat>();
+    let blockEnds = List.empty<Nat>();
 
     /// Streaming output callback — set via `setOnOutput`.
-    var on_output : ?([Nat8] -> ()) = null;
-    /// Total bytes drained to `on_output` so far in this streaming session.
-    var streamed_out : Nat = 0;
+    var onOutput : ?([Nat8] -> ()) = null;
+    /// Total bytes drained to `onOutput` so far in this streaming session.
+    var streamedOut : Nat = 0;
 
     func ensureHeaderWritten() {
-      if (not header_written) {
-        header_written := true;
+      if (not headerWritten) {
+        headerWritten := true;
         Header.encode(bitbuffer, header, deflate_options.lzss);
       };
     };
 
-    func writeFooter(crc32_val : Nat32) {
-      bitbuffer.addBytes(Utils.natToLeBytes(Nat32.toNat(crc32_val), 4));
-      bitbuffer.addBytes(Utils.natToLeBytes(input_size % 4294967296, 4));
+    func writeFooter(crc32Val : Nat32) {
+      bitbuffer.addBytes(Utils.natToLeBytes(Nat32.toNat(crc32Val), 4));
+      bitbuffer.addBytes(Utils.natToLeBytes(inputSize % 4294967296, 4));
     };
 
     let deflate = DeflateEncoder.Encoder(bitbuffer, deflate_options);
     deflate.setOnBlockFlushed(
       func(byte_offset : Nat) {
-        List.add(block_ends, byte_offset);
-        switch (on_output) {
+        List.add(blockEnds, byte_offset);
+        switch (onOutput) {
           case (?sink) {
             if (bitbuffer.byteSize() >= STREAM_FLUSH_THRESHOLD) {
               let chunk = bitbuffer.drainCompleteBytes();
-              streamed_out += chunk.size();
+              streamedOut += chunk.size();
               sink(chunk);
             };
           };
@@ -224,12 +224,12 @@ module {
       // even when a large slice (e.g. 6 MiB) is passed in a single call.
       // Without streaming (finish() path) the full input size is kept in the
       // buffer, so pre-grow by the whole slice as before.
-      let reserveTarget = switch (on_output) {
+      let reserveTarget = switch (onOutput) {
         case (?_) bitbuffer.byteSize() + STREAM_FLUSH_THRESHOLD + 25;
         case null bitbuffer.byteSize() + bytes.size() + 25;
       };
       bitbuffer.reserve(reserveTarget);
-      input_size += bytes.size();
+      inputSize += bytes.size();
       crc32.update(bytes);
       ensureHeaderWritten();
       deflate.encode(bytes);
@@ -248,42 +248,42 @@ module {
     /// Register a callback that receives compressed bytes as they are produced.
     /// Once set, use `finishStreaming()` instead of `finish()`.
     public func setOnOutput(cb : [Nat8] -> ()) {
-      on_output := ?cb;
+      onOutput := ?cb;
     };
 
     /// Reset the encoder state (does not free the bitbuffer allocation).
     public func clear() {
-      input_size := 0;
+      inputSize := 0;
       crc32.reset();
       bitbuffer.clear();
-      List.clear(block_ends);
-      header_written := false;
-      on_output := null;
-      streamed_out := 0;
+      List.clear(blockEnds);
+      headerWritten := false;
+      onOutput := null;
+      streamedOut := 0;
       deflate.clear();
     };
 
     /// Flush the final Deflate block, append the Gzip footer, and stream all
-    /// remaining bytes to the registered `on_output` callback.
+    /// remaining bytes to the registered `onOutput` callback.
     /// Traps if `setOnOutput` was not called first.
     /// Returns a summary with `input_size`, `compressed_size`, and `crc32`.
     public func finishStreaming() : EncodedSummary {
-      let sink = switch (on_output) {
+      let sink = switch (onOutput) {
         case (?s) s;
         case null Runtime.trap("Gzip.Encoder.finishStreaming: call setOnOutput first");
       };
       ensureHeaderWritten();
       ignore deflate.finish();
-      let crc32_val = crc32.finish();
-      writeFooter(crc32_val);
+      let crc32Val = crc32.finish();
+      writeFooter(crc32Val);
       // Drain all remaining bytes (byteAlign already done by deflate.finish footer).
       let remaining = bitbuffer.drainCompleteBytes();
-      streamed_out += remaining.size();
+      streamedOut += remaining.size();
       sink(remaining);
       let summary : EncodedSummary = {
-        input_size;
-        compressed_size = streamed_out;
-        crc32 = crc32_val;
+        input_size = inputSize;
+        compressed_size = streamedOut;
+        crc32 = crc32Val;
       };
       clear();
       summary;
@@ -293,7 +293,7 @@ module {
     /// the compressed data split into block-aligned chunks.
     /// Traps if `setOnOutput` was previously called (use `finishStreaming()` instead).
     public func finish() : EncodedResponse {
-      switch (on_output) {
+      switch (onOutput) {
         case (?_) Runtime.trap("Gzip.Encoder.finish: setOnOutput was called; use finishStreaming() instead");
         case null {};
       };
@@ -301,8 +301,8 @@ module {
       ignore deflate.finish();
 
       // Footer: CRC32 (4 bytes LE) + ISIZE (4 bytes LE, mod 2^32)
-      let crc32_val = crc32.finish();
-      writeFooter(crc32_val);
+      let crc32Val = crc32.finish();
+      writeFooter(crc32Val);
 
       let total = bitbuffer.byteSize();
       let all = bitbuffer.getBytes(0, total);
@@ -320,7 +320,7 @@ module {
         // Degenerate case: if a single DEFLATE block exceeds `output_chunk_size`,
         // it is emitted as its own oversized chunk rather than being split mid-block.
 
-        let ends = List.toArray(block_ends);
+        let ends = List.toArray(blockEnds);
         let n = ends.size();
 
         let chunks : [[Nat8]] = if (n == 0) {
@@ -328,25 +328,25 @@ module {
           [all];
         } else {
           let out = List.empty<[Nat8]>();
-          var chunk_lo = 0;
-          var prev_block_end = 0;
-          var blocks_in_chunk = 0;
+          var chunkLo = 0;
+          var prevBlockEnd = 0;
+          var blocksInChunk = 0;
 
           for (block_end in ends.vals()) {
-            // Avoid Nat underflow: rewrite `block_end - chunk_lo > output_chunk_size`
-            // as `block_end > chunk_lo + output_chunk_size` (both are Nat, sum never wraps).
-            if (block_end > chunk_lo + output_chunk_size and blocks_in_chunk > 0) {
+            // Avoid Nat underflow: rewrite `block_end - chunkLo > output_chunk_size`
+            // as `block_end > chunkLo + output_chunk_size` (both are Nat, sum never wraps).
+            if (block_end > chunkLo + output_chunk_size and blocksInChunk > 0) {
               // Adding this block would exceed the limit; emit what we have.
-              List.add(out, Array.tabulate<Nat8>(prev_block_end - chunk_lo, func(j) { all[chunk_lo + j] }));
-              chunk_lo := prev_block_end;
-              blocks_in_chunk := 0;
+              List.add(out, Array.tabulate<Nat8>(prevBlockEnd - chunkLo, func(j) { all[chunkLo + j] }));
+              chunkLo := prevBlockEnd;
+              blocksInChunk := 0;
             };
-            prev_block_end := block_end;
-            blocks_in_chunk += 1;
+            prevBlockEnd := block_end;
+            blocksInChunk += 1;
           };
 
-          // Final chunk: from chunk_lo to end of buffer (includes Gzip footer).
-          List.add(out, Array.tabulate<Nat8>(total - chunk_lo, func(j) { all[chunk_lo + j] }));
+          // Final chunk: from chunkLo to end of buffer (includes Gzip footer).
+          List.add(out, Array.tabulate<Nat8>(total - chunkLo, func(j) { all[chunkLo + j] }));
           List.toArray(out);
         };
 

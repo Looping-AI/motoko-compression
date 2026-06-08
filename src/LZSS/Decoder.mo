@@ -27,11 +27,11 @@ module {
     /// visible to subsequent reads (mo:core/List is array-backed).
     /// Traps if `backward_offset` is 0 or exceeds the current output size.
     public func pointer(output : List.List<Nat8>, backward_offset : Nat, len : Nat) {
-      let cur_size = List.size(output);
-      if (backward_offset == 0 or backward_offset > cur_size) {
+      let curSize = List.size(output);
+      if (backward_offset == 0 or backward_offset > curSize) {
         Runtime.trap("LZSS decode(): Invalid #pointer (backward_offset > decompressed data size)");
       };
-      let index = (cur_size - backward_offset) : Nat;
+      let index = (curSize - backward_offset) : Nat;
       var i = index;
       while (i < index + len) {
         let byte = switch (List.get(output, i)) {

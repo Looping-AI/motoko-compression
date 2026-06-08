@@ -23,12 +23,12 @@ module {
   public func fromBitwidths(bitwidths : [Nat]) : Result<Encoder, Text> {
     if (bitwidths.size() == 0) return #err("bitwidths is empty");
 
-    var symbol_count = bitwidths.size() : Nat;
-    while (symbol_count > 0 and bitwidths[symbol_count - 1] == 0) {
-      symbol_count -= 1;
+    var symbolCount = bitwidths.size() : Nat;
+    while (symbolCount > 0 and bitwidths[symbolCount - 1] == 0) {
+      symbolCount -= 1;
     };
 
-    let builder = Builder(symbol_count + 1);
+    let builder = Builder(symbolCount + 1);
 
     Common.restoreHuffmanCodes<Encoder>(builder, bitwidths);
   };
@@ -37,12 +37,12 @@ module {
     frequencies : [Nat],
     bitwidth : Nat,
   ) : Result<Encoder, Text> {
-    let max_bitwidth = Nat.min(
+    let maxBitwidth = Nat.min(
       bitwidth,
       HuffmanCodes.calcMaxBitwidth(frequencies),
     );
 
-    let bitwidths : [Nat] = HuffmanCodes.calcBitwidths(max_bitwidth, frequencies);
+    let bitwidths : [Nat] = HuffmanCodes.calcBitwidths(maxBitwidth, frequencies);
 
     fromBitwidths(bitwidths);
   };
@@ -54,9 +54,9 @@ module {
     );
 
     public let setMapping = func(symbol : Nat, code : Code) : Result<(), Text> {
-      let prev_code = table[symbol];
+      let prevCode = table[symbol];
 
-      if (prev_code.bitwidth != 0 or prev_code.bits != 0) {
+      if (prevCode.bitwidth != 0 or prevCode.bits != 0) {
         return #err("symbol has already been mapped");
       };
 
@@ -98,20 +98,20 @@ module {
     };
 
     public func maxSymbol() : Nat {
-      var max_index = 0;
+      var maxIndex = 0;
 
       label for_loop {
         var i = table.size();
         while (i > 0) {
           i -= 1;
           if (table[i].bitwidth > 0) {
-            max_index := i;
+            maxIndex := i;
             break for_loop;
           };
         };
       };
 
-      max_index;
+      maxIndex;
     };
   };
 
@@ -142,16 +142,16 @@ module {
         );
       };
 
-      let max_bitwidth = switch (PriorityQueue.pop(heap, minCmp)) {
+      let maxBitwidth = switch (PriorityQueue.pop(heap, minCmp)) {
         case (?(_, bitwidth)) bitwidth;
         case (_) 0;
       };
 
-      Nat.max(max_bitwidth, 1);
+      Nat.max(maxBitwidth, 1);
     };
 
-    public func calcBitwidths(max_bitwidth : Nat, frequencies : [Nat]) : [Nat] {
-      LengthLimited.calcBitwidths(max_bitwidth, frequencies);
+    public func calcBitwidths(maxBitwidth : Nat, frequencies : [Nat]) : [Nat] {
+      LengthLimited.calcBitwidths(maxBitwidth, frequencies);
     };
 
     public module LengthLimited {
@@ -168,19 +168,19 @@ module {
         };
       };
 
-      public func calcBitwidths(max_bitwidth : Nat, frequencies : [Nat]) : [Nat] {
+      public func calcBitwidths(maxBitwidth : Nat, frequencies : [Nat]) : [Nat] {
         let nodes = List.empty<Node>();
 
         func deepCopy(src : List.List<Node>) : List.List<Node> {
-          let new_nodes = List.empty<Node>();
+          let newNodes = List.empty<Node>();
           for (node in List.values(src)) {
-            let new_node = {
+            let newNode = {
               var weight = node.weight;
               symbols = List.clone(node.symbols);
             };
-            List.add(new_nodes, new_node);
+            List.add(newNodes, newNode);
           };
-          new_nodes;
+          newNodes;
         };
 
         for ((symbol, weight) in Iter.enumerate(frequencies.vals())) {
@@ -199,27 +199,27 @@ module {
 
         List.sortInPlace(nodes, cmp);
 
-        var weighted_nodes = deepCopy(nodes);
+        var weightedNodes = deepCopy(nodes);
 
-        // Run max_bitwidth - 1 iterations (Itertools.range(0, max_bitwidth-1) was exclusive)
+        // Run maxBitwidth - 1 iterations (Itertools.range(0, maxBitwidth-1) was exclusive)
         var j = 1;
-        while (j < max_bitwidth) {
-          package(weighted_nodes);
-          weighted_nodes := merge(weighted_nodes, deepCopy(nodes));
+        while (j < maxBitwidth) {
+          package(weightedNodes);
+          weightedNodes := merge(weightedNodes, deepCopy(nodes));
           j += 1;
         };
 
-        package(weighted_nodes);
+        package(weightedNodes);
 
-        let code_bitwidths = Prim.Array_init<Nat>(frequencies.size(), 0);
+        let codeBitwidths = Prim.Array_init<Nat>(frequencies.size(), 0);
 
-        for (node in List.values(weighted_nodes)) {
+        for (node in List.values(weightedNodes)) {
           for (symbol in List.values(node.symbols)) {
-            code_bitwidths[symbol] += 1;
+            codeBitwidths[symbol] += 1;
           };
         };
 
-        Array.fromVarArray(code_bitwidths);
+        Array.fromVarArray(codeBitwidths);
       };
 
       func getU(l : List.List<Node>, i : Nat) : Node {
@@ -271,11 +271,11 @@ module {
       public func package(nodes : List.List<Node>) {
         if (List.size(nodes) < 2) return;
 
-        let new_size = List.size(nodes) / 2;
+        let newSize = List.size(nodes) / 2;
 
         var i = 0;
 
-        while (i < new_size) {
+        while (i < newSize) {
           let j = i * 2 + 1;
 
           if (j < List.size(nodes)) {
@@ -287,7 +287,7 @@ module {
           i += 1;
         };
 
-        while (List.size(nodes) > new_size) {
+        while (List.size(nodes) > newSize) {
           ignore List.removeLast(nodes);
         };
       };

@@ -336,13 +336,13 @@ module {
       var bits : Nat64 = b0;
       var pos : Nat = p0;
 
-      // Pre-compute decoder table references, primary masks, and root_bits as Nat64.
+      // Pre-compute decoder table references, primary masks, and rootBits as Nat64.
       let litTbl = litDec.table;
-      let litRootBits = litDec.root_bits;
+      let litRootBits = litDec.rootBits;
       let litRootBits64 : Nat64 = Nat64.fromNat(litRootBits);
       let litMask : Nat64 = ((1 : Nat64) << litRootBits64) - 1;
       let distTbl = distDec.table;
-      let distRootBits = distDec.root_bits;
+      let distRootBits = distDec.rootBits;
       let distRootBits64 : Nat64 = Nat64.fromNat(distRootBits);
       let distMask : Nat64 = ((1 : Nat64) << distRootBits64) - 1;
 
@@ -373,7 +373,7 @@ module {
           bits -= lw;
           lpayload := lv >> 5;
         } else {
-          // Overflow: consume root_bits, look up subtable.
+          // Overflow: consume rootBits, look up subtable.
           hold := hold >> litRootBits64;
           bits -= litRootBits64;
           let lsub : Nat64 = lw - litRootBits64;

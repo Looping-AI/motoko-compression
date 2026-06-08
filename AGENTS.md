@@ -208,6 +208,7 @@ The assistant will read the JSON, compute totals, and generate markdown tables s
 
 ## Motoko Conventions
 
+- **Variable naming**: always use `camelCase` for local variables, `let` bindings, and `var` declarations (e.g. `symCount`, `litFreqs`, `headerWritten`). `SCREAMING_SNAKE_CASE` is reserved for module-level constants (e.g. `MAX_BITWIDTH`, `DEFAULT_OUTPUT_CHUNK_SIZE`). Snake_case identifiers in variable declarations are flagged by the `case-variables` lint rule.
 - Model function parameter order: place the state/collection parameter first, aligning with `mo:core` idioms (e.g. `Map.get(map, compare, key)`).
 - `Nat` is a subtype of `Int` (`Nat <: Int`): do not add explicit casts when a function parameter is typed `Int` and the caller has a `Nat`.
 - Prefer `query` functions for read-only operations to save cycles.

@@ -27,10 +27,10 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
   // Not stable — loses contents on canister upgrade.
   transient let images = Map.empty<Text, Gzip.EncodedResponse>();
-  transient let decoded_cache = Map.empty<Text, [Nat8]>();
+  transient let decodedCache = Map.empty<Text, [Nat8]>();
 
-  transient let gzip_encoder = Gzip.EncoderBuilder().build();
-  transient let gzip_decoder = Gzip.Decoder();
+  transient let gzipEncoder = Gzip.EncoderBuilder().build();
+  transient let gzipDecoder = Gzip.Decoder();
 
   // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   transient let PAGE_SIZE : Nat = 2 * MB - 512;
 
   /// Bytes per self-call — derived from the encoder so both stay in sync.
-  transient let ENCODE_CHUNK_SIZE : Nat = gzip_encoder.outputChunkSize();
+  transient let ENCODE_CHUNK_SIZE : Nat = gzipEncoder.outputChunkSize();
 
   /// Compressed chunks to decompress per self-call.
   /// At ~8.6B instructions per 5 MiB chunk, 3 chunks ≈ 25.8B — safely under the 40B limit.
@@ -86,9 +86,9 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   /// and append it to `_compress_buf`. Each await gives a fresh instruction budget.
   public shared ({ caller }) func _compressChunk(chunk : [Nat8]) : async () {
     assert caller == canisterId();
-    gzip_encoder.clear();
-    gzip_encoder.encode(chunk);
-    switch (gzip_encoder.finish()) {
+    gzipEncoder.clear();
+    gzipEncoder.encode(chunk);
+    switch (gzipEncoder.finish()) {
       case (#single data) List.add(_compress_buf, data);
       case (#chunked _) Runtime.trap("_compressChunk: chunk exceeded outputChunkSize");
     };
@@ -102,7 +102,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     List.clear(_compress_buf);
     let compressed = if (streams.size() == 1) #single(streams[0]) else #chunked(streams);
     Map.add(images, Text.compare, name, compressed);
-    ignore Map.delete(decoded_cache, Text.compare, name);
+    ignore Map.delete(decodedCache, Text.compare, name);
   };
 
   /// Internal: decompress a batch of chunks (each a complete independent gzip stream)
@@ -110,14 +110,14 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   public shared ({ caller }) func _decompressBatch(batch : [[Nat8]]) : async () {
     assert caller == canisterId();
     for (chunk in batch.vals()) {
-      switch (gzip_decoder.decode(chunk)) {
+      switch (gzipDecoder.decode(chunk)) {
         case (#err(msg)) Runtime.trap("_decompressBatch decode: " # msg);
         case (#ok(_)) {};
       };
       let consume = func(out : [Nat8]) {
         List.addAll(_decompress_buf, out.vals());
       };
-      switch (gzip_decoder.finishStreaming(consume)) {
+      switch (gzipDecoder.finishStreaming(consume)) {
         case (#err(msg)) Runtime.trap("_decompressBatch finishStreaming: " # msg);
         case (#ok(_)) {};
       };
@@ -126,13 +126,13 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  /// Decompress `compressed` and write the result directly into `decoded_cache`.
+  /// Decompress `compressed` and write the result directly into `decodedCache`.
   /// Returns `async ()` so the large [Nat8] never crosses an async return boundary.
   func decodeImage(name : Text, compressed : Gzip.EncodedResponse) : async () {
-    gzip_decoder.clear();
+    gzipDecoder.clear();
     switch (compressed) {
       case (#single data) {
-        switch (gzip_decoder.decode(data)) {
+        switch (gzipDecoder.decode(data)) {
           case (#err(msg)) Runtime.trap("decodeImage decode: " # msg);
           case (#ok(_)) {};
         };
@@ -140,9 +140,9 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
         let consume = func(out : [Nat8]) {
           List.addAll(_decompress_buf, out.vals());
         };
-        switch (gzip_decoder.finishStreaming(consume)) {
+        switch (gzipDecoder.finishStreaming(consume)) {
           case (#err(msg)) Runtime.trap("decodeImage finishStreaming: " # msg);
-          case (#ok(_)) Map.add(decoded_cache, Text.compare, name, List.toArray(_decompress_buf));
+          case (#ok(_)) Map.add(decodedCache, Text.compare, name, List.toArray(_decompress_buf));
         };
       };
       case (#chunked cs) {
@@ -155,7 +155,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
           await _decompressBatch(batch);
           i := hi;
         };
-        Map.add(decoded_cache, Text.compare, name, List.toArray(_decompress_buf));
+        Map.add(decodedCache, Text.compare, name, List.toArray(_decompress_buf));
       };
     };
   };
@@ -167,13 +167,13 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   /// Compress `data` and store the result under `name`.  Overwrites any existing entry.
   /// For images larger than ~5 MiB use beginImageUpload / uploadImageChunk / finishImageUpload.
   public func storeAndCompressImage(name : Text, data : [Nat8]) : async () {
-    gzip_encoder.clear();
+    gzipEncoder.clear();
     List.clear(_compress_buf);
     if (data.size() < ENCODE_CHUNK_SIZE) {
-      gzip_encoder.encode(data);
-      let compressed = gzip_encoder.finish();
+      gzipEncoder.encode(data);
+      let compressed = gzipEncoder.finish();
       Map.add(images, Text.compare, name, compressed);
-      ignore Map.delete(decoded_cache, Text.compare, name);
+      ignore Map.delete(decodedCache, Text.compare, name);
     } else {
       for (chunk in chunks(data, ENCODE_CHUNK_SIZE).vals()) {
         await _compressChunk(chunk);
@@ -193,7 +193,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   /// Begin a chunked upload.  Clears any buffered encoder state from a
   /// previous (possibly incomplete) upload.
   public func beginImageUpload() : async () {
-    gzip_encoder.clear();
+    gzipEncoder.clear();
     List.clear(_compress_buf);
   };
 
@@ -215,10 +215,10 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     switch (Map.get(images, Text.compare, name)) {
       case null null;
       case (?stored) {
-        if (Map.get(decoded_cache, Text.compare, name) == null) {
+        if (Map.get(decodedCache, Text.compare, name) == null) {
           await decodeImage(name, stored);
         };
-        switch (Map.get(decoded_cache, Text.compare, name)) {
+        switch (Map.get(decodedCache, Text.compare, name)) {
           case null Runtime.trap("getImagePage: decodeImage did not populate cache");
           case (?data) ?(pageOf(data, page));
         };

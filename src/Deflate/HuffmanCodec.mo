@@ -33,10 +33,10 @@ module {
       // EndOfBlock is always emitted; apply to the caller's array (caller resets after flush).
       lit_freqs[256] += 1;
       // Ensure at least one distance code is present.
-      var has_distance = false;
+      var hasDistance = false;
       var k = 0;
-      while (k < 30) { if (dist_freqs[k] > 0) has_distance := true; k += 1 };
-      if (not has_distance) dist_freqs[0] := 1;
+      while (k < 30) { if (dist_freqs[k] > 0) hasDistance := true; k += 1 };
+      if (not hasDistance) dist_freqs[0] := 1;
 
       let le = switch (HuffmanEncoder.fromFrequencies(Array.fromVarArray(lit_freqs), 15)) {
         case (#ok(e)) e;
@@ -53,7 +53,7 @@ module {
     /// `headerBits` (cost query for fixed-vs-dynamic selection) and `emit`.
     public type SavePlan = {
       codes : List.List<BitwidthCode>;
-      sym_freq : [var Nat];
+      symFreq : [var Nat];
       bwe : HuffmanEncoder.Encoder;
       bwcc : Nat;
       lcc : Nat;
@@ -68,13 +68,13 @@ module {
       let codes = buildBitwidthCodes(codec, lcc, dcc);
 
       // Count how often each bitwidth-meta symbol appears
-      let sym_freq = Prim.Array_init<Nat>(19, 0);
+      let symFreq = Prim.Array_init<Nat>(19, 0);
       for ({ symbol; count = _; bitwidth = _ } in List.values(codes)) {
-        sym_freq[symbol] += 1;
+        symFreq[symbol] += 1;
       };
 
       // Build Huffman encoder for the bitwidth-meta symbols
-      let bwe = switch (HuffmanEncoder.fromFrequencies(Array.fromVarArray(sym_freq), 7)) {
+      let bwe = switch (HuffmanEncoder.fromFrequencies(Array.fromVarArray(symFreq), 7)) {
         case (#ok(e)) e;
         case (#err(msg)) {
           return #err("DynamicHuffmanCodec save bwe: " # msg);
@@ -82,21 +82,21 @@ module {
       };
 
       // Find the last non-trivial entry in BITWIDTH_CODE_ORDER
-      var bw_max_idx = 0;
+      var bwMaxIdx = 0;
       label search {
         var i = Symbol.BITWIDTH_CODE_ORDER.size();
         while (i > 0) {
           i -= 1;
           let idx = Symbol.BITWIDTH_CODE_ORDER[i];
-          if (sym_freq[idx] > 0 and bwe.lookup(idx).bitwidth > 0) {
-            bw_max_idx := i;
+          if (symFreq[idx] > 0 and bwe.lookup(idx).bitwidth > 0) {
+            bwMaxIdx := i;
             break search;
           };
         };
       };
-      let bwcc = Nat.max(4, bw_max_idx + 1);
+      let bwcc = Nat.max(4, bwMaxIdx + 1);
 
-      #ok({ codes; sym_freq; bwe; bwcc; lcc; dcc });
+      #ok({ codes; symFreq; bwe; bwcc; lcc; dcc });
     };
 
     /// Exact number of bits the dynamic block header occupies, computed from a
@@ -123,7 +123,7 @@ module {
       var i = 0;
       while (i < plan.bwcc) {
         let idx = Symbol.BITWIDTH_CODE_ORDER[i];
-        bitbuffer.addBits(3, if (plan.sym_freq[idx] != 0) plan.bwe.lookup(idx).bitwidth else 0);
+        bitbuffer.addBits(3, if (plan.symFreq[idx] != 0) plan.bwe.lookup(idx).bitwidth else 0);
         i += 1;
       };
 

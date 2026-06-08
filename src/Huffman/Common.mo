@@ -48,28 +48,28 @@ module {
       return #err("Cannot generate huffman codes from empty bitwidth array");
     };
 
-    let bitwidth_buffer = List.empty<(Nat, Nat)>();
+    let bitwidthBuffer = List.empty<(Nat, Nat)>();
 
     var i = 0;
     for (bitwidth in bitwidth_arr.vals()) {
       if (bitwidth > 0) {
-        List.add(bitwidth_buffer, (i, bitwidth));
+        List.add(bitwidthBuffer, (i, bitwidth));
       };
       i += 1;
     };
 
     List.sortInPlace(
-      bitwidth_buffer,
+      bitwidthBuffer,
       func(a : (Nat, Nat), b : (Nat, Nat)) : Order.Order {
         Nat.compare(a.1, b.1);
       },
     );
 
     var bits = 0 : Nat;
-    var prev_width = 0 : Nat;
+    var prevWidth = 0 : Nat;
 
-    for ((symbol, bitwidth) in List.values(bitwidth_buffer)) {
-      bits *= (2 ** (bitwidth - prev_width));
+    for ((symbol, bitwidth) in List.values(bitwidthBuffer)) {
+      bits *= (2 ** (bitwidth - prevWidth));
 
       let code : Code = { bitwidth; bits = Nat16.fromNat(bits) };
 
@@ -81,7 +81,7 @@ module {
       };
 
       bits += 1;
-      prev_width := bitwidth;
+      prevWidth := bitwidth;
     };
 
     #ok(builder.build());

@@ -40,7 +40,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
   // ── Transient state ───────────────────────────────────────────────────────
 
   /// Fresh decoder per canister lifetime; replaced on clear().
-  transient var gzip_decoder = Gzip.Decoder();
+  transient var gzipDecoder = Gzip.Decoder();
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
   public func clear() : async () {
     List.clear(_chunks);
     _decompressed := null;
-    gzip_decoder := Gzip.Decoder();
+    gzipDecoder := Gzip.Decoder();
   };
 
   /// Return the number of bytes accumulated so far (query — no state change).
@@ -85,7 +85,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
   public shared ({ caller }) func _decodeBatch(batch : [[Nat8]]) : async () {
     assert caller == canisterId();
     for (chunk in batch.vals()) {
-      switch (gzip_decoder.decode(chunk)) {
+      switch (gzipDecoder.decode(chunk)) {
         case (#err(msg)) Runtime.trap("_decodeBatch: " # msg);
         case (#ok(_)) {};
       };
@@ -107,7 +107,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
     };
     let buf = List.empty<Nat8>();
     let consume = func(chunk : [Nat8]) { List.addAll(buf, chunk.vals()) };
-    switch (gzip_decoder.finishStreaming(consume)) {
+    switch (gzipDecoder.finishStreaming(consume)) {
       case (#err(msg)) Runtime.trap("decompress finishStreaming: " # msg);
       case (#ok(_)) _decompressed := ?List.toArray(buf);
     };

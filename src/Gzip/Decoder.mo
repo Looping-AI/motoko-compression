@@ -161,27 +161,27 @@ module {
 
       // Verify CRC32 (4 bytes, LE).
       let crcSlice = Array.tabulate<Nat8>(4, func(k) { store[start + c + k] });
-      let stored_crc32 = Nat32.fromNat(Utils.leBytesToNat(crcSlice));
-      let actual_crc32 = crc.finish();
-      if (stored_crc32 != actual_crc32) {
+      let storedCrc32 = Nat32.fromNat(Utils.leBytesToNat(crcSlice));
+      let actualCrc32 = crc.finish();
+      if (storedCrc32 != actualCrc32) {
         return #err(
           "Gzip: CRC32 mismatch — stored "
-          # debug_show stored_crc32
+          # debug_show storedCrc32
           # ", computed "
-          # debug_show actual_crc32
+          # debug_show actualCrc32
         );
       };
 
       // Verify ISIZE (4 bytes, LE, mod 2^32).
       let isizeSlice = Array.tabulate<Nat8>(4, func(k) { store[start + c + 4 + k] });
-      let stored_isize = Utils.leBytesToNat(isizeSlice);
-      let actual_isize = total % 4294967296;
-      if (stored_isize != actual_isize) {
+      let storedIsize = Utils.leBytesToNat(isizeSlice);
+      let actualIsize = total % 4294967296;
+      if (storedIsize != actualIsize) {
         return #err(
           "Gzip: ISIZE mismatch — stored "
-          # debug_show stored_isize
+          # debug_show storedIsize
           # ", computed "
-          # debug_show actual_isize
+          # debug_show actualIsize
         );
       };
 
@@ -194,7 +194,7 @@ module {
       let summary : StreamedSummary = {
         header = parsedHeader;
         size = total;
-        crc32 = actual_crc32;
+        crc32 = actualCrc32;
       };
       clear();
 

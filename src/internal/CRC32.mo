@@ -12,36 +12,36 @@ module CRC32 {
   };
 
   public class CRC32() {
-    var input_size = 0;
+    var inputSize = 0;
 
     let PAYLOAD_SIZE = 8;
     let INIT_SIZE = 16;
     let payload = Prim.Array_init<Nat8>(INIT_SIZE, (0 : Nat8));
-    var payload_count = 0;
+    var payloadCount = 0;
 
     let CRC_INIT_VALUE : Nat32 = 0xFFFF_FFFF;
     var crc = CRC_INIT_VALUE;
 
     public func updateByte(byte : Nat8) {
-      if (input_size >= INIT_SIZE and payload_count >= PAYLOAD_SIZE) {
+      if (inputSize >= INIT_SIZE and payloadCount >= PAYLOAD_SIZE) {
         crc := singleSlicingUpdate(crc);
-        payload_count -= PAYLOAD_SIZE;
+        payloadCount -= PAYLOAD_SIZE;
 
-        if (payload_count > 0) {
+        if (payloadCount > 0) {
           // shift payload to the left by PAYLOAD_SIZE
-          // only occurs once when the input_size is == 16
+          // only occurs once when the inputSize is == 16
           var i = 0;
-          while (i < payload_count) {
+          while (i < payloadCount) {
             payload[i] := payload[i + PAYLOAD_SIZE];
             i += 1;
           };
         };
       };
 
-      payload[payload_count] := byte;
-      payload_count += 1;
+      payload[payloadCount] := byte;
+      payloadCount += 1;
 
-      input_size += 1;
+      inputSize += 1;
     };
 
     public func update(data : [Nat8]) {
@@ -52,7 +52,7 @@ module CRC32 {
       // Fast path: buffer is empty — process full 8-byte chunks directly from
       // `data`, skipping the staging buffer, per-byte counter increments, and
       // the payload-shift loop entirely.
-      if (payload_count == 0) {
+      if (payloadCount == 0) {
         let leftover = n % 8;
         let chunkEnd : Nat = n - leftover;
         while (i < chunkEnd) {
@@ -61,11 +61,11 @@ module CRC32 {
         };
         // Buffer trailing bytes (0–7).
         while (i < n) {
-          payload[payload_count] := data[i];
-          payload_count += 1;
+          payload[payloadCount] := data[i];
+          payloadCount += 1;
           i += 1;
         };
-        input_size += n;
+        inputSize += n;
         return;
       };
 
@@ -108,7 +108,7 @@ module CRC32 {
       var u = crc;
 
       var i = 0;
-      while (i < payload_count) {
+      while (i < payloadCount) {
         let v = payload[i];
         u := table[Nat32.toNat((u ^ Nat8.toNat32(v)) & 0xFF)] ^ (u >> 8);
         i += 1;
@@ -118,13 +118,13 @@ module CRC32 {
     };
 
     public func reset() {
-      input_size := 0;
-      payload_count := 0;
+      inputSize := 0;
+      payloadCount := 0;
       crc := CRC_INIT_VALUE;
     };
 
     public func finish() : Nat32 {
-      let res = if (payload_count == 0) { ^crc } else {
+      let res = if (payloadCount == 0) { ^crc } else {
         simpleUpdate(crc);
       };
 

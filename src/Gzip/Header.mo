@@ -102,17 +102,17 @@ module {
     bitbuffer.addByte(8);
 
     // Flags byte (FLG)
-    let has_extra = header.extra_fields.size() > 0;
-    let has_filename = Option.isSome(header.filename);
-    let has_comment = Option.isSome(header.comment);
+    let hasExtra = header.extra_fields.size() > 0;
+    let hasFilename = Option.isSome(header.filename);
+    let hasComment = Option.isSome(header.comment);
     // FLG: bit0=FTEXT, bit1=FHCRC, bit2=FEXTRA, bit3=FNAME, bit4=FCOMMENT, bits5-7 reserved
-    let flg = (if (header.is_text) 0x01 else 0) + (if (header.is_verified) 0x02 else 0) + (if (has_extra) 0x04 else 0) + (if (has_filename) 0x08 else 0) + (if (has_comment) 0x10 else 0);
+    let flg = (if (header.is_text) 0x01 else 0) + (if (header.is_verified) 0x02 else 0) + (if (hasExtra) 0x04 else 0) + (if (hasFilename) 0x08 else 0) + (if (hasComment) 0x10 else 0);
     bitbuffer.addBits(8, flg);
 
     // Modification time (4 bytes LE, 0 if not set)
     let mtime = if (header.modification_time > 0) header.modification_time else 0;
-    let mtime_nat = Int.abs(mtime);
-    bitbuffer.addBytes(Utils.natToLeBytes(mtime_nat, 4));
+    let mtimeNat = Int.abs(mtime);
+    bitbuffer.addBytes(Utils.natToLeBytes(mtimeNat, 4));
 
     // XFL — derived from LZSS level (overrides whatever header.xfl says)
     let xfl : Nat8 = switch lzss {
@@ -126,7 +126,7 @@ module {
     bitbuffer.addByte(osToByte(header.os));
 
     // FEXTRA
-    if (has_extra) {
+    if (hasExtra) {
       var total = 0;
       for ({ data } in header.extra_fields.vals()) {
         total += 4 + data.size();
@@ -160,8 +160,8 @@ module {
 
     // FHCRC — CRC16 of the header bytes written so far
     if (header.is_verified) {
-      let header_bytes = bitbuffer.getBytes(0, bitbuffer.byteSize());
-      let crc32 = CRC32.checksum(header_bytes);
+      let headerBytes = bitbuffer.getBytes(0, bitbuffer.byteSize());
+      let crc32 = CRC32.checksum(headerBytes);
       let crc16 = Nat32.toNat(crc32 & 0xffff);
       bitbuffer.addBytes(Utils.natToLeBytes(crc16, 2));
     };
@@ -194,11 +194,11 @@ module {
     };
 
     // Flags
-    let is_text = reader.readBit();
-    let is_verified = reader.readBit();
-    let has_extra = reader.readBit();
-    let has_filename = reader.readBit();
-    let has_comment = reader.readBit();
+    let isText = reader.readBit();
+    let isVerified = reader.readBit();
+    let hasExtra = reader.readBit();
+    let hasFilename = reader.readBit();
+    let hasComment = reader.readBit();
     ignore reader.readBits(3); // reserved
 
     // Modification time (4 bytes LE, Unix seconds)
@@ -211,10 +211,10 @@ module {
     let os = byteToOs(reader.readByte());
 
     // FEXTRA
-    let extra_fields : [ExtraField] = if (has_extra) {
-      let extra_size = Utils.leBytesToNat(reader.readBytes(2));
+    let extraFields : [ExtraField] = if (hasExtra) {
+      let extraSize = Utils.leBytesToNat(reader.readBytes(2));
       let fields = List.empty<ExtraField>();
-      var remaining = extra_size;
+      var remaining = extraSize;
       while (remaining > 0) {
         let id1 = reader.readByte();
         let id2 = reader.readByte();
@@ -227,31 +227,31 @@ module {
     } else { [] };
 
     // FNAME — read until null terminator
-    let filename : ?Text = if (has_filename) readNullTerminatedText(reader) else null;
+    let filename : ?Text = if (hasFilename) readNullTerminatedText(reader) else null;
 
     // FCOMMENT — read until null terminator
-    let comment : ?Text = if (has_comment) readNullTerminatedText(reader) else null;
+    let comment : ?Text = if (hasComment) readNullTerminatedText(reader) else null;
 
     // FHCRC — verify CRC16 over the header bytes consumed so far
-    if (is_verified) {
+    if (isVerified) {
       let pos = reader.getPosition();
-      let nbytes_so_far = pos / 8;
+      let nbytesSoFar = pos / 8;
       // Re-read the header bytes from position 0 (reader is still open)
       reader.setPosition(0);
-      let header_bytes = reader.readBytes(nbytes_so_far);
+      let headerBytes = reader.readBytes(nbytesSoFar);
       reader.setPosition(pos);
 
-      let calculated_crc16 = Nat32.toNat(CRC32.checksum(header_bytes) & 0xffff);
-      let stored_crc16 = Utils.leBytesToNat(reader.readBytes(2));
-      if (stored_crc16 != calculated_crc16) {
+      let calculatedCrc16 = Nat32.toNat(CRC32.checksum(headerBytes) & 0xffff);
+      let storedCrc16 = Utils.leBytesToNat(reader.readBytes(2));
+      if (storedCrc16 != calculatedCrc16) {
         return #err("Gzip: FHCRC header checksum mismatch");
       };
     };
 
     #ok({
-      is_text;
-      is_verified;
-      extra_fields;
+      is_text = isText;
+      is_verified = isVerified;
+      extra_fields = extraFields;
       filename;
       comment;
       modification_time = mtime;

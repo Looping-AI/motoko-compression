@@ -470,14 +470,14 @@ suite(
           case (#err(msg)) Runtime.trap("Encoder build failed: " # msg);
         };
         // collect bitwidths from encoder, then build fast decoder
-        let bws_mut = Prim.Array_init<Nat>(freqs.size(), 0);
+        let bwsMut = Prim.Array_init<Nat>(freqs.size(), 0);
         var idx = 0;
         for (f in freqs.vals()) {
           ignore f;
-          bws_mut[idx] := enc.lookup(idx).bitwidth;
+          bwsMut[idx] := enc.lookup(idx).bitwidth;
           idx += 1;
         };
-        let bws = Array.fromVarArray(bws_mut);
+        let bws = Array.fromVarArray(bwsMut);
         let dec = switch (Decoder.fromBitwidthsFast(bws)) {
           case (#ok(d)) d;
           case (#err(msg)) Runtime.trap("Decoder build failed: " # msg);

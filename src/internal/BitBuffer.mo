@@ -284,10 +284,10 @@ module {
       // Fast path: byte-aligned and a full byte is available — single array read,
       // skipping the getBits loop and all Nat32↔Nat conversions.
       let abs = i + readBit;
-      let remaining_bits : Nat = avail - i;
-      if (abs % BYTE == 0 and remaining_bits >= BYTE) return buf[abs / BYTE];
+      let remainingBits : Nat = avail - i;
+      if (abs % BYTE == 0 and remainingBits >= BYTE) return buf[abs / BYTE];
 
-      let n : Nat = if (remaining_bits < BYTE) remaining_bits else BYTE;
+      let n : Nat = if (remainingBits < BYTE) remainingBits else BYTE;
       Nat8.fromNat(getBits(i, n));
     };
 

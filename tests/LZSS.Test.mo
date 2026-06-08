@@ -108,14 +108,14 @@ suite(
       func() {
         let bytes = Array.tabulate<Nat8>(20, func(_) = 0x41);
         let result = encodeAll(bytes);
-        var has_pointer = false;
+        var hasPointer = false;
         for (s in result.vals()) {
           switch s {
-            case (#ptr(_, _)) has_pointer := true;
+            case (#ptr(_, _)) hasPointer := true;
             case (#lit(_)) {};
           };
         };
-        expect.bool(has_pointer).isTrue();
+        expect.bool(hasPointer).isTrue();
       },
     );
 

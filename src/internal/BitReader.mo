@@ -73,9 +73,9 @@ module {
 
     /// Consume up to `nbytes` bytes (clamped to available `byteSize()`).
     public func readBytes(nbytes : Nat) : [Nat8] {
-      let min_bytes = Nat.min(nbytes, byteSize());
-      let result = bitbuffer.getBytes(offset, min_bytes);
-      offset += min_bytes * 8;
+      let minBytes = Nat.min(nbytes, byteSize());
+      let result = bitbuffer.getBytes(offset, minBytes);
+      offset += minBytes * 8;
       result;
     };
 

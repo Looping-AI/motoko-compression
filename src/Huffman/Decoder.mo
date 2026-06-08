@@ -19,17 +19,17 @@ module {
 
   // ── Two-level (zlib-style) fast decoder ────────────────────────────────
   //
-  // A single flat `[var Nat64]` table whose first 2^root_bits entries form the
+  // A single flat `[var Nat64]` table whose first 2^rootBits entries form the
   // primary table and the rest are subtables.  Each entry packs two fields:
   //   value = (payload * 32) + tag        where 0 ≤ tag ≤ MAX_BITWIDTH
   //
   // Primary table entry interpretation (low 5 bits = w = entry % 32):
-  //   • w ≤ root_bits  → direct symbol;        payload = symbol; consume w bits
-  //   • root_bits < w  → overflow pointer;     payload = subtable offset;
-  //                       consume root_bits bits, then look up subtable at
-  //                       (offset + peek(w - root_bits)).
+  //   • w ≤ rootBits  → direct symbol;        payload = symbol; consume w bits
+  //   • rootBits < w  → overflow pointer;     payload = subtable offset;
+  //                       consume rootBits bits, then look up subtable at
+  //                       (offset + peek(w - rootBits)).
   //
-  // Subtable entry: payload = symbol; tag = code_length − root_bits
+  // Subtable entry: payload = symbol; tag = code_length − rootBits
   //                 (i.e. additional bits to consume after the primary drop).
   //
   // Sentinel `SENTINEL = MAX_BITWIDTH + 1` (= 16) marks uninitialised slots
@@ -39,9 +39,9 @@ module {
   let FAST_ROOT_BITS : Nat = 10;
   let POW2 : [Nat] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
 
-  public class FastDecoder(tbl : [var Nat64], rootBits : Nat) {
+  public class FastDecoder(tbl : [var Nat64], initRootBits : Nat) {
 
-    public let root_bits = rootBits;
+    public let rootBits = initRootBits;
     public let table = tbl;
 
     /// Decode one symbol from the bit accumulator.  Returns `DECODE_ERROR`
@@ -59,19 +59,19 @@ module {
       };
       // Overflow path — w is the max code length of this subtable.
       acc.drop(rootBits);
-      let sub_bits : Nat = wNat - rootBits;
-      let sub_offset = Nat64.toNat(v >> 5);
+      let subBits : Nat = wNat - rootBits;
+      let subOffset = Nat64.toNat(v >> 5);
       acc.refill();
-      let v2 = tbl[sub_offset + acc.peekNat(sub_bits)];
+      let v2 = tbl[subOffset + acc.peekNat(subBits)];
       let w2 = v2 & 31;
-      if (Nat64.toNat(w2) > sub_bits) return DECODE_ERROR; // sentinel or overlong
+      if (Nat64.toNat(w2) > subBits) return DECODE_ERROR; // sentinel or overlong
       acc.drop(Nat64.toNat(w2));
       Nat64.toNat(v2 >> 5);
     };
   };
 
   /// Build a two-level fast Huffman decoder from a per-symbol bitwidth array.
-  /// `root_bits = min(max_bitwidth, FAST_ROOT_BITS)`, so trees whose codes
+  /// `rootBits = min(max_bitwidth, FAST_ROOT_BITS)`, so trees whose codes
   /// all fit in `FAST_ROOT_BITS` bits get a single flat table (no overflow).
   public func fromBitwidthsFast(bitwidths : [Nat]) : Result<FastDecoder, Text> {
     if (bitwidths.size() == 0) {
@@ -95,7 +95,7 @@ module {
     };
 
     let rootBits = if (maxBw < FAST_ROOT_BITS) maxBw else FAST_ROOT_BITS;
-    let primary_size : Nat = POW2[rootBits];
+    let primarySize : Nat = POW2[rootBits];
 
     // Pass 2: count non-zero entries, then collect and sort by bw.
     var pairsSize : Nat = 0;
@@ -142,19 +142,19 @@ module {
     };
 
     // Pass 4: per primary-prefix, find max code length of codes that overflow.
-    let subMaxBw = Prim.Array_init<Nat>(primary_size, 0);
+    let subMaxBw = Prim.Array_init<Nat>(primarySize, 0);
     for ((_, bw, beBits) in entries.vals()) {
       if (bw > rootBits) {
-        let prefix = beBits % primary_size;
+        let prefix = beBits % primarySize;
         if (bw > subMaxBw[prefix]) subMaxBw[prefix] := bw;
       };
     };
 
     // Pass 5: assign subtable offsets, compute total table size.
-    let subOffset = Prim.Array_init<Nat>(primary_size, 0);
-    var total : Nat = primary_size;
+    let subOffset = Prim.Array_init<Nat>(primarySize, 0);
+    var total : Nat = primarySize;
     var k = 0;
-    while (k < primary_size) {
+    while (k < primarySize) {
       if (subMaxBw[k] > 0) {
         subOffset[k] := total;
         total += POW2[subMaxBw[k] - rootBits];
@@ -166,7 +166,7 @@ module {
 
     // Pass 6a: install primary overflow pointers.
     k := 0;
-    while (k < primary_size) {
+    while (k < primarySize) {
       if (subMaxBw[k] > 0) {
         // tag = max_bw (> rootBits, ≤ MAX_BITWIDTH) — encodes "this is overflow"
         // AND the number of extra bits to peek (= tag - rootBits).
@@ -187,11 +187,11 @@ module {
           p += 1;
         };
       } else {
-        let prefix = beBits % primary_size;
+        let prefix = beBits % primarySize;
         let off = subOffset[prefix];
         let mbw = subMaxBw[prefix];
         let extraBw : Nat = bw - rootBits;
-        let extraBits = beBits / primary_size;
+        let extraBits = beBits / primarySize;
         let step = POW2[extraBw];
         let padCount : Nat = POW2[mbw - bw];
         let value64 : Nat64 = (Nat64.fromNat(sym) << 5) | Nat64.fromNat(extraBw);
@@ -216,15 +216,15 @@ module {
   /// replaces the symbol; the caller's hot loop is responsible for decoding
   /// the new payload layout. Must be applied at most once per table.
   ///
-  /// Resolved slots are: primary entries with tag ≤ root_bits, and all
+  /// Resolved slots are: primary entries with tag ≤ rootBits, and all
   /// non-sentinel subtable entries. Overflow-pointer primary entries (tag in
-  /// (root_bits, MAX_BITWIDTH]) carry a subtable offset, not a symbol, and
+  /// (rootBits, MAX_BITWIDTH]) carry a subtable offset, not a symbol, and
   /// are skipped. Sentinel/pad slots (tag = MAX_BITWIDTH + 1) are skipped.
   public func bakePayloads(dec : FastDecoder, mapPayload : Nat -> Nat64) {
     let tbl = dec.table;
-    let rootBits64 = Nat64.fromNat(dec.root_bits);
+    let rootBits64 = Nat64.fromNat(dec.rootBits);
     let maxBw64 = Nat64.fromNat(MAX_BITWIDTH);
-    let primarySize = POW2[dec.root_bits];
+    let primarySize = POW2[dec.rootBits];
     let n = tbl.size();
     var i = 0;
     while (i < n) {
