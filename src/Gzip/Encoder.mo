@@ -10,12 +10,9 @@
 ///     `compressed()` to get all bytes or `chunks()` to iterate without merging.
 
 import Array "mo:core/Array";
-import Blob "mo:core/Blob";
 import List "mo:core/List";
 import Nat "mo:core/Nat";
 import Nat32 "mo:core/Nat32";
-import Runtime "mo:core/Runtime";
-import Text "mo:core/Text";
 
 import BitBuffer "../internal/BitBuffer";
 import CRC32 "../internal/CRC32";
@@ -27,7 +24,6 @@ import Common "../LZSS/Common";
 module {
 
   type BitBuffer = BitBuffer.BitBuffer;
-  type Header = Header.Header;
   type CompressionLevel = Common.CompressionLevel;
   type DeflateOptions = DeflateEncoder.DeflateOptions;
 
@@ -53,8 +49,6 @@ module {
   /// Fluent builder for `Encoder`.
   public class EncoderBuilder() = self {
 
-    var hdr : Header = Header.defaultHeader();
-
     // lzss: #balance matches zlib's default. #fast is counter-intuitively slower: a smaller
     //   window triggers slideWindow() more often, multiplying WASM bounds checks across the window array.
     // force_huffman_kind: null auto-selects fixed vs dynamic Huffman, gives best ratio; fixed is typically fastest.
@@ -65,12 +59,6 @@ module {
     };
 
     var chunkSize : Nat = DEFAULT_OUTPUT_CHUNK_SIZE;
-
-    /// Override the Gzip header fields.
-    public func header(h : Header) : EncoderBuilder {
-      hdr := h;
-      self;
-    };
 
     /// Force dynamic Huffman tables for every block (better ratio, slightly slower).
     public func dynamicHuffman() : EncoderBuilder {
@@ -123,7 +111,7 @@ module {
 
     /// Build the configured `Encoder`.
     public func build() : Encoder {
-      Encoder(hdr, deflateOpts, chunkSize);
+      Encoder(deflateOpts, chunkSize);
     };
   };
 
@@ -136,7 +124,7 @@ module {
   ///   2. `compressed()` — merge all accumulated chunks into one `[Nat8]`.
   ///      Or iterate `chunks()` directly to avoid the merge allocation.
   ///   3. `clear()` — reset for reuse.
-  public class Encoder(header : Header, deflate_options : DeflateOptions, output_chunk_size : Nat) {
+  public class Encoder(deflate_options : DeflateOptions, output_chunk_size : Nat) {
 
     var inputSize = 0;
     let crc32 = CRC32.CRC32();
@@ -145,12 +133,11 @@ module {
 
     // Internal output accumulator — always wired; never exposed to callers.
     let outputChunks : List.List<[Nat8]> = List.empty();
-    let onOutput : [Nat8] -> () = func chunk { List.add(outputChunks, chunk) };
 
     func ensureHeaderWritten() {
       if (not headerWritten) {
         headerWritten := true;
-        Header.encode(bitbuffer, header, deflate_options.lzss);
+        Header.encode(bitbuffer, Header.defaultHeader(), deflate_options.lzss);
       };
     };
 
@@ -163,7 +150,7 @@ module {
     deflate.setOnBlockFlushed(
       func(_ : Nat) {
         if (bitbuffer.byteSize() >= STREAM_FLUSH_THRESHOLD) {
-          onOutput(bitbuffer.drainCompleteBytes());
+          List.add(outputChunks, bitbuffer.drainCompleteBytes());
         };
       }
     );
@@ -211,12 +198,15 @@ module {
       ignore deflate.finish();
       let crc32Val = crc32.finish();
       writeFooter(crc32Val);
-      onOutput(bitbuffer.drainCompleteBytes());
+      List.add(outputChunks, bitbuffer.drainCompleteBytes());
     };
 
     /// Return all compressed bytes as a single flat array.
-    /// Call after `finish()`. Uses `Array.flatten` for efficient O(N) merging.
+    /// Call after `finish()`.
     public func compressed() : [Nat8] {
+      let n = List.size(outputChunks);
+      if (n == 0) return [];
+      if (n == 1) return List.get(outputChunks, 0) ??[];
       Array.flatten(List.toArray(outputChunks));
     };
 

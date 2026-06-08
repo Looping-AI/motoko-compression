@@ -239,6 +239,9 @@ module {
     /// Return all decompressed output as a single flat array.
     /// Allocates a new array — prefer `chunks()` when only iteration is needed.
     public func decompressed() : [Nat8] {
+      let n = List.size(decompressedChunks);
+      if (n == 0) return [];
+      if (n == 1) return List.get(decompressedChunks, 0) ??[];
       Array.flatten(List.toArray(decompressedChunks));
     };
 

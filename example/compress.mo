@@ -301,12 +301,11 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   public func decompress() : async () {
     if (encoder.chunks().size() == 0) Runtime.trap("decompress: no compressed data");
     decoder.clear();
-    for (chunk in encoder.chunks().vals()) {
-      switch (decoder.decode(chunk)) {
-        case (#err msg) Runtime.trap("decompress decode: " # msg);
-        case (#ok _) {};
-      };
+    switch (decoder.decode(encoder.compressed())) {
+      case (#err msg) Runtime.trap("decompress decode: " # msg);
+      case (#ok _) {};
     };
+
     switch (decoder.finish()) {
       case (#err msg) Runtime.trap("decompress finish: " # msg);
       case (#ok _summary) {};

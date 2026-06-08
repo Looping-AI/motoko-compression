@@ -111,61 +111,6 @@ suite(
   },
 );
 
-// ── Suite: Header fields preserved ───────────────────────────────────────
-
-suite(
-  "Header fields",
-  func() {
-
-    test(
-      "OS byte preserved",
-      func() {
-        let h = { Gzip.defaultHeader() with os = #Macintosh };
-        let encoder = Gzip.EncoderBuilder().header(h).build();
-        encoder.encode([1, 2, 3]);
-        encoder.finish();
-        let compressed = encoder.compressed();
-
-        let dec = Gzip.Decoder();
-        ignore dec.decode(compressed);
-        switch (dec.finish()) {
-          case (#ok(r)) {
-            switch (r.header.os) {
-              case (#Macintosh) {};
-              case (other) Runtime.trap("Expected #Macintosh, got " # debug_show other);
-            };
-          };
-          case (#err(msg)) Runtime.trap(msg);
-        };
-      },
-    );
-
-    test(
-      "filename preserved",
-      func() {
-        let h = { Gzip.defaultHeader() with filename = ?"hello.txt" };
-        let encoder = Gzip.EncoderBuilder().header(h).build();
-        encoder.encode([1, 2, 3]);
-        encoder.finish();
-        let compressed = encoder.compressed();
-
-        let dec = Gzip.Decoder();
-        ignore dec.decode(compressed);
-        switch (dec.finish()) {
-          case (#ok(r)) {
-            switch (r.header.filename) {
-              case (?"hello.txt") {};
-              case (other) Runtime.trap("Filename mismatch: " # debug_show other);
-            };
-          };
-          case (#err(msg)) Runtime.trap(msg);
-        };
-      },
-    );
-
-  },
-);
-
 // ── Suite: Streaming encode correctness ──────────────────────────────────
 
 suite(

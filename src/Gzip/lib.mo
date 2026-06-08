@@ -85,10 +85,6 @@ module {
   public type Os = HeaderFile.Os;
   public type Header = HeaderFile.Header;
 
-  public let defaultHeader = HeaderFile.defaultHeader;
-  public let osToByte = HeaderFile.osToByte;
-  public let byteToOs = HeaderFile.byteToOs;
-
   // ── Encoder ──────────────────────────────────────────────────────────────
 
   /// Fluent builder for `Gzip.Encoder` (see `EncoderBuilder().build()`).
