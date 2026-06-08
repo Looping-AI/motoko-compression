@@ -21,147 +21,109 @@ mops add motoko-compression
 
 ### One-shot round trip
 
+Best for small payloads (≤ 6 MiB input). Keep the encoder and decoder as `transient let`
+in your canister — the convenience helpers call `clear()` internally so state never leaks.
+
 ```motoko
 import Blob "mo:core/Blob";
-import List "mo:core/List";
 import Runtime "mo:core/Runtime";
 import Text "mo:core/Text";
 import Gzip "mo:motoko-compression/Gzip";
 
+// Reuse these across calls — declare as `transient let` in a canister.
+let enc = Gzip.EncoderBuilder().build();
+let dec = Gzip.Decoder();
+
 let input = Blob.toArray(Text.encodeUtf8("Hello, Internet Computer!"));
 
-let encoder = Gzip.EncoderBuilder().build();
-encoder.encode(input);
-let compressed = encoder.finish();
+let compressed = Gzip.compress(enc, input);
 
-let decoder = Gzip.Decoder();
-switch (compressed) {
-  case (#single bytes) { ignore decoder.decode(bytes) };
-  case (#chunked chunks) {
-    for (chunk in chunks.vals()) ignore decoder.decode(chunk);
-  };
-};
-
-let output = List.empty<Nat8>();
-switch (decoder.finishStreaming(func(chunk) { List.addAll(output, chunk.vals()) })) {
-  case (#ok(summary)) assert summary.size == input.size();
-  case (#err(msg)) Runtime.trap("gzip decode failed: " # msg);
+switch (Gzip.decompress(dec, compressed)) {
+  case (#ok(output)) assert output.size() == input.size();
+  case (#err(msg)) Runtime.trap("decompress failed: " # msg);
 };
 
 ```
 
-### Streaming encode (IC-friendly)
+The helpers wrap the low-level API (`encode` → `finish` → `compressed`/`clear` and
+`decode` → `finish` → `decompressed`/`clear`) for convenience. Use the low-level API
+directly when you need to iterate `chunks()` without the merge allocation.
 
-Use when compressed output should be forwarded or stored as it is produced — avoids materializing the full payload.
+### Multi-step encode (IC-friendly, large data)
+
+Use when the raw input exceeds the ~6 MiB per-message instruction budget.
+Each timer tick feeds exactly `enc.outputChunkSize()` bytes of raw input; the final tick
+calls `finish()` to flush the Gzip footer.
 
 ```motoko
-import List "mo:core/List";
+import Array "mo:core/Array";
 import Gzip "mo:motoko-compression/Gzip";
 
-let fragments = List.empty<[Nat8]>();
-let encoder = Gzip.EncoderBuilder().outputChunkSize(1_024 * 1_024).build();
+let enc = Gzip.EncoderBuilder().build();
 
-encoder.setOnOutput(func(chunk) { List.add(fragments, chunk) });
-encoder.encode([1, 2, 3, 4]);
-encoder.encode([5, 6, 7, 8]);
-ignore encoder.finishStreaming();
+// Each timer run: feed one slice of raw input.
+let lo = offset;
+let hi = Nat.min(lo + enc.outputChunkSize(), rawData.size());
+enc.encode(Array.tabulate<Nat8>(hi - lo, func(i) { rawData[lo + i] }));
 
-// `fragments` are all part of one gzip stream — feed them in order to the same decoder.
+// Final timer run once all input is consumed:
+enc.finish();
+// Read output chunk-by-chunk (no merge allocation):
+for (chunk in enc.chunks().vals()) { /* store or forward chunk */ };
+// Or as a single array:
+let compressed = enc.compressed();
+enc.clear();
 
 ```
 
 ### Resumable decode across messages
 
 Use `start()` + `step()` to spread inflate work across multiple IC messages.
+Each `step(#default)` processes up to ~21 MiB of compressed input; output accumulates
+internally and is read once `#done` is returned.
 
 ```motoko
-import List "mo:core/List";
 import Runtime "mo:core/Runtime";
 import Gzip "mo:motoko-compression/Gzip";
 
-// ...feed compressed fragments to decoder.decode(...) first, then:
-switch (decoder.start()) {
-  case (#ok(_header)) {};
+let dec = Gzip.Decoder();
+
+// Feed all compressed bytes first (one or more decode() calls).
+dec.decode(compressed);
+
+// Parse the Gzip header and prepare the deflate decoder.
+switch (dec.start()) {
   case (#err(msg)) Runtime.trap("start failed: " # msg);
+  case (#ok(_header)) {};
 };
 
-let output = List.empty<Nat8>();
-label drive loop {
-  switch (decoder.step(512 * 1024, func(chunk) { List.addAll(output, chunk.vals()) })) {
-    case (#ok(#more)) { /* schedule next self-call, then call step() again */ };
-    case (#ok(#done(summary))) {
-      assert summary.size == List.size(output);
-      break drive;
-    };
-    case (#err(msg)) Runtime.trap("step failed: " # msg);
+// Each timer run:
+switch (dec.step(#default)) {
+  case (#err(msg)) Runtime.trap("step failed: " # msg);
+  case (#ok(#more)) { /* reschedule timer */ };
+  case (#ok(#done)) {
+    let output = dec.decompressed(); // [Nat8] — or dec.chunks() to avoid merge
+    dec.clear();
   };
 };
 
 ```
 
+Pass `#custom(n)` to `step()` to override the default 21 MiB output budget per tick.
+
 ## EncoderBuilder options
 
-| Option                                                     | Effect                                                                        |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `.lzss(#fast \| #balance \| #best)`                        | Match quality vs. speed                                                       |
-| `.fixedHuffman()` / `.dynamicHuffman()` / `.autoHuffman()` | Huffman table strategy                                                        |
-| `.deflateBlockSize(bytes)`                                 | DEFLATE block size (not IC message size)                                      |
-| `.outputChunkSize(bytes)`                                  | Output buffer chunk size; also the recommended per-self-call input slice size |
-| `.header(header)`                                          | Custom gzip header                                                            |
-
-> If you call `setOnOutput(...)`, finish with `finishStreaming()` instead of `finish()`.
-
-## Raw DEFLATE
-
-```motoko
-import List "mo:core/List";
-import Runtime "mo:core/Runtime";
-import Deflate "mo:motoko-compression/Deflate";
-
-let options : Deflate.DeflateOptions = {
-  deflate_block_size = 32_768;
-  force_huffman_kind = null;
-  lzss = #balance;
-};
-
-let encoder = Deflate.buildEncoder(options);
-encoder.encode([1, 2, 3, 1, 2, 3, 1, 2, 3]);
-let bitBuffer = encoder.finish();
-let compressed = bitBuffer.getBytes(0, bitBuffer.byteSize());
-
-let decoder = Deflate.buildDecoder(compressed);
-let output = List.empty<Nat8>();
-switch (decoder.decodeStreamingWithCapacity(0, func(chunk) { List.addAll(output, chunk.vals()) })) {
-  case (#ok()) {};
-  case (#err(msg)) Runtime.trap("deflate decode failed: " # msg);
-};
-
-```
-
-## Raw LZSS
-
-```motoko
-import List "mo:core/List";
-import LZSS "mo:motoko-compression/LZSS";
-
-let output = List.empty<Nat8>();
-let decoder = LZSS.Decoder.Decoder();
-
-let sink : LZSS.MatchSink = {
-  onLiteral = func(byte) { decoder.literal(output, byte) };
-  onPointer = func(offset, len) { decoder.pointer(output, offset, len) };
-};
-
-let encoder = LZSS.Encoder.Encoder(#balance); // #fast | #balance | #best
-encoder.encode([1, 2, 3, 1, 2, 3, 1, 2, 3], sink);
-encoder.flush(sink);
-
-```
+| Option                                                     | Effect                                                     |
+| ---------------------------------------------------------- | ---------------------------------------------------------- |
+| `.lzss(#fast \| #balance \| #best)`                        | Match quality vs. speed                                    |
+| `.fixedHuffman()` / `.dynamicHuffman()` / `.autoHuffman()` | Huffman table strategy                                     |
+| `.deflateBlockSize(bytes)`                                 | DEFLATE block size (not IC message size)                   |
+| `.outputChunkSize(bytes)`                                  | Recommended per-self-call input slice size (default 6 MiB) |
 
 ## Example canisters
 
 - `example/compress.mo` — timer-driven job queue: streaming encode + resumable decode across messages
-- `example/external-decompress.mo` — upload an externally-produced gzip stream in batches, decode with `finishStreaming()`
+- `example/external-decompress.mo` — upload an externally-produced gzip stream in batches, decode with `finish()`
 - `example/compress-images.mo` — image store using independent per-chunk gzip streams
 
 ## Development
@@ -189,7 +151,10 @@ Instruments sources transiently, runs workloads on PocketIC, and writes reports 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — streaming model, layer overview, encode/decode paths
 - [DEFLATE RFC 1951](https://www.rfc-editor.org/rfc/rfc1951)
 - [Gzip RFC 1952](https://www.rfc-editor.org/rfc/rfc1952)
-- [libflate (Rust reference)](https://github.com/sile/libflate)
+- [zlib manual](https://www.zlib.net/manual.html)
+- [zlib/gzlib.c](https://github.com/madler/zlib/blob/master/gzlib.c)
+- [zlib/deflate.c](https://github.com/madler/zlib/blob/master/deflate.c)
+- [zlib/inflate.c](https://github.com/madler/zlib/blob/master/inflate.c)
 - [Original fork: edjcase/motoko_compression](https://github.com/edjcase/motoko_compression)
 
 ## License
