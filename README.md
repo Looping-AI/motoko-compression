@@ -120,6 +120,52 @@ Pass `#custom(n)` to `step()` to override the default 21 MiB output budget per t
 | `.deflateBlockSize(bytes)`                                 | DEFLATE block size (not IC message size)                   |
 | `.outputChunkSize(bytes)`                                  | Recommended per-self-call input slice size (default 6 MiB) |
 
+## Performance
+
+Benchmarked on PocketIC via `IC.performanceCounter(1)` (retired instruction count).
+Test data is a mixed payload — ⅓ constant (0xAA), ⅓ pseudo-random, ⅓ sequential —
+to cover both compressible and incompressible content.
+Reproduce locally with `bun run perf component=gzip`.
+
+### Encode — `encode()` per tick · `finish()` once
+
+The default chunk size is 6 MiB per `encode()` call; `finish()` adds ≤ 79 M instructions
+(negligible) regardless of payload size.
+
+| Payload | Ticks (6 MiB / tick) | Max instructions / tick | Peak heap |
+| ------- | -------------------: | ----------------------: | --------: |
+| 1 KiB   |                    1 |                   1.7 M |   < 1 MiB |
+| 10 KiB  |                    1 |                  15.9 M |   < 1 MiB |
+| 1 MiB   |                    1 |                   2.5 B |   ~17 MiB |
+| 10 MiB  |                    2 |                  17.0 B |   ~35 MiB |
+| 80 MiB  |                   14 |                  31.2 B |   ~60 MiB |
+
+Worst-case encode rate (incompressible data): ≈ 5.5 B instructions / MiB.
+
+### Decode — `start()` once · `step(#default)` per tick
+
+`start()` concatenates all compressed input into one flat buffer for the BitReader —
+this is where peak heap is incurred. `step(#default)` then processes ≤ 21 MiB of
+output per tick.
+
+| Payload | `start()` instructions | Step ticks (21 MiB / tick) | Max instructions / tick | Peak heap |
+| ------- | ---------------------: | -------------------------: | ----------------------: | --------: |
+| 1 KiB   |                  4.1 M |                          1 |                   777 K |   < 1 MiB |
+| 10 KiB  |                  4.7 M |                          1 |                   6.9 M |   < 1 MiB |
+| 1 MiB   |                   79 M |                          1 |                   701 M |   ~16 MiB |
+| 10 MiB  |                  754 M |                          1 |                  9.97 B |  ~105 MiB |
+| 80 MiB  |                  6.0 B |                          4 |                  25.3 B |  ~235 MiB |
+
+Decode rate: ≈ 1.2 B instructions / MiB of output per step tick.
+
+> **IC budget:** no single operation at any measured size exceeds the 40 B instruction
+> limit with default settings.
+>
+> **Memory:** `start()` holds the entire compressed stream as a flat array until the
+> last `step()` call completes. At 80 MiB input this peaks at ~235 MiB heap. Attempting
+> 100 MiB exceeds the default 3 GiB Wasm memory cap — raise your canister's
+> `memory_allocation` or reduce payload size per stream.
+
 ## Example canisters
 
 - `example/compress.mo` — timer-driven job queue: streaming encode + resumable decode across messages

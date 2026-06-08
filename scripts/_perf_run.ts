@@ -134,27 +134,14 @@ try {
   const actor = fixture.actor;
 
   await actor.generateBytes(payloadBytes);
-  await pic.tick();
 
   const compressId = await actor.requestCompressJob();
   await awaitJob(pic, actor, compressId, "requestCompressJob");
-  await pic.tick();
 
   const decompressId = await actor.requestDecompressJob();
   await awaitJob(pic, actor, decompressId, "requestDecompressJob");
-  await pic.tick();
 
   await actor.clearAll();
-  await pic.tick(); // ensure clearAll is processed before next run
-  await actor.generateBytes(BigInt(1 * 1024));
-  await pic.tick();
-
-  const compressId2 = await actor.requestCompressJob();
-  await awaitJob(pic, actor, compressId2, "requestCompressJob");
-  await pic.tick();
-
-  const decompressId2 = await actor.requestDecompressJob();
-  await awaitJob(pic, actor, decompressId2, "requestDecompressJob");
 } finally {
   await pic?.tearDown().catch(() => {});
   await server?.stop().catch(() => {});

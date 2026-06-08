@@ -43,7 +43,3 @@ jobs:
 
       - name: Install Mops packages
         run: mops install
-
-      # DFX is needed for mops async tests
-      - name: Setup DFX
-        uses: dfinity/setup-dfx@main
