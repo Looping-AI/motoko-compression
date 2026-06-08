@@ -97,15 +97,23 @@ describe("ImageStore canister", () => {
     const jobId = jobIdResult[0] as bigint;
     await awaitJob(jobId);
 
-    const accumulated: number[] = [];
+    const pages: Uint8Array[] = [];
+    let totalSize = 0;
     for (let page = 0n; ; page++) {
       const r = await actor.getImagePage(name, page);
       if (r.length === 0) return null; // image vanished — should not happen
-      const pageData = Array.from(r[0] as Uint8Array);
+      const pageData = r[0] as Uint8Array;
       if (pageData.length === 0) break; // past last byte
-      accumulated.push(...pageData);
+      pages.push(pageData);
+      totalSize += pageData.length;
     }
-    return accumulated;
+    const merged = new Uint8Array(totalSize);
+    let offset = 0;
+    for (const page of pages) {
+      merged.set(page, offset);
+      offset += page.length;
+    }
+    return Array.from(merged);
   }
 
   /**

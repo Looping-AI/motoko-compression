@@ -121,12 +121,15 @@ module {
   /// re-allocating internal structures on every call.
   /// For large data use the `start`/`step` API.
   public func decompress(dec : Decoder, bytes : [Nat8]) : Result.Result<[Nat8], Text> {
+    dec.clear();
     dec.decode(bytes);
     switch (dec.finish()) {
       case (#err(msg)) return #err(msg);
       case (#ok(_)) {};
     };
-    #ok(dec.decompressed());
+    let out = dec.decompressed();
+    dec.clear();
+    #ok(out);
   };
 
 };
