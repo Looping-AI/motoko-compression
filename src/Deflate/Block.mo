@@ -11,7 +11,7 @@ import Prim "mo:⛔";
 import Runtime "mo:core/Runtime";
 import BitBuffer "../internal/BitBuffer";
 import LzssCommon "../LZSS/Common";
-import LzssEncoder "../LZSS/Encoder/lib";
+import LzssEncoder "../LZSS/Encoder";
 import CodeTables "CodeTables";
 import HuffmanCodec "HuffmanCodec";
 import Symbol "Symbol";

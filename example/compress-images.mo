@@ -1,7 +1,7 @@
 /// Example: Gzip-compressed named image store on the Internet Computer.
 ///
 /// Demonstrates storing and retrieving images with transparent Gzip compression
-/// using the library's block-chunked encoder.
+/// using the library's streaming encoder.
 ///
 /// Note: `images` is a mutable in-memory map and is NOT preserved across
 /// canister upgrades.  For a production canister, serialise the map into a
@@ -26,7 +26,8 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   // ── State ─────────────────────────────────────────────────────────────────
 
   // Not stable — loses contents on canister upgrade.
-  transient let images = Map.empty<Text, Gzip.EncodedResponse>();
+  // Each value is a list of complete, independent gzip streams — one per input chunk.
+  transient let images = Map.empty<Text, [[Nat8]]>();
   transient let decodedCache = Map.empty<Text, [Nat8]>();
 
   transient let gzipEncoder = Gzip.EncoderBuilder().build();
@@ -87,11 +88,12 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   public shared ({ caller }) func _compressChunk(chunk : [Nat8]) : async () {
     assert caller == canisterId();
     gzipEncoder.clear();
+    let parts = List.empty<[Nat8]>();
+    gzipEncoder.setOnOutput(func c { List.add(parts, c) });
     gzipEncoder.encode(chunk);
-    switch (gzipEncoder.finish()) {
-      case (#single data) List.add(_compress_buf, data);
-      case (#chunked _) Runtime.trap("_compressChunk: chunk exceeded outputChunkSize");
-    };
+    let summary = gzipEncoder.finishStreaming();
+    if (summary.compressed_size == 0) Runtime.trap("_compressChunk: no output produced");
+    List.add(_compress_buf, Array.flatten(List.toArray(parts)));
   };
 
   /// Internal: assemble all per-chunk compressed streams, store under `name`,
@@ -100,8 +102,7 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     assert caller == canisterId();
     let streams = List.toArray(_compress_buf);
     List.clear(_compress_buf);
-    let compressed = if (streams.size() == 1) #single(streams[0]) else #chunked(streams);
-    Map.add(images, Text.compare, name, compressed);
+    Map.add(images, Text.compare, name, streams);
     ignore Map.delete(decodedCache, Text.compare, name);
   };
 
@@ -128,36 +129,18 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
   /// Decompress `compressed` and write the result directly into `decodedCache`.
   /// Returns `async ()` so the large [Nat8] never crosses an async return boundary.
-  func decodeImage(name : Text, compressed : Gzip.EncodedResponse) : async () {
+  func decodeImage(name : Text, compressed : [[Nat8]]) : async () {
     gzipDecoder.clear();
-    switch (compressed) {
-      case (#single data) {
-        switch (gzipDecoder.decode(data)) {
-          case (#err(msg)) Runtime.trap("decodeImage decode: " # msg);
-          case (#ok(_)) {};
-        };
-        List.clear(_decompress_buf);
-        let consume = func(out : [Nat8]) {
-          List.addAll(_decompress_buf, out.vals());
-        };
-        switch (gzipDecoder.finishStreaming(consume)) {
-          case (#err(msg)) Runtime.trap("decodeImage finishStreaming: " # msg);
-          case (#ok(_)) Map.add(decodedCache, Text.compare, name, List.toArray(_decompress_buf));
-        };
-      };
-      case (#chunked cs) {
-        List.clear(_decompress_buf);
-        let n = cs.size();
-        var i = 0;
-        while (i < n) {
-          let hi = Nat.min(i + DECODE_BATCH_SIZE, n);
-          let batch = Array.tabulate<[Nat8]>(hi - i, func(j) { cs[i + j] });
-          await _decompressBatch(batch);
-          i := hi;
-        };
-        Map.add(decodedCache, Text.compare, name, List.toArray(_decompress_buf));
-      };
+    List.clear(_decompress_buf);
+    let n = compressed.size();
+    var i = 0;
+    while (i < n) {
+      let hi = Nat.min(i + DECODE_BATCH_SIZE, n);
+      let batch = Array.tabulate<[Nat8]>(hi - i, func(j) { compressed[i + j] });
+      await _decompressBatch(batch);
+      i := hi;
     };
+    Map.add(decodedCache, Text.compare, name, List.toArray(_decompress_buf));
   };
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -170,9 +153,11 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     gzipEncoder.clear();
     List.clear(_compress_buf);
     if (data.size() < ENCODE_CHUNK_SIZE) {
+      let parts = List.empty<[Nat8]>();
+      gzipEncoder.setOnOutput(func c { List.add(parts, c) });
       gzipEncoder.encode(data);
-      let compressed = gzipEncoder.finish();
-      Map.add(images, Text.compare, name, compressed);
+      ignore gzipEncoder.finishStreaming();
+      Map.add(images, Text.compare, name, List.toArray(parts));
       ignore Map.delete(decodedCache, Text.compare, name);
     } else {
       for (chunk in chunks(data, ENCODE_CHUNK_SIZE).vals()) {

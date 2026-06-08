@@ -5,7 +5,7 @@
 
 import BitBuffer "../internal/BitBuffer";
 import Block "Block";
-import LzssEncoder "../LZSS/Encoder/lib";
+import LzssEncoder "../LZSS/Encoder";
 import Common "../LZSS/Common";
 
 module {

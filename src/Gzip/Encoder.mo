@@ -1,17 +1,13 @@
 /// Gzip encoder.
 ///
 /// Key differences from edjcase original:
-///   - No `Debug.trap`; finish() is always infallible (encoding cannot fail).
 ///   - No `Buffer<Nat8>` — all API boundaries use `[Nat8]` / `Blob`.
 ///   - `EncoderBuilder.lzss` takes `CompressionLevel`, not a `Lzss.Encoder` object.
-///   - Chunking uses `setOnBlockFlushed` callback instead of mo:bitbuffer events.
 ///   - `encodeBuffer` dropped (Buffer type gone); `encodeText` and `encodeBlob` kept.
 ///   - Default lzss = `#balance`; `force_huffman_kind = null` (auto fixed/dynamic per block).
 ///   - `deflateBlockSize` and `outputChunkSize` are separate, orthogonal knobs.
 
-import Array "mo:core/Array";
 import Blob "mo:core/Blob";
-import List "mo:core/List";
 import Nat32 "mo:core/Nat32";
 import Runtime "mo:core/Runtime";
 import Text "mo:core/Text";
@@ -37,9 +33,9 @@ module {
   /// LZSS back-reference reach (the 32 KiB sliding window spans all blocks).
   let DEFAULT_DEFLATE_BLOCK_SIZE : Nat = 32_768; // 32 KiB
 
-  /// Default output chunk size (bytes). Each output chunk holds one or more
-  /// complete DEFLATE blocks and can be fed to `Decoder.decode()` independently.
-  /// Sized to stay safely within the 40B-instruction per-call limit on ICP with
+  /// Recommended input slice size per ICP canister message when spreading
+  /// compression across self-calls via `finishStreaming()`.
+  /// Sized to stay safely within the 40B-instruction per-call limit with
   /// standard parameters (#balance LZSS, 32 KiB deflate block size).
   let DEFAULT_OUTPUT_CHUNK_SIZE : Nat = 6_291_456; // 6 MiB
 
@@ -48,17 +44,6 @@ module {
   let STREAM_FLUSH_THRESHOLD : Nat = 1_048_576; // 1 MiB
 
   // ── Public types ─────────────────────────────────────────────────────────
-
-  /// The result of `Encoder.finish()`.
-  /// `#single` is returned when the total compressed size fits within one output
-  /// chunk (`outputChunkSize`); the bytes are merged into one flat array.
-  /// `#chunked` is returned for larger output; each chunk contains one or more
-  /// complete Deflate blocks (block-aligned) and can be fed to
-  /// `Decoder.decode()` in separate canister calls.
-  public type EncodedResponse = {
-    #single : [Nat8];
-    #chunked : [[Nat8]];
-  };
 
   /// Summary returned by `Encoder.finishStreaming()`.
   public type EncodedSummary = {
@@ -127,21 +112,14 @@ module {
       self;
     };
 
-    /// Set the output chunk size (bytes).
+    /// Set the recommended input slice size (bytes) for spreading compression
+    /// across ICP canister messages via `finishStreaming()`.
     ///
-    /// `finish()` packs one or more complete DEFLATE blocks into each output
-    /// chunk, keeping each chunk at most this many bytes. The final chunk also
-    /// carries the 8-byte Gzip footer, so it may be up to ~16 bytes larger than
-    /// this limit. Cuts are always snapped to DEFLATE block boundaries, which is
-    /// required for chunks to be independently decodable via `Decoder.decode()`.
+    /// Use `encoder.outputChunkSize()` as the amount of raw input to feed per
+    /// self-call: each slice of this size stays safely within the 40B-instruction
+    /// per-call budget with standard parameters (#balance LZSS, 32 KiB blocks).
     ///
-    /// If a single DEFLATE block already exceeds this size, it will be emitted
-    /// as its own (oversized) chunk — set `deflateBlockSize` ≤ `outputChunkSize`.
-    ///
-    /// Default: 6 MiB — chosen to stay safely within the 40B-instruction
-    /// per-call limit with standard parameters (#balance LZSS, 32 KiB blocks).
-    /// Use this value as the per-self-call input slice size when spreading
-    /// compression across ICP messages.
+    /// Default: 6 MiB.
     public func outputChunkSize(size : Nat) : EncoderBuilder {
       chunkSize := size;
       self;
@@ -157,17 +135,14 @@ module {
 
   /// Gzip encoder.
   ///
-  /// Call `encode(bytes)` one or more times, then `finish()` to retrieve
-  /// the compressed `EncodedResponse`.
+  /// Register an output callback with `setOnOutput`, call `encode(bytes)` one or
+  /// more times, then call `finishStreaming()` to flush the final block and footer.
   public class Encoder(header : Header, deflate_options : DeflateOptions, output_chunk_size : Nat) {
 
     var inputSize = 0;
     let crc32 = CRC32.CRC32();
     let bitbuffer = BitBuffer.new();
     var headerWritten = false;
-
-    /// Byte offsets into `bitbuffer` recorded after each Deflate block flush.
-    let blockEnds = List.empty<Nat>();
 
     /// Streaming output callback — set via `setOnOutput`.
     var onOutput : ?([Nat8] -> ()) = null;
@@ -188,8 +163,7 @@ module {
 
     let deflate = DeflateEncoder.Encoder(bitbuffer, deflate_options);
     deflate.setOnBlockFlushed(
-      func(byte_offset : Nat) {
-        List.add(blockEnds, byte_offset);
+      func(_ : Nat) {
         switch (onOutput) {
           case (?sink) {
             if (bitbuffer.byteSize() >= STREAM_FLUSH_THRESHOLD) {
@@ -218,17 +192,11 @@ module {
     public func encode(bytes : [Nat8]) {
       if (bytes.size() == 0) return;
 
-      // In streaming mode the buffer is drained every STREAM_FLUSH_THRESHOLD
+      // The buffer is drained to the output callback every STREAM_FLUSH_THRESHOLD
       // bytes, so its live size stays well below the input slice size. Cap the
       // reserve so the backing array never grows beyond ~2× the flush threshold
       // even when a large slice (e.g. 6 MiB) is passed in a single call.
-      // Without streaming (finish() path) the full input size is kept in the
-      // buffer, so pre-grow by the whole slice as before.
-      let reserveTarget = switch (onOutput) {
-        case (?_) bitbuffer.byteSize() + STREAM_FLUSH_THRESHOLD + 25;
-        case null bitbuffer.byteSize() + bytes.size() + 25;
-      };
-      bitbuffer.reserve(reserveTarget);
+      bitbuffer.reserve(bitbuffer.byteSize() + STREAM_FLUSH_THRESHOLD + 25);
       inputSize += bytes.size();
       crc32.update(bytes);
       ensureHeaderWritten();
@@ -246,7 +214,7 @@ module {
     };
 
     /// Register a callback that receives compressed bytes as they are produced.
-    /// Once set, use `finishStreaming()` instead of `finish()`.
+    /// Must be called before `finishStreaming()`.
     public func setOnOutput(cb : [Nat8] -> ()) {
       onOutput := ?cb;
     };
@@ -256,7 +224,6 @@ module {
       inputSize := 0;
       crc32.reset();
       bitbuffer.clear();
-      List.clear(blockEnds);
       headerWritten := false;
       onOutput := null;
       streamedOut := 0;
@@ -289,72 +256,6 @@ module {
       summary;
     };
 
-    /// Flush the final Deflate block, append the Gzip footer, and return
-    /// the compressed data split into block-aligned chunks.
-    /// Traps if `setOnOutput` was previously called (use `finishStreaming()` instead).
-    public func finish() : EncodedResponse {
-      switch (onOutput) {
-        case (?_) Runtime.trap("Gzip.Encoder.finish: setOnOutput was called; use finishStreaming() instead");
-        case null {};
-      };
-      ensureHeaderWritten();
-      ignore deflate.finish();
-
-      // Footer: CRC32 (4 bytes LE) + ISIZE (4 bytes LE, mod 2^32)
-      let crc32Val = crc32.finish();
-      writeFooter(crc32Val);
-
-      let total = bitbuffer.byteSize();
-      let all = bitbuffer.getBytes(0, total);
-
-      let resp : EncodedResponse = if (total <= output_chunk_size) {
-        #single all;
-      } else {
-        // Slice `all` into output chunks.
-        //
-        // Each chunk holds one or more complete DEFLATE blocks (cuts snapped to
-        // DEFLATE boundaries so chunks are independently decodable). The final
-        // chunk carries the Gzip footer and may be up to ~16 B larger than
-        // `output_chunk_size` due to footer + last-block Huffman overhead.
-        //
-        // Degenerate case: if a single DEFLATE block exceeds `output_chunk_size`,
-        // it is emitted as its own oversized chunk rather than being split mid-block.
-
-        let ends = List.toArray(blockEnds);
-        let n = ends.size();
-
-        let chunks : [[Nat8]] = if (n == 0) {
-          // encode() was never called — single chunk with header + empty Deflate + footer
-          [all];
-        } else {
-          let out = List.empty<[Nat8]>();
-          var chunkLo = 0;
-          var prevBlockEnd = 0;
-          var blocksInChunk = 0;
-
-          for (block_end in ends.vals()) {
-            // Avoid Nat underflow: rewrite `block_end - chunkLo > output_chunk_size`
-            // as `block_end > chunkLo + output_chunk_size` (both are Nat, sum never wraps).
-            if (block_end > chunkLo + output_chunk_size and blocksInChunk > 0) {
-              // Adding this block would exceed the limit; emit what we have.
-              List.add(out, Array.tabulate<Nat8>(prevBlockEnd - chunkLo, func(j) { all[chunkLo + j] }));
-              chunkLo := prevBlockEnd;
-              blocksInChunk := 0;
-            };
-            prevBlockEnd := block_end;
-            blocksInChunk += 1;
-          };
-
-          // Final chunk: from chunkLo to end of buffer (includes Gzip footer).
-          List.add(out, Array.tabulate<Nat8>(total - chunkLo, func(j) { all[chunkLo + j] }));
-          List.toArray(out);
-        };
-
-        #chunked chunks;
-      };
-      clear();
-      resp;
-    };
   };
 
 };

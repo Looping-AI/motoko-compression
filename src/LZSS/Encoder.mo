@@ -16,7 +16,7 @@
 import Nat8 "mo:core/Nat8";
 import Nat32 "mo:core/Nat32";
 import Prim "mo:⛔";
-import Common "../Common";
+import Common "Common";
 
 module {
 

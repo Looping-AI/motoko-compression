@@ -5,7 +5,7 @@ import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
 
 import Common "../src/LZSS/Common";
-import EncoderLib "../src/LZSS/Encoder/lib";
+import EncoderLib "../src/LZSS/Encoder";
 import Decoder "../src/LZSS/Decoder";
 
 // ── helpers ───────────────────────────────────────────────────────────────

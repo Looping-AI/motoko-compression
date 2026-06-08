@@ -7,7 +7,7 @@
 
 import BitReader "../../src/internal/BitReader";
 import List "mo:core/List";
-import LZSS "../../src/LZSS/lib";
+import Decoder "../../src/LZSS/Decoder";
 
 persistent actor class TrapCanister() {
 
@@ -27,7 +27,7 @@ persistent actor class TrapCanister() {
   };
 
   public func decodeBadOffset() : async () {
-    let dec = LZSS.Decoder.Decoder();
+    let dec = Decoder.Decoder();
     let out = List.empty<Nat8>();
     dec.pointer(out, 5, 3); // traps: backward_offset=5 > output.size()=0
   };

@@ -8,6 +8,7 @@
     "postinstall": "husky",
     "test:build": "bun run tests/integration/build.ts",
     "test": "bun test tests/integration/",
+    "test:traps": "bun test tests/traps.test.ts",
     "test:correctness": "bun test tests/integration/gzip-correctness.test.ts",
     "test:interop": "bun test tests/integration/gzip-interop.test.ts",
     "test:timing": "bun test tests/integration/gzip-timing.test.ts",
