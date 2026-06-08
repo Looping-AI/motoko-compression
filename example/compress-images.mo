@@ -1,75 +1,91 @@
 /// Example: Gzip-compressed named image store on the Internet Computer.
 ///
-/// Demonstrates storing and retrieving images with transparent Gzip compression
-/// using the library's streaming encoder.
+/// Demonstrates storing and retrieving images with transparent Gzip compression.
+/// Images are stored as a single gzip stream and survive canister upgrades.
 ///
-/// Note: `images` is a mutable in-memory map and is NOT preserved across
-/// canister upgrades.  For a production canister, serialise the map into a
-/// `stable` variable in `system func postupgrade`.
+/// ── Small images (≤ ingress limit, ~1–2 MiB) ─────────────────────────────────
 ///
-/// Usage:
-///   - `storeAndCompressImage("logo.png", bytes)` — compress and store.
-///   - `getImagePage("logo.png", page)`           — retrieve decompressed page.
-///   - `getImage("logo.png")`                     — retrieve full image (< 5 MiB).
-///   - For images > 5 MiB: beginImageUpload / uploadImageChunk / finishImageUpload.
+///   1. `storeAndCompressImage("logo.png", bytes)` — compress and store.
+///   2. `getImage("logo.png")`                     — decompress and return.
+///   3. `getImagePage("logo.png", page)`           — paginated read from cache (query).
+///
+/// ── Large images (> ingress limit) ───────────────────────────────────────────
+///
+/// Upload the raw bytes in chunks (client drives message-size splitting), then
+/// request an async decompression job before reading pages:
+///
+///   1. `beginImageUpload()`              — reset encoder.
+///   2. `uploadImageChunk(chunk)` × N    — feed raw bytes; one call per ingress chunk.
+///   3. `finishImageUpload("large.png")` — flush gzip stream and store.
+///   4. `requestLoadImageJob("large.png")` → JobId
+///   5. Poll `getJobStatus(id)` until `#done`.
+///   6. `getImagePage("large.png", page)` — cheap query from cache.
+///
+/// Notes
+/// ─────
+/// • `getImagePage` returns `null` when the name is unknown and `?[]` when either
+///   the image has not yet been loaded into the decoded cache (call
+///   `requestLoadImageJob` first) or the page index is past the last byte.
+/// • `getImage` uses a one-shot `Gzip.decompress` call; for images > ~21 MiB
+///   compressed use `requestLoadImageJob` + `getImagePage` instead.
 import Array "mo:core/Array";
-import List "mo:core/List";
+import Error "mo:core/Error";
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
-import Principal "mo:core/Principal";
 import Runtime "mo:core/Runtime";
 import Text "mo:core/Text";
+import Timer "mo:core/Timer";
 import Gzip "../src/Gzip/lib";
 
 shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
-  // ── State ─────────────────────────────────────────────────────────────────
+  // ── Types ──────────────────────────────────────────────────────────────────
 
-  // Not stable — loses contents on canister upgrade.
-  // Each value is a list of complete, independent gzip streams — one per input chunk.
-  transient let images = Map.empty<Text, [[Nat8]]>();
+  public type JobId = Nat;
+
+  public type JobStatus = {
+    #loading : { name : Text; offset : Nat; total : Nat };
+    #done;
+    #failed : Text;
+  };
+
+  type CompletedJob = { #done; #failed : Text };
+
+  type ActiveJob = {
+    id : Nat;
+    kind : { #loadImage : { name : Text } };
+    var offset : Nat;
+    total : Nat; // compressed.size() — used as progress denominator
+  };
+
+  type JobState = {
+    var nextJobId : Nat;
+    var activeJob : ?ActiveJob;
+    completedJobs : Map.Map<Nat, CompletedJob>;
+  };
+
+  // ── Stable state ───────────────────────────────────────────────────────────
+
+  // Stable (no `transient`) — survives canister upgrades.
+  let images = Map.empty<Text, [Nat8]>();
+
+  let jobState : JobState = {
+    var nextJobId = 0;
+    var activeJob = null;
+    completedJobs = Map.empty();
+  };
+
+  // ── Transient state ────────────────────────────────────────────────────────
+
   transient let decodedCache = Map.empty<Text, [Nat8]>();
-
-  transient let gzipEncoder = Gzip.EncoderBuilder().build();
-  transient let gzipDecoder = Gzip.Decoder();
-
-  // ── Constants ─────────────────────────────────────────────────────────────
+  transient let encoder : Gzip.Encoder = Gzip.EncoderBuilder().build();
+  transient let decoder : Gzip.Decoder = Gzip.Decoder();
+  transient var timerHandle : ?Timer.TimerId = null;
 
   transient let MB : Nat = 1_024 * 1_024;
   transient let PAGE_SIZE : Nat = 2 * MB - 512;
 
-  /// Bytes per self-call — derived from the encoder so both stay in sync.
-  transient let ENCODE_CHUNK_SIZE : Nat = gzipEncoder.outputChunkSize();
-
-  /// Compressed chunks to decompress per self-call.
-  /// At ~8.6B instructions per 5 MiB chunk, 3 chunks ≈ 25.8B — safely under the 40B limit.
-  transient let DECODE_BATCH_SIZE : Nat = 3;
-
-  // ── Transient buffers ─────────────────────────────────────────────────────
-
-  /// Accumulates per-chunk compressed streams during `_compressChunk` self-calls.
-  /// Each element is a complete, independent gzip stream for one input chunk.
-  transient var _compress_buf = List.empty<[Nat8]>();
-
-  /// Accumulates decompressed bytes across `_decompressBatch` self-calls.
-  transient var _decompress_buf = List.empty<Nat8>();
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
-  /// Split `data` into fixed-size chunks of at most `size` bytes.
-  func chunks(data : [Nat8], size : Nat) : [[Nat8]] {
-    let n = data.size();
-    if (n == 0 or size == 0) return [data];
-    let count = n / size + (if (n % size != 0) 1 else 0);
-    Array.tabulate<[Nat8]>(
-      count,
-      func(i) {
-        let lo = i * size;
-        let hi = Nat.min(lo + size, n);
-        Array.tabulate<Nat8>(hi - lo, func(j) { data[lo + j] });
-      },
-    );
-  };
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   func pageOf(data : [Nat8], page : Nat) : [Nat8] {
     let lo = page * PAGE_SIZE;
@@ -79,129 +95,214 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
     Array.tabulate<Nat8>(hi - lo, func(i) { data[lo + i] });
   };
 
-  func canisterId() : Principal { Principal.fromActor(self) };
+  // ── Job lifecycle ──────────────────────────────────────────────────────────
 
-  // ── Internal chunk handlers ───────────────────────────────────────────────
-
-  /// Internal: compress one input chunk into a complete, independent gzip stream
-  /// and append it to `_compress_buf`. Each await gives a fresh instruction budget.
-  public shared ({ caller }) func _compressChunk(chunk : [Nat8]) : async () {
-    assert caller == canisterId();
-    gzipEncoder.encode(chunk);
-    gzipEncoder.finish();
-    let compressed = gzipEncoder.compressed();
-    gzipEncoder.clear();
-    if (compressed.size() == 0) Runtime.trap("_compressChunk: no output produced");
-    List.add(_compress_buf, compressed);
+  func markJobDone() {
+    switch (jobState.activeJob) {
+      case (?job) {
+        Map.add(jobState.completedJobs, Nat.compare, job.id, #done);
+        jobState.activeJob := null;
+        timerHandle := null;
+      };
+      case null {};
+    };
   };
 
-  /// Internal: assemble all per-chunk compressed streams, store under `name`,
-  /// and evict any stale decoded cache entry.
-  public shared ({ caller }) func _finishCompression(name : Text) : async () {
-    assert caller == canisterId();
-    let streams = List.toArray(_compress_buf);
-    List.clear(_compress_buf);
-    Map.add(images, Text.compare, name, streams);
+  func markJobFailed(msg : Text) {
+    switch (jobState.activeJob) {
+      case (?job) {
+        Map.add(jobState.completedJobs, Nat.compare, job.id, #failed msg);
+        jobState.activeJob := null;
+        timerHandle := null;
+      };
+      case null {};
+    };
+  };
+
+  // ── Timer callback ─────────────────────────────────────────────────────────
+
+  func tickLoad() : async () {
+    var trapped = true;
+    try {
+      let ?job = jobState.activeJob else {
+        markJobFailed("loadImage: no active job");
+        return;
+      };
+      let #loadImage { name } = job.kind;
+      switch (decoder.step(#default)) {
+        case (#err msg) { markJobFailed("loadImage step: " # msg); return };
+        case (#ok(#more)) {
+          job.offset := decoder.decompressedSize();
+          timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickLoad);
+        };
+        case (#ok(#done)) {
+          job.offset := decoder.decompressedSize();
+          // decompressed() performs a single O(n) merge — only call it once on #done.
+          Map.add(decodedCache, Text.compare, name, decoder.decompressed());
+          markJobDone();
+        };
+      };
+      trapped := false;
+    } catch (e) {
+      markJobFailed("loadImage trap: " # Error.message(e));
+      trapped := false;
+    } finally {
+      if (trapped) markJobFailed("loadImage: unhandled trap");
+    };
+  };
+
+  // ── Upgrade hook ───────────────────────────────────────────────────────────
+
+  system func postupgrade() {
+    // Timers do not survive upgrades — mark any in-progress job as failed.
+    markJobFailed("canister upgraded mid-job");
+  };
+
+  // ── Small image upload ─────────────────────────────────────────────────────
+
+  /// Compress `data` and store the result under `name`.
+  /// Handles payloads that fit within one ingress message (practical limit ~1–2 MiB).
+  /// For larger images use beginImageUpload / uploadImageChunk / finishImageUpload.
+  public func storeAndCompressImage(name : Text, data : [Nat8]) : async () {
+    let compressed = Gzip.compress(encoder, data);
+    Map.add(images, Text.compare, name, compressed);
     ignore Map.delete(decodedCache, Text.compare, name);
   };
 
-  /// Internal: decompress a batch of chunks (each a complete independent gzip stream)
-  /// and append results to `_decompress_buf`. Each await gives a fresh instruction budget.
-  public shared ({ caller }) func _decompressBatch(batch : [[Nat8]]) : async () {
-    assert caller == canisterId();
-    for (chunk in batch.vals()) {
-      gzipDecoder.decode(chunk);
-      switch (gzipDecoder.finish()) {
-        case (#err(msg)) Runtime.trap("_decompressBatch finish: " # msg);
-        case (#ok(_)) {};
-      };
-      List.addAll(_decompress_buf, gzipDecoder.decompressed().vals());
-      gzipDecoder.clear();
-    };
-  };
+  // ── Large image upload ─────────────────────────────────────────────────────
 
-  // ── Private helpers ───────────────────────────────────────────────────────
-
-  /// Decompress `compressed` and write the result directly into `decodedCache`.
-  /// Returns `async ()` so the large [Nat8] never crosses an async return boundary.
-  func decodeImage(name : Text, compressed : [[Nat8]]) : async () {
-    gzipDecoder.clear();
-    List.clear(_decompress_buf);
-    let n = compressed.size();
-    var i = 0;
-    while (i < n) {
-      let hi = Nat.min(i + DECODE_BATCH_SIZE, n);
-      let batch = Array.tabulate<[Nat8]>(hi - i, func(j) { compressed[i + j] });
-      await _decompressBatch(batch);
-      i := hi;
-    };
-    Map.add(decodedCache, Text.compare, name, List.toArray(_decompress_buf));
-  };
-
-  // ── Public API ────────────────────────────────────────────────────────────
-
-  // <5 MiB Images
-
-  /// Compress `data` and store the result under `name`.  Overwrites any existing entry.
-  /// For images larger than ~5 MiB use beginImageUpload / uploadImageChunk / finishImageUpload.
-  public func storeAndCompressImage(name : Text, data : [Nat8]) : async () {
-    List.clear(_compress_buf);
-    if (data.size() < ENCODE_CHUNK_SIZE) {
-      gzipEncoder.encode(data);
-      gzipEncoder.finish();
-      Map.add(images, Text.compare, name, [gzipEncoder.compressed()]);
-      gzipEncoder.clear();
-      ignore Map.delete(decodedCache, Text.compare, name);
-    } else {
-      for (chunk in chunks(data, ENCODE_CHUNK_SIZE).vals()) {
-        await _compressChunk(chunk);
-      };
-      await _finishCompression(name);
-    };
-  };
-
-  /// Decompress and return the image stored under `name`.
-  /// Returns null if no image is stored under that name.
-  public func getImage(name : Text) : async ?[Nat8] {
-    await getImagePage(name, 0);
-  };
-
-  // >5 MiB Images
-
-  /// Begin a chunked upload.  Clears any buffered encoder state from a
-  /// previous (possibly incomplete) upload.
+  /// Begin a chunked upload.  Resets the encoder for a fresh gzip stream.
   public func beginImageUpload() : async () {
-    gzipEncoder.clear();
-    List.clear(_compress_buf);
+    encoder.clear();
   };
 
   /// Feed one raw chunk of image data to the encoder.
-  /// Each call should supply at most one encoder chunk worth of bytes (≤ ENCODE_CHUNK_SIZE).
+  /// Each call is a separate ingress message with its own instruction budget —
+  /// no self-call needed.  Supply at most ~2 MiB per call (ingress limit).
   public func uploadImageChunk(chunk : [Nat8]) : async () {
-    await _compressChunk(chunk);
+    encoder.encode(chunk);
   };
 
   /// Finalize compression and store the result under `name`.
-  /// Must be called after `beginImageUpload` + one or more `uploadImageChunk` calls.
+  /// Must be called after beginImageUpload + one or more uploadImageChunk calls.
   public func finishImageUpload(name : Text) : async () {
-    await _finishCompression(name);
+    encoder.finish();
+    Map.add(images, Text.compare, name, encoder.compressed());
+    ignore Map.delete(decodedCache, Text.compare, name);
+    encoder.clear();
   };
 
-  /// Decompress and return one page of the image stored under `name`.
-  /// Returns null if image not found, ?[] when page is beyond the last byte.
-  public func getImagePage(name : Text, page : Nat) : async ?[Nat8] {
-    switch (Map.get(images, Text.compare, name)) {
-      case null null;
-      case (?stored) {
-        if (Map.get(decodedCache, Text.compare, name) == null) {
-          await decodeImage(name, stored);
-        };
-        switch (Map.get(decodedCache, Text.compare, name)) {
-          case null Runtime.trap("getImagePage: decodeImage did not populate cache");
-          case (?data) ?(pageOf(data, page));
+  // ── Small image retrieval (< 2 MiB) ──────────────────────────────────────────────────
+
+  /// Decompress and return the full image stored under `name`.
+  /// Returns null if no image is stored under that name.
+  /// Uses a one-shot Gzip.decompress call; since IC return can't be bigger than ~2 MiB,
+  /// Please use requestLoadImageJob + getImagePage instead.
+  public func getImage(name : Text) : async ?[Nat8] {
+    switch (Map.get(decodedCache, Text.compare, name)) {
+      case (?data) ?data;
+      case null {
+        switch (Map.get(images, Text.compare, name)) {
+          case null null;
+          case (?compressed) {
+            switch (Gzip.decompress(decoder, compressed)) {
+              case (#err msg) Runtime.trap("getImage: " # msg);
+              case (#ok bytes) {
+                Map.add(decodedCache, Text.compare, name, bytes);
+                ?bytes;
+              };
+            };
+          };
         };
       };
     };
   };
 
+  // ── Async decompression job ────────────────────────────────────────────────
+
+  /// Request an async decompression job for the image stored under `name`.
+  /// Returns null if the name is not found.  Returns ?JobId on success.
+  /// Only one job may be active at a time — traps if one is already running.
+  /// Poll getJobStatus until #done, then use getImagePage to read pages.
+  public func requestLoadImageJob(name : Text) : async ?JobId {
+    switch (Map.get(images, Text.compare, name)) {
+      case null null;
+      case (?compressed) {
+        let null = jobState.activeJob else Runtime.trap("requestLoadImageJob: job already active");
+        let id = jobState.nextJobId;
+        jobState.nextJobId += 1;
+
+        decoder.clear();
+        decoder.decode(compressed);
+        switch (decoder.start()) {
+          case (#err msg) Runtime.trap("requestLoadImageJob: start: " # msg);
+          case (#ok _) {};
+        };
+
+        jobState.activeJob := ?{
+          id;
+          kind = #loadImage { name };
+          var offset = 0;
+          total = compressed.size();
+        };
+
+        timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickLoad);
+        ?id;
+      };
+    };
+  };
+
+  /// Poll the status of a job by its JobId.
+  /// Returns null if the id is unknown (never submitted or already cleared).
+  public func getJobStatus(id : JobId) : async ?JobStatus {
+    switch (jobState.activeJob) {
+      case (?job) if (job.id == id) {
+        return ?(
+          switch (job.kind) {
+            case (#loadImage { name }) #loading {
+              name;
+              offset = job.offset;
+              total = job.total;
+            };
+          }
+        );
+      };
+      case _ {};
+    };
+    switch (Map.get(jobState.completedJobs, Nat.compare, id)) {
+      case (?#done) ?#done;
+      case (?#failed msg) ?(#failed msg);
+      case null null;
+    };
+  };
+
+  // ── Paginated retrieval (query) ────────────────────────────────────────────
+
+  /// Return one page of the decompressed image stored under `name` (0-indexed).
+  ///
+  /// Return values:
+  ///   null   — image not stored under this name.
+  ///   ?[]    — image exists but not yet in decoded cache (call requestLoadImageJob
+  ///            first), or page index is past the last byte.
+  ///   ?bytes — one page of decompressed image data.
+  public query func getImagePage(name : Text, page : Nat) : async ?[Nat8] {
+    switch (Map.get(decodedCache, Text.compare, name)) {
+      case (?data) ?(pageOf(data, page));
+      case null {
+        switch (Map.get(images, Text.compare, name)) {
+          case null null;
+          case _ ?([] : [Nat8]);
+        };
+      };
+    };
+  };
+
+  // ── Maintenance ────────────────────────────────────────────────────────────
+
+  /// Remove the image stored under `name` from both the compressed store and
+  /// the decoded cache.
+  public func clearImage(name : Text) : async () {
+    ignore Map.delete(images, Text.compare, name);
+    ignore Map.delete(decodedCache, Text.compare, name);
+  };
 };

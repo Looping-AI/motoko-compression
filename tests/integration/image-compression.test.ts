@@ -4,24 +4,16 @@
  * Deploys the compress-images example canister (ImageStore actor class) and
  * exercises its full public API:
  *
- *   - compressImage / storeImage / getImage — correct round-trip for small and large images
+ *   - storeAndCompressImage / getImage — correct round-trip for small images
+ *   - getImagePage (query)             — paginated read from decoded cache
+ *   - requestLoadImageJob / getJobStatus — async decompression for large images
+ *   - beginImageUpload / uploadImageChunk / finishImageUpload — chunked upload
  *   - isExactImage           — true for the stored bytes, false for mutations
  *   - Named isolation        — images stored under different names don't interfere
  *   - Overwrite              — a second storeImage under the same name replaces
  *   - Unknown name           — getImage returns null for an unseen name
  *   - Near-limit image      — 1 MiB of pseudo-random bytes (largest practical
  *                              size within PocketIC's 2 MiB ingress limit)
- *
- * Self-call handling
- * ──────────────────
- * compressImage always makes at least one self-call (_compressChunk) even for
- * tiny images, because it splits input into 2 MiB chunks unconditionally.
- * storeImage is now a simple map insert with no self-calls.
- * getImage makes self-calls (_decodeChunk) only when compressed output is
- * #chunked (> 2 MiB); for smaller images it decodes in-place.
- * isExactImage calls getImage via an inter-canister self-call regardless of
- * image size.
- *
  */
 import { describe, it, beforeAll, afterAll, expect } from "bun:test";
 import { PocketIc, PocketIcServer } from "@dfinity/pic";
@@ -71,20 +63,47 @@ describe("ImageStore canister", () => {
   }
 
   /**
-   * Retrieve an image page-by-page via getImagePage and reassemble.
-   * Each page call may trigger _decodeChunk self-calls (for #chunked stored
-   * data).
-   * Returns null if the image is not found; accumulates pages until ?[] signals
-   * end-of-data.
+   * Retrieve a small image via the one-shot getImage call.
+   * Returns null if the image is not stored.
    */
   async function getImage(name: string): Promise<number[] | null> {
+    const result = await actor.getImage(name);
+    if (result.length === 0) return null;
+    return Array.from(result[0] as Uint8Array);
+  }
+
+  /**
+   * Tick the IC until the given job reaches #done or #failed.
+   */
+  async function awaitJob(jobId: bigint): Promise<void> {
+    for (;;) {
+      await pic.tick();
+      const status = await actor.getJobStatus(jobId);
+      if (status.length === 0) throw new Error("unknown job id: " + jobId);
+      const s = status[0] as any;
+      if ("done" in s) return;
+      if ("failed" in s) throw new Error("job failed: " + s.failed);
+    }
+  }
+
+  /**
+   * Retrieve a large image: submit a load job, wait until done, then
+   * paginate through the decoded cache via getImagePage (query).
+   * Returns null if the image is not stored.
+   */
+  async function getLargeImage(name: string): Promise<number[] | null> {
+    const jobIdResult = await actor.requestLoadImageJob(name);
+    if (jobIdResult.length === 0) return null;
+    const jobId = jobIdResult[0] as bigint;
+    await awaitJob(jobId);
+
     const accumulated: number[] = [];
     for (let page = 0n; ; page++) {
-      const result = await actor.getImagePage(name, page);
-      if (result.length === 0) return null; // image not found
-      const pageData = Array.from(result[0] as Uint8Array);
-      if (pageData.length === 0) break; // beyond last page
-      for (const bytes of pageData) accumulated.push(bytes);
+      const r = await actor.getImagePage(name, page);
+      if (r.length === 0) return null; // image vanished — should not happen
+      const pageData = Array.from(r[0] as Uint8Array);
+      if (pageData.length === 0) break; // past last byte
+      accumulated.push(...pageData);
     }
     return accumulated;
   }
@@ -92,7 +111,7 @@ describe("ImageStore canister", () => {
   /**
    * Upload a large image in 2 MiB chunks using the beginImageUpload /
    * uploadImageChunk / finishImageUpload API.  Each chunk call is a separate
-   * PocketIC message.
+   * PocketIC message with its own instruction budget.
    */
   async function storeImageChunked(
     name: string,
@@ -100,7 +119,7 @@ describe("ImageStore canister", () => {
   ): Promise<void> {
     await actor.beginImageUpload();
 
-    const CHUNK = 2 * 1024 * 1024 - 512; // leave room for IC ingress envelope + Candid overhead (~186 bytes observed)
+    const CHUNK = 2 * 1024 * 1024 - 512; // leave room for IC ingress envelope + Candid overhead
     for (let offset = 0; offset < data.length; offset += CHUNK) {
       const chunk = data.slice(offset, Math.min(offset + CHUNK, data.length));
       await actor.uploadImageChunk(chunk);
@@ -178,19 +197,16 @@ describe("ImageStore canister", () => {
     expect(retrieved).toEqual(original);
   }, 180_000);
 
-  it("round-trips a 10 MiB image via chunked upload", async () => {
-    // 10 MiB exceeds PocketIC's 2 MiB ingress limit, so we stream the raw
+  it("round-trips a 12 MiB image via chunked upload", async () => {
+    // 12 MiB exceeds PocketIC's 2 MiB ingress limit, so we stream the raw
     // bytes in 2 MiB slices using beginImageUpload / uploadImageChunk /
-    // finishImageUpload.  Pseudo-random data compresses to roughly the same
-    // size, so the stored EncodedResponse is #chunked; getImage uses
-    // _decodeChunk self-calls to reassemble the decompressed output.
+    // finishImageUpload.  After upload, requestLoadImageJob drives async
+    // decompression; getImagePage reads from the decoded cache as a query.
     const SIZE = 12 * 1024 * 1024;
     const original = makeData(SIZE, 100);
 
     await storeImageChunked("large.png", original);
-
-    // ~10 MiB compressed → ~5 output chunks of 2 MiB each
-    const retrieved = await getImage("large.png");
+    const retrieved = await getLargeImage("large.png");
 
     expect(retrieved).toEqual(original);
   }, 600_000);

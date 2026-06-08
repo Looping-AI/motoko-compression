@@ -16,7 +16,7 @@
 ///   let result = Gzip.decompress(dec, compressed);   // Result<[Nat8], Text>
 ///
 /// ─────────────────────────────────────────────────────────────────────────
-/// FLOW 2 — Multi-step encoding  (any size, single or multi-call)
+/// FLOW 2 — Multi-step encoding  (any size, multi-call through Timers)
 /// ─────────────────────────────────────────────────────────────────────────
 ///
 /// Use when data exceeds the ~40B-instruction per-call budget.

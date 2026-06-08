@@ -1,13 +1,42 @@
 /// Example: general-purpose Gzip compression on the Internet Computer.
 ///
-/// Demonstrates how to compress and decompress arbitrary byte data safely
-/// within the ICP instruction-limit using a timer-driven job queue.
+/// Two usage modes depending on payload size:
 ///
-/// Each timer tick processes one chunk with a fresh instruction budget;
-/// callers submit a job and poll `getJobStatus(id)` until `#done`.
+/// ── Small payloads (≤ 6 MiB uncompressed or ≤ 21 MiB compressed) ────────────────────────────────
 ///
-/// Usage:
-///   1. Call `generateBytes(size_mb)` to fill the canister with pseudo-random data.
+/// Call `compress()` / `decompress()` directly — both complete in a single
+/// message with no timer overhead.
+///
+/// If you only need one direction, use the Gzip convenience helpers instead
+/// of spinning up the full encoder+decoder pair:
+///
+///   // Encoding only:
+///   let compressed = Gzip.compress(enc, rawBytes);      // [Nat8]
+///   let compressed = Gzip.compressText(enc, text);      // [Nat8]
+///   let compressed = Gzip.compressBlob(enc, blob);      // [Nat8]
+///
+///   // Decoding only:
+///   let result = Gzip.decompress(dec, compressed);      // Result<[Nat8], Text>
+///
+///   Keep `enc` and `dec` as `transient let` canister fields and reuse them
+///   across calls — each helper calls `clear()` internally so state never leaks.
+///
+/// Usage (small):
+///   1. Call `generateBytes(n_bytes)` to populate raw data (n_bytes ≤ 6 MiB).
+///   2. Call `compress()` — returns once compressed output is ready.
+///   3. Call `decompress()` — returns once decompressed output is ready.
+///   4. Compare `getGeneratedData()` pages with `getDecompressedData()` pages.
+///
+/// ── Large payloads (> 6 MiB uncompressed or > 21 MiB compressed) ────────────────────────────────
+///
+/// ICP caps instructions per message (~40 B); a single call can safely process
+/// at most ~6 MiB of raw input to be compressed OR ~21 MiB of compressed input
+/// to be decompressed. For larger data use the timer-driven job queue:
+/// each timer tick processes one chunk with a fresh instruction budget;
+/// callers submit a job and poll until done.
+///
+/// Usage (large):
+///   1. Call `generateBytes(n_bytes)` to populate raw data (n_bytes > 6 MiB).
 ///   2. Call `requestCompressJob()` → receive a JobId.
 ///   3. Poll `getJobStatus(id)` until `#done`.
 ///   4. Call `requestDecompressJob()` → receive a JobId.
