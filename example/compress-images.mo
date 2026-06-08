@@ -87,13 +87,12 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   /// and append it to `_compress_buf`. Each await gives a fresh instruction budget.
   public shared ({ caller }) func _compressChunk(chunk : [Nat8]) : async () {
     assert caller == canisterId();
-    gzipEncoder.clear();
-    let parts = List.empty<[Nat8]>();
-    gzipEncoder.setOnOutput(func c { List.add(parts, c) });
     gzipEncoder.encode(chunk);
-    let summary = gzipEncoder.finishStreaming();
-    if (summary.compressed_size == 0) Runtime.trap("_compressChunk: no output produced");
-    List.add(_compress_buf, Array.flatten(List.toArray(parts)));
+    gzipEncoder.finish();
+    let compressed = gzipEncoder.compressed();
+    gzipEncoder.clear();
+    if (compressed.size() == 0) Runtime.trap("_compressChunk: no output produced");
+    List.add(_compress_buf, compressed);
   };
 
   /// Internal: assemble all per-chunk compressed streams, store under `name`,
@@ -150,14 +149,12 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   /// Compress `data` and store the result under `name`.  Overwrites any existing entry.
   /// For images larger than ~5 MiB use beginImageUpload / uploadImageChunk / finishImageUpload.
   public func storeAndCompressImage(name : Text, data : [Nat8]) : async () {
-    gzipEncoder.clear();
     List.clear(_compress_buf);
     if (data.size() < ENCODE_CHUNK_SIZE) {
-      let parts = List.empty<[Nat8]>();
-      gzipEncoder.setOnOutput(func c { List.add(parts, c) });
       gzipEncoder.encode(data);
-      ignore gzipEncoder.finishStreaming();
-      Map.add(images, Text.compare, name, List.toArray(parts));
+      gzipEncoder.finish();
+      Map.add(images, Text.compare, name, [gzipEncoder.compressed()]);
+      gzipEncoder.clear();
       ignore Map.delete(decodedCache, Text.compare, name);
     } else {
       for (chunk in chunks(data, ENCODE_CHUNK_SIZE).vals()) {

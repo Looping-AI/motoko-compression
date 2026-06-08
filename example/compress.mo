@@ -65,7 +65,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // ── Stable state ──────────────────────────────────────────────────────────
 
   var rawData : [Nat8] = [];
-  let compressed : List.List<[Nat8]> = List.empty();
   let decompressed : List.List<[Nat8]> = List.empty();
 
   // Job queue
@@ -86,10 +85,11 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // suspends at the first block boundary past this budget.
   transient let DECODE_OUTPUT_BUDGET : Nat = 21 * MB;
 
-  // Live streaming codecs for the active job. Transient: an upgrade discards
-  // them, and `postupgrade` fails any in-progress job accordingly.
-  transient var encoder : ?Gzip.Encoder = null;
-  transient var decoder : ?Gzip.Decoder = null;
+  // Live streaming codecs — always-live singletons; reused across jobs via
+  // clear(). Transient: an upgrade discards them and `postupgrade` fails any
+  // in-progress job accordingly.
+  transient let encoder : Gzip.Encoder = Gzip.EncoderBuilder().build();
+  transient let decoder : Gzip.Decoder = Gzip.Decoder();
   // Running count of decompressed bytes produced (for job-status progress).
   transient var decodeProduced : Nat = 0;
 
@@ -142,25 +142,20 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         markJobFailed("compress: wrong job kind");
         return;
       };
-      let ?enc = encoder else {
-        markJobFailed("compress: no encoder");
-        return;
-      };
       let rawLen = rawData.size();
 
       if (job.offset < rawLen) {
         // Encode the next input slice into the shared gzip stream. The encoder's
-        // on-output callback drains completed bytes into `compressed`.
+        // on-output callback drains completed bytes into the internal accumulator.
         let lo = job.offset;
         let hi = Nat.min(lo + ENCODE_INPUT_SLICE, rawLen);
         let slice = Array.tabulate<Nat8>(hi - lo, func(j) { rawData[lo + j] });
-        enc.encode(slice);
+        encoder.encode(slice);
         job.offset := hi;
         timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickCompress);
       } else {
-        // All input encoded — flush the final block + footer and finish.
-        ignore enc.finishStreaming();
-        encoder := null;
+        // All input encoded — flush the final block + footer.
+        encoder.finish();
         markJobDone();
       };
       trapped := false;
@@ -184,16 +179,12 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         markJobFailed("decompress: wrong job kind");
         return;
       };
-      let dec = switch (decoder) {
-        case (?d) d;
-        case null { markJobFailed("decompress: no decoder"); return };
-      };
 
       let consume = func(chunk : [Nat8]) {
         List.add(decompressed, chunk);
         decodeProduced += chunk.size();
       };
-      switch (dec.step(DECODE_OUTPUT_BUDGET, consume)) {
+      switch (decoder.step(DECODE_OUTPUT_BUDGET, consume)) {
         case (#err msg) { markJobFailed("decompress step: " # msg); return };
         case (#ok(#more)) {
           job.offset := decodeProduced;
@@ -201,7 +192,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         };
         case (#ok(#done summary)) {
           job.offset := summary.size;
-          decoder := null;
           markJobDone();
         };
       };
@@ -295,8 +285,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   /// Return a 2 MiB page of the compressed output bytes (0-indexed).
   public query func getCompressedData(page : Nat) : async [Nat8] {
-    if (List.size(compressed) == 0) return [];
-    pageOf(Array.flatten<Nat8>(List.toArray(compressed)), page);
+    if (encoder.chunks().size() == 0) return [];
+    pageOf(Array.flatten(encoder.chunks()), page);
   };
 
   /// Return a 2 MiB page of the decompressed bytes (0-indexed).
@@ -310,28 +300,25 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Compress rawData in a single message (no timer). Best for small payloads
   /// that fit within the per-message instruction limit (~40 B instructions).
   public func compress() : async () {
-    List.clear(compressed);
-    let gzipEncoder = Gzip.EncoderBuilder().build();
-    gzipEncoder.setOnOutput(func(bytes) { List.add(compressed, bytes) });
-    gzipEncoder.encode(rawData);
-    ignore gzipEncoder.finishStreaming();
+    encoder.clear();
+    encoder.encode(rawData);
+    encoder.finish();
   };
 
   /// Decompress compressed data in a single message (no timer). Best for small payloads.
   /// Uses streaming decode to avoid materializing the full output array.
   public func decompress() : async () {
-    if (List.size(compressed) == 0) Runtime.trap("decompress: no compressed data");
+    if (encoder.chunks().size() == 0) Runtime.trap("decompress: no compressed data");
     List.clear(decompressed);
-    let gzipDecoder = Gzip.Decoder();
-    // Feed every fragment of the single continuous gzip stream.
-    for (frag in List.values(compressed)) {
-      switch (gzipDecoder.decode(frag)) {
+    decoder.clear();
+    for (chunk in encoder.chunks().vals()) {
+      switch (decoder.decode(chunk)) {
         case (#err msg) Runtime.trap("decompress decode: " # msg);
         case (#ok _) {};
       };
     };
     let consume = func(chunk : [Nat8]) { List.add(decompressed, chunk) };
-    switch (gzipDecoder.finishStreaming(consume)) {
+    switch (decoder.finishStreaming(consume)) {
       case (#err msg) Runtime.trap("decompress finishStreaming: " # msg);
       case (#ok _summary) {};
     };
@@ -346,12 +333,9 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
     let id = jobState.nextJobId;
     jobState.nextJobId += 1;
 
-    // Build the persistent encoder; its on-output callback drains completed
-    // bytes of the single gzip stream into `compressed` across ticks.
-    List.clear(compressed);
-    let enc = Gzip.EncoderBuilder().build();
-    enc.setOnOutput(func(bytes) { List.add(compressed, bytes) });
-    encoder := ?enc;
+    // Reset the encoder singleton; output accumulates internally across ticks
+    // and is readable via encoder.chunks() once finish() is called.
+    encoder.clear();
 
     jobState.activeJob := ?{
       id;
@@ -369,26 +353,25 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Traps if no compressed data is available.
   public func requestDecompressJob() : async JobId {
     let null = jobState.activeJob else Runtime.trap("requestDecompressJob: job already active");
-    if (List.size(compressed) == 0) Runtime.trap("requestDecompressJob: no compressed data");
+    if (encoder.chunks().size() == 0) Runtime.trap("requestDecompressJob: no compressed data");
     List.clear(decompressed);
 
     let id = jobState.nextJobId;
     jobState.nextJobId += 1;
 
-    // Build the persistent decoder, feed every fragment of the single gzip
-    // stream, and parse the header. Per-tick `step()` does the heavy work.
-    let dec = Gzip.Decoder();
-    for (frag in List.values(compressed)) {
-      switch (dec.decode(frag)) {
+    // Reset the decoder singleton, feed every chunk from the encoder, and
+    // parse the header. Per-tick step() does the heavy decompression work.
+    decoder.clear();
+    for (chunk in encoder.chunks().vals()) {
+      switch (decoder.decode(chunk)) {
         case (#err msg) Runtime.trap("requestDecompressJob: decode: " # msg);
         case (#ok _) {};
       };
     };
-    switch (dec.start()) {
+    switch (decoder.start()) {
       case (#err msg) Runtime.trap("requestDecompressJob: start: " # msg);
       case (#ok _) {};
     };
-    decoder := ?dec;
     decodeProduced := 0;
 
     jobState.activeJob := ?{
@@ -436,10 +419,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   /// Call this after retrieving results to reclaim heap space.
   public func clearAll() : async () {
     rawData := [];
-    List.clear(compressed);
+    encoder.clear();
     List.clear(decompressed);
-    encoder := null;
-    decoder := null;
     decodeProduced := 0;
   };
 

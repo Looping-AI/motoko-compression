@@ -12,17 +12,14 @@ import Gzip "../src/Gzip/lib";
 /// into a single array. Used by all round-trip tests.
 func roundTripStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
   let encoder = enc.build();
-  let compressed = List.empty<[Nat8]>();
-  encoder.setOnOutput(func chunk { List.add(compressed, chunk) });
   encoder.encode(data);
-  ignore encoder.finishStreaming();
+  encoder.finish();
+  let compressed = encoder.compressed();
 
   let decoder = Gzip.Decoder();
-  for (chunk in List.values(compressed)) {
-    switch (decoder.decode(chunk)) {
-      case (#err(msg)) Runtime.trap("decode error: " # msg);
-      case (#ok(_)) {};
-    };
+  switch (decoder.decode(compressed)) {
+    case (#err(msg)) Runtime.trap("decode error: " # msg);
+    case (#ok(_)) {};
   };
 
   let collected = List.empty<Nat8>();
@@ -44,30 +41,19 @@ func defaultBuilder() : Gzip.EncoderBuilder {
   Gzip.EncoderBuilder();
 };
 
-/// Encode `data` with `enc` using the streaming API.  Collects all chunks
-/// emitted via `setOnOutput` into a single flat array.  Validates that the
-/// returned `EncodedSummary` is consistent with the collected bytes.
+/// Encode `data` with `enc`, returning compressed bytes.
 func encodeStreamingBytes(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
   let encoder = enc.build();
-  let chunks = List.empty<[Nat8]>();
-  encoder.setOnOutput(func(chunk : [Nat8]) { List.add(chunks, chunk) });
   encoder.encode(data);
-  let summary = encoder.finishStreaming();
-  let bytes = Array.flatten(List.toArray(chunks));
-  if (summary.compressed_size != bytes.size()) {
-    Runtime.trap("encodeStreamingBytes: summary.compressed_size mismatch");
-  };
-  if (summary.input_size != data.size()) {
-    Runtime.trap("encodeStreamingBytes: summary.input_size mismatch");
-  };
-  bytes;
+  encoder.finish();
+  encoder.compressed();
 };
 
 /// Encode `data` streaming, decode and return the decompressed bytes.
 func roundTripEncodeStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
-  let streamed = encodeStreamingBytes(data, enc);
+  let compressed = encodeStreamingBytes(data, enc);
   let decoder = Gzip.Decoder();
-  switch (decoder.decode(streamed)) {
+  switch (decoder.decode(compressed)) {
     case (#err msg) Runtime.trap("roundTripEncodeStreaming decode error: " # msg);
     case (#ok _) {};
   };
@@ -79,12 +65,12 @@ func roundTripEncodeStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8]
   List.toArray(collected);
 };
 
-/// Streaming encode + decode only — no `finish()` comparison.
+/// Streaming encode + decode only — no additional comparison.
 /// Use for large inputs where double-encoding is prohibitive.
 func fastRoundTripEncodeStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
-  let streamed = encodeStreamingBytes(data, enc);
+  let compressed = encodeStreamingBytes(data, enc);
   let decoder = Gzip.Decoder();
-  switch (decoder.decode(streamed)) {
+  switch (decoder.decode(compressed)) {
     case (#err msg) Runtime.trap("fastRoundTripEncodeStreaming decode error: " # msg);
     case (#ok _) {};
   };
@@ -143,13 +129,12 @@ suite(
       func() {
         let h = { Gzip.defaultHeader() with os = #Macintosh };
         let encoder = Gzip.EncoderBuilder().header(h).build();
-        let compressed = List.empty<[Nat8]>();
-        encoder.setOnOutput(func chunk { List.add(compressed, chunk) });
         encoder.encode([1, 2, 3]);
-        ignore encoder.finishStreaming();
+        encoder.finish();
+        let compressed = encoder.compressed();
 
         let dec = Gzip.Decoder();
-        for (chunk in List.values(compressed)) { ignore dec.decode(chunk) };
+        ignore dec.decode(compressed);
         let nop = func(_ : [Nat8]) {};
         switch (dec.finishStreaming(nop)) {
           case (#ok(r)) {
@@ -168,13 +153,12 @@ suite(
       func() {
         let h = { Gzip.defaultHeader() with filename = ?"hello.txt" };
         let encoder = Gzip.EncoderBuilder().header(h).build();
-        let compressed = List.empty<[Nat8]>();
-        encoder.setOnOutput(func chunk { List.add(compressed, chunk) });
         encoder.encode([1, 2, 3]);
-        ignore encoder.finishStreaming();
+        encoder.finish();
+        let compressed = encoder.compressed();
 
         let dec = Gzip.Decoder();
-        for (chunk in List.values(compressed)) { ignore dec.decode(chunk) };
+        ignore dec.decode(compressed);
         let nop = func(_ : [Nat8]) {};
         switch (dec.finishStreaming(nop)) {
           case (#ok(r)) {
@@ -208,17 +192,62 @@ suite(
     );
 
     test(
-      "summary compressed_size matches actual output bytes",
+      "finish() output is a valid gzip stream",
       func() {
         let data = Array.tabulate<Nat8>(256, func(i) { Nat8.fromNat(i % 128) });
         let encoder = Gzip.EncoderBuilder().deflateBlockSize(64).build();
-        let parts = List.empty<[Nat8]>();
-        encoder.setOnOutput(func chunk { List.add(parts, chunk) });
         encoder.encode(data);
-        let summary = encoder.finishStreaming();
-        let totalBytes = Array.foldLeft<[Nat8], Nat>(List.toArray(parts), 0, func(acc, c) { acc + c.size() });
-        expect.nat(summary.compressed_size).equal(totalBytes);
-        expect.nat(summary.input_size).equal(data.size());
+        encoder.finish();
+        let compressed = encoder.compressed();
+        // Valid gzip: non-empty, starts with magic bytes 0x1f 0x8b, decompresses correctly.
+        expect.bool(compressed.size() > 0).isTrue();
+        expect.nat8(compressed[0]).equal(0x1f);
+        expect.nat8(compressed[1]).equal(0x8b);
+        let dec = Gzip.Decoder();
+        ignore dec.decode(compressed);
+        let out = List.empty<Nat8>();
+        switch (dec.finishStreaming(func cs { List.addAll(out, cs.vals()) })) {
+          case (#err msg) Runtime.trap(msg);
+          case (#ok _) {};
+        };
+        expect.array(List.toArray(out), Nat8.toText, Nat8.equal).equal(data);
+      },
+    );
+
+    test(
+      "encoder reuses cleanly — two consecutive compressions are independent",
+      func() {
+        let enc = Gzip.EncoderBuilder().build();
+        let dataA = Array.tabulate<Nat8>(512, func(i) { Nat8.fromNat(i % 64) });
+        let dataB = Array.tabulate<Nat8>(256, func(i) { Nat8.fromNat(255 - i % 128) });
+
+        enc.encode(dataA);
+        enc.finish();
+        let compA = enc.compressed(); // explicit read then clear
+        enc.clear();
+
+        enc.encode(dataB);
+        enc.finish();
+        let compB = enc.compressed();
+        enc.clear();
+
+        // Both compressed outputs decompress back to their original input.
+        let dec = Gzip.Decoder();
+        ignore dec.decode(compA);
+        let outA = List.empty<Nat8>();
+        switch (dec.finishStreaming(func cs { List.addAll(outA, cs.vals()) })) {
+          case (#err msg) Runtime.trap("reuse test decode A: " # msg);
+          case (#ok _) {};
+        };
+        expect.array(List.toArray(outA), Nat8.toText, Nat8.equal).equal(dataA);
+
+        ignore dec.decode(compB);
+        let outB = List.empty<Nat8>();
+        switch (dec.finishStreaming(func cs { List.addAll(outB, cs.vals()) })) {
+          case (#err msg) Runtime.trap("reuse test decode B: " # msg);
+          case (#ok _) {};
+        };
+        expect.array(List.toArray(outB), Nat8.toText, Nat8.equal).equal(dataB);
       },
     );
 
@@ -247,15 +276,12 @@ suite(
     test(
       "CRC32 mismatch → #err",
       func() {
-        // Encode valid data
         let encoder = Gzip.EncoderBuilder().build();
-        let parts = List.empty<[Nat8]>();
-        encoder.setOnOutput(func chunk { List.add(parts, chunk) });
         encoder.encode([1, 2, 3, 4, 5]);
-        ignore encoder.finishStreaming();
+        encoder.finish();
+        let all = encoder.compressed();
 
         // Corrupt a byte in the middle of the payload
-        let all = Array.flatten(List.toArray(parts));
         let corrupted = Array.tabulate<Nat8>(
           all.size(),
           func(i) {
@@ -309,7 +335,7 @@ suite(
   },
 );
 
-// ── Suite: Streaming encode (finishStreaming) ────────────────────────────
+// ── Suite: Streaming encode (finish) ─────────────────────────────────────
 
 suite(
   "Streaming encode",
@@ -355,24 +381,20 @@ suite(
 
 // ── Suite: Multi-step (resumable) streaming decode ──────────────────────────
 
-/// Encode `data` streaming into fragments, then decode it across multiple
-/// `step(maxOutBytes, consume)` calls — exactly as the example canister drives
-/// the decoder across timer messages. Returns the reassembled output.
+/// Encode `data` then decode it across multiple `step(maxOutBytes, consume)`
+/// calls — exactly as the example canister drives the decoder across timer
+/// messages. Returns the reassembled output.
 func multiStepDecode(data : [Nat8], maxOutBytes : Nat) : [Nat8] {
-  // Encode into fragments of one continuous gzip stream.
   let encoder = Gzip.EncoderBuilder().build();
-  let frags = List.empty<[Nat8]>();
-  encoder.setOnOutput(func(chunk : [Nat8]) { List.add(frags, chunk) });
   encoder.encode(data);
-  ignore encoder.finishStreaming();
+  encoder.finish();
+  let compressed = encoder.compressed();
 
-  // One decoder fed every fragment, then driven step-by-step.
+  // One decoder fed the compressed bytes, then driven step-by-step.
   let decoder = Gzip.Decoder();
-  for (frag in List.values(frags)) {
-    switch (decoder.decode(frag)) {
-      case (#err msg) Runtime.trap("multiStepDecode decode error: " # msg);
-      case (#ok _) {};
-    };
+  switch (decoder.decode(compressed)) {
+    case (#err msg) Runtime.trap("multiStepDecode decode error: " # msg);
+    case (#ok _) {};
   };
   switch (decoder.start()) {
     case (#err msg) Runtime.trap("multiStepDecode start error: " # msg);

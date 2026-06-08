@@ -3,11 +3,15 @@
 /// Key differences from edjcase original:
 ///   - No `Buffer<Nat8>` — all API boundaries use `[Nat8]` / `Blob`.
 ///   - `EncoderBuilder.lzss` takes `CompressionLevel`, not a `Lzss.Encoder` object.
-///   - `encodeBuffer` dropped (Buffer type gone); `encodeText` and `encodeBlob` kept.
+///   - `encodeBuffer` dropped (Buffer type gone).
 ///   - Default lzss = `#balance`; `force_huffman_kind = null` (auto fixed/dynamic per block).
 ///   - `deflateBlockSize` and `outputChunkSize` are separate, orthogonal knobs.
+///   - Output is accumulated internally; call `finish()` to flush, then
+///     `compressed()` to get all bytes or `chunks()` to iterate without merging.
 
+import Array "mo:core/Array";
 import Blob "mo:core/Blob";
+import List "mo:core/List";
 import Nat "mo:core/Nat";
 import Nat32 "mo:core/Nat32";
 import Runtime "mo:core/Runtime";
@@ -35,23 +39,14 @@ module {
   let DEFAULT_DEFLATE_BLOCK_SIZE : Nat = 32_768; // 32 KiB
 
   /// Recommended input slice size per ICP canister message when spreading
-  /// compression across self-calls via `finishStreaming()`.
+  /// compression across self-calls via `finish()`.
   /// Sized to stay safely within the 40B-instruction per-call limit with
   /// standard parameters (#balance LZSS, 32 KiB deflate block size).
   let DEFAULT_OUTPUT_CHUNK_SIZE : Nat = 6_291_456; // 6 MiB
 
   /// Threshold at which the streaming encoder drains completed bytes to the
-  /// output callback. Balances memory use against drain overhead.
+  /// internal accumulator. Balances memory use against drain overhead.
   let STREAM_FLUSH_THRESHOLD : Nat = 1_048_576; // 1 MiB
-
-  // ── Public types ─────────────────────────────────────────────────────────
-
-  /// Summary returned by `Encoder.finishStreaming()`.
-  public type EncodedSummary = {
-    input_size : Nat;
-    compressed_size : Nat;
-    crc32 : Nat32;
-  };
 
   // ── EncoderBuilder ────────────────────────────────────────────────────────
 
@@ -114,7 +109,7 @@ module {
     };
 
     /// Set the recommended input slice size (bytes) for spreading compression
-    /// across ICP canister messages via `finishStreaming()`.
+    /// across ICP canister messages via `finish()`.
     ///
     /// Use `encoder.outputChunkSize()` as the amount of raw input to feed per
     /// self-call: each slice of this size stays safely within the 40B-instruction
@@ -136,8 +131,11 @@ module {
 
   /// Gzip encoder.
   ///
-  /// Register an output callback with `setOnOutput`, call `encode(bytes)` one or
-  /// more times, then call `finishStreaming()` to flush the final block and footer.
+  /// Call `encode(bytes)` one or more times, then:
+  ///   1. `finish()` — flush the final DEFLATE block and append the Gzip footer.
+  ///   2. `compressed()` — merge all accumulated chunks into one `[Nat8]`.
+  ///      Or iterate `chunks()` directly to avoid the merge allocation.
+  ///   3. `clear()` — reset for reuse.
   public class Encoder(header : Header, deflate_options : DeflateOptions, output_chunk_size : Nat) {
 
     var inputSize = 0;
@@ -145,10 +143,9 @@ module {
     let bitbuffer = BitBuffer.new();
     var headerWritten = false;
 
-    /// Streaming output callback — set via `setOnOutput`.
-    var onOutput : ?([Nat8] -> ()) = null;
-    /// Total bytes drained to `onOutput` so far in this streaming session.
-    var streamedOut : Nat = 0;
+    // Internal output accumulator — always wired; never exposed to callers.
+    let outputChunks : List.List<[Nat8]> = List.empty();
+    let onOutput : [Nat8] -> () = func chunk { List.add(outputChunks, chunk) };
 
     func ensureHeaderWritten() {
       if (not headerWritten) {
@@ -165,15 +162,8 @@ module {
     let deflate = DeflateEncoder.Encoder(bitbuffer, deflate_options);
     deflate.setOnBlockFlushed(
       func(_ : Nat) {
-        switch (onOutput) {
-          case (?sink) {
-            if (bitbuffer.byteSize() >= STREAM_FLUSH_THRESHOLD) {
-              let chunk = bitbuffer.drainCompleteBytes();
-              streamedOut += chunk.size();
-              sink(chunk);
-            };
-          };
-          case null {};
+        if (bitbuffer.byteSize() >= STREAM_FLUSH_THRESHOLD) {
+          onOutput(bitbuffer.drainCompleteBytes());
         };
       }
     );
@@ -203,57 +193,38 @@ module {
       deflate.encode(bytes);
     };
 
-    /// Compress UTF-8 text.
-    public func encodeText(t : Text) {
-      encode(Blob.toArray(Text.encodeUtf8(t)));
-    };
-
-    /// Compress a Blob.
-    public func encodeBlob(b : Blob) {
-      encode(Blob.toArray(b));
-    };
-
-    /// Register a callback that receives compressed bytes as they are produced.
-    /// Must be called before `finishStreaming()`.
-    public func setOnOutput(cb : [Nat8] -> ()) {
-      onOutput := ?cb;
-    };
-
     /// Reset the encoder state (does not free the bitbuffer allocation).
     public func clear() {
       inputSize := 0;
       crc32.reset();
       bitbuffer.clear();
       headerWritten := false;
-      onOutput := null;
-      streamedOut := 0;
+      List.clear(outputChunks);
       deflate.clear();
     };
 
-    /// Flush the final Deflate block, append the Gzip footer, and stream all
-    /// remaining bytes to the registered `onOutput` callback.
-    /// Traps if `setOnOutput` was not called first.
-    /// Returns a summary with `input_size`, `compressed_size`, and `crc32`.
-    public func finishStreaming() : EncodedSummary {
-      let sink = switch (onOutput) {
-        case (?s) s;
-        case null Runtime.trap("Gzip.Encoder.finishStreaming: call setOnOutput first");
-      };
+    /// Flush the final DEFLATE block and append the Gzip footer.
+    /// Call `compressed()` or iterate `chunks()` afterwards to read the output,
+    /// then call `clear()` to reset the encoder for reuse.
+    public func finish() {
       ensureHeaderWritten();
       ignore deflate.finish();
       let crc32Val = crc32.finish();
       writeFooter(crc32Val);
-      // Drain all remaining bytes (byteAlign already done by deflate.finish footer).
-      let remaining = bitbuffer.drainCompleteBytes();
-      streamedOut += remaining.size();
-      sink(remaining);
-      let summary : EncodedSummary = {
-        input_size = inputSize;
-        compressed_size = streamedOut;
-        crc32 = crc32Val;
-      };
-      clear();
-      summary;
+      onOutput(bitbuffer.drainCompleteBytes());
+    };
+
+    /// Return all compressed bytes as a single flat array.
+    /// Call after `finish()`. Uses `Array.flatten` for efficient O(N) merging.
+    public func compressed() : [Nat8] {
+      Array.flatten(List.toArray(outputChunks));
+    };
+
+    /// Return the raw accumulated output chunks without merging.
+    /// Call after `finish()`. Prefer this over `compressed()` when iterating
+    /// chunk-by-chunk (e.g. writing to stable memory) to avoid the merge allocation.
+    public func chunks() : [[Nat8]] {
+      List.toArray(outputChunks);
     };
 
   };

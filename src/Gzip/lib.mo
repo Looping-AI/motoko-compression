@@ -5,27 +5,29 @@
 ///   import Gzip "mo:compression/Gzip";
 ///
 /// ─────────────────────────────────────────────────────────────────────────
-/// FLOW 1 — One-shot helpers  (small / in-memory data)
+/// FLOW 1 — One-shot helpers  (caller owns the encoder)
 /// ─────────────────────────────────────────────────────────────────────────
 ///
-///   let compressed : [Nat8] = Gzip.compress(input);
+///   // Keep as `transient let` in your canister for efficient reuse.
+///   let enc = Gzip.EncoderBuilder().build();
+///
+///   let compressed : [Nat8] = Gzip.compress(enc, input);
 ///   let result = Gzip.decompress(compressed);   // Result<[Nat8], Text>
 ///
 /// ─────────────────────────────────────────────────────────────────────────
-/// FLOW 2 — Builder encode → decoder  (any size, single canister call)
+/// FLOW 2 — Multi-step encoding  (any size, single or multi-call)
 /// ─────────────────────────────────────────────────────────────────────────
 ///
-///   // Encode — register callback, feed one or more slices, then finish.
 ///   let enc = Gzip.EncoderBuilder().build();
-///   let parts = List.empty<[Nat8]>();
-///   enc.setOnOutput(func chunk { List.add(parts, chunk) });
-///   enc.encodeText("Hello, ");
-///   enc.encodeBlob(someBlob);
-///   ignore enc.finishStreaming();
+///   enc.encode(slice1);
+///   enc.encode(slice2);
+///   enc.finish();
+///   let compressed = enc.compressed(); // [Nat8]
+///   enc.clear();
 ///
-///   // Decode — feed collected chunks to the decoder.
+///   // Decode — feed compressed bytes to the decoder.
 ///   let dec = Gzip.Decoder();
-///   for (chunk in List.values(parts)) { ignore dec.decode(chunk) };
+///   ignore dec.decode(compressed);
 ///   let output = Buffer.Buffer<Nat8>(0);
 ///   switch (dec.finishStreaming(func cs { Buffer.addAll(output, cs.vals()) })) {
 ///     case (#ok(_))    { /* use output.toArray() */ };
@@ -38,23 +40,23 @@
 ///
 /// Use when data exceeds the ~40B-instruction per-call budget.
 /// Each self-call processes enc.outputChunkSize() bytes of input (default 6 MiB).
-/// The encoder pushes completed output chunks via the registered callback;
-/// the decoder processes them incrementally via start() + repeated step().
+/// The encoder accumulates output internally across calls; call finish() once
+/// all input has been fed.
 ///
 ///   // ── Encoding side (one canister message per input slice) ─────────────
 ///   let enc = Gzip.EncoderBuilder().build();
-///   enc.setOnOutput(func chunk { storeChunk(chunk) });
 ///
 ///   // Each self-call: feed exactly outputChunkSize() bytes of raw input.
-///   enc.encode(nextSlice(enc.outputChunkSize()));  // emits ≤ 1 output chunk
+///   enc.encode(nextSlice(enc.outputChunkSize()));
 ///
 ///   // Final self-call once all input is consumed:
-///   let summary = enc.finishStreaming();
-///   // summary: { input_size; compressed_size; crc32 }
+///   enc.finish();
+///   let compressed = enc.compressed(); // [Nat8]
+///   enc.clear();
 ///
 ///   // ── Decoding side (one canister message per step) ─────────────────────
 ///   let dec = Gzip.Decoder();
-///   for (chunk in storedChunks.vals()) { ignore dec.decode(chunk) };
+///   ignore dec.decode(compressed);
 ///
 ///   switch (dec.start()) {
 ///     case (#err(msg)) Runtime.trap(msg);
@@ -68,8 +70,11 @@
 ///     case (#err(msg))            Runtime.trap(msg);
 ///   };
 
+import Array "mo:core/Array";
+import Blob "mo:core/Blob";
 import List "mo:core/List";
 import Result "mo:core/Result";
+import Text "mo:core/Text";
 
 import HeaderFile "Header";
 import EncoderFile "Encoder";
@@ -88,9 +93,6 @@ module {
   public let byteToOs = HeaderFile.byteToOs;
 
   // ── Encoder ──────────────────────────────────────────────────────────────
-
-  /// Summary returned by `Encoder.finishStreaming()`.
-  public type EncodedSummary = EncoderFile.EncodedSummary;
 
   /// Fluent builder for `Gzip.Encoder` (see `EncoderBuilder().build()`).
   public type EncoderBuilder = EncoderFile.EncoderBuilder;
@@ -115,14 +117,33 @@ module {
   // ── Convenience helpers ──────────────────────────────────────────────────
 
   /// Compress `bytes` in one call, returning the raw Gzip bytes.
-  /// For large data use `EncoderBuilder` with `setOnOutput` + `finishStreaming()`.
-  public func compress(bytes : [Nat8]) : [Nat8] {
-    let enc = EncoderFile.EncoderBuilder().build();
-    let parts = List.empty<[Nat8]>();
-    enc.setOnOutput(func chunk { List.add(parts, chunk) });
+  /// Pass a reusable encoder (e.g. a `transient let` in your canister) to avoid
+  /// re-allocating internal structures on every call.
+  /// For large data use `enc.encode()` + `enc.finish()` + `enc.compressed()` directly across self-calls.
+  public func compress(enc : Encoder, bytes : [Nat8]) : [Nat8] {
     enc.encode(bytes);
-    ignore enc.finishStreaming();
-    mergeChunks(List.toArray(parts));
+    enc.finish();
+    let out = enc.compressed();
+    enc.clear();
+    out;
+  };
+
+  /// Compress UTF-8 text in one call.
+  public func compressText(enc : Encoder, t : Text) : [Nat8] {
+    enc.encode(Blob.toArray(Text.encodeUtf8(t)));
+    enc.finish();
+    let out = enc.compressed();
+    enc.clear();
+    out;
+  };
+
+  /// Compress a Blob in one call.
+  public func compressBlob(enc : Encoder, b : Blob) : [Nat8] {
+    enc.encode(Blob.toArray(b));
+    enc.finish();
+    let out = enc.compressed();
+    enc.clear();
+    out;
   };
 
   /// Decompress `bytes` in one call, collecting all output into a single array.
@@ -135,17 +156,7 @@ module {
       case (#err(msg)) return #err(msg);
       case (#ok(_)) {};
     };
-    #ok(mergeChunks(List.toArray(parts)));
-  };
-
-  // ── Internal ─────────────────────────────────────────────────────────────
-
-  func mergeChunks(cs : [[Nat8]]) : [Nat8] {
-    let out = List.empty<Nat8>();
-    for (c in cs.vals()) {
-      for (b in c.vals()) { List.add(out, b) };
-    };
-    List.toArray(out);
+    #ok(Array.flatten(List.toArray(parts)));
   };
 
 };
