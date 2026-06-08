@@ -8,6 +8,7 @@
 ///   - `deflateBlockSize` and `outputChunkSize` are separate, orthogonal knobs.
 
 import Blob "mo:core/Blob";
+import Nat "mo:core/Nat";
 import Nat32 "mo:core/Nat32";
 import Runtime "mo:core/Runtime";
 import Text "mo:core/Text";
@@ -192,11 +193,10 @@ module {
     public func encode(bytes : [Nat8]) {
       if (bytes.size() == 0) return;
 
-      // The buffer is drained to the output callback every STREAM_FLUSH_THRESHOLD
-      // bytes, so its live size stays well below the input slice size. Cap the
-      // reserve so the backing array never grows beyond ~2× the flush threshold
-      // even when a large slice (e.g. 6 MiB) is passed in a single call.
-      bitbuffer.reserve(bitbuffer.byteSize() + STREAM_FLUSH_THRESHOLD + 25);
+      // Reserve enough for the compressed output of this slice, capped at
+      // STREAM_FLUSH_THRESHOLD so a large streaming slice (e.g. 6 MiB) never
+      // pre-allocates more than ~2× the flush window before draining.
+      bitbuffer.reserve(bitbuffer.byteSize() + Nat.min(bytes.size(), STREAM_FLUSH_THRESHOLD) + 25);
       inputSize += bytes.size();
       crc32.update(bytes);
       ensureHeaderWritten();
