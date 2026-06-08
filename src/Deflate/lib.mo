@@ -14,10 +14,6 @@ module {
   public type Encoder = DeflateEncoder.Encoder;
   public let Encoder = DeflateEncoder.Encoder;
   public type Decoder = DeflateDecoder.Decoder;
-  /// Construct a Deflate decoder from an immutable compressed-byte array.
-  public func Decoder(inputBytes : [Nat8]) : DeflateDecoder.Decoder {
-    DeflateDecoder.fromBytes(inputBytes);
-  };
   public type DeflateOptions = DeflateEncoder.DeflateOptions;
   public type CompressionLevel = Common.CompressionLevel;
 
