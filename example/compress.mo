@@ -15,7 +15,6 @@
 ///   6. Compare `getGeneratedData()` pages with `getDecompressedData()` pages.
 import Array "mo:core/Array";
 import Error "mo:core/Error";
-import List "mo:core/List";
 import Map "mo:core/Map";
 import Nat "mo:core/Nat";
 import Nat8 "mo:core/Nat8";
@@ -65,7 +64,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // ── Stable state ──────────────────────────────────────────────────────────
 
   var rawData : [Nat8] = [];
-  let decompressed : List.List<[Nat8]> = List.empty();
 
   // Job queue
   let jobState : JobState = {
@@ -90,8 +88,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // in-progress job accordingly.
   transient let encoder : Gzip.Encoder = Gzip.EncoderBuilder().build();
   transient let decoder : Gzip.Decoder = Gzip.Decoder();
-  // Running count of decompressed bytes produced (for job-status progress).
-  transient var decodeProduced : Nat = 0;
 
   transient var timerHandle : ?Timer.TimerId = null;
 
@@ -180,14 +176,10 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         return;
       };
 
-      let consume = func(chunk : [Nat8]) {
-        List.add(decompressed, chunk);
-        decodeProduced += chunk.size();
-      };
-      switch (decoder.step(DECODE_OUTPUT_BUDGET, consume)) {
+      switch (decoder.step(DECODE_OUTPUT_BUDGET)) {
         case (#err msg) { markJobFailed("decompress step: " # msg); return };
         case (#ok(#more)) {
-          job.offset := decodeProduced;
+          job.offset := decoder.decompressedSize();
           timerHandle := ?Timer.setTimer<system>(#nanoseconds 0, tickDecompress);
         };
         case (#ok(#done summary)) {
@@ -291,8 +283,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
 
   /// Return a 2 MiB page of the decompressed bytes (0-indexed).
   public query func getDecompressedData(page : Nat) : async [Nat8] {
-    if (List.size(decompressed) == 0) return [];
-    pageOf(Array.flatten<Nat8>(List.toArray(decompressed)), page);
+    if (decoder.chunks().size() == 0) return [];
+    pageOf(Array.flatten(decoder.chunks()), page);
   };
 
   // ── Direct (single-message) compress / decompress ────────────────────────
@@ -306,10 +298,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   };
 
   /// Decompress compressed data in a single message (no timer). Best for small payloads.
-  /// Uses streaming decode to avoid materializing the full output array.
   public func decompress() : async () {
     if (encoder.chunks().size() == 0) Runtime.trap("decompress: no compressed data");
-    List.clear(decompressed);
     decoder.clear();
     for (chunk in encoder.chunks().vals()) {
       switch (decoder.decode(chunk)) {
@@ -317,9 +307,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
         case (#ok _) {};
       };
     };
-    let consume = func(chunk : [Nat8]) { List.add(decompressed, chunk) };
-    switch (decoder.finishStreaming(consume)) {
-      case (#err msg) Runtime.trap("decompress finishStreaming: " # msg);
+    switch (decoder.finish()) {
+      case (#err msg) Runtime.trap("decompress finish: " # msg);
       case (#ok _summary) {};
     };
   };
@@ -354,7 +343,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   public func requestDecompressJob() : async JobId {
     let null = jobState.activeJob else Runtime.trap("requestDecompressJob: job already active");
     if (encoder.chunks().size() == 0) Runtime.trap("requestDecompressJob: no compressed data");
-    List.clear(decompressed);
 
     let id = jobState.nextJobId;
     jobState.nextJobId += 1;
@@ -372,7 +360,6 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
       case (#err msg) Runtime.trap("requestDecompressJob: start: " # msg);
       case (#ok _) {};
     };
-    decodeProduced := 0;
 
     jobState.activeJob := ?{
       id;
@@ -420,8 +407,7 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   public func clearAll() : async () {
     rawData := [];
     encoder.clear();
-    List.clear(decompressed);
-    decodeProduced := 0;
+    decoder.clear();
   };
 
 };

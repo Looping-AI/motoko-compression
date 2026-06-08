@@ -243,7 +243,6 @@ const TOP_LEVEL: Partial<Record<string, string[]>> = {
   gzip: [
     "gzip_encoder:encode",
     "gzip_encoder:finish",
-    "gzip_encoder:compressed",
     "gzip_decoder:decode",
     "gzip_decoder:start",
     "gzip_decoder:step",

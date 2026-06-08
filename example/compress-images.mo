@@ -114,13 +114,12 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
         case (#err(msg)) Runtime.trap("_decompressBatch decode: " # msg);
         case (#ok(_)) {};
       };
-      let consume = func(out : [Nat8]) {
-        List.addAll(_decompress_buf, out.vals());
-      };
-      switch (gzipDecoder.finishStreaming(consume)) {
-        case (#err(msg)) Runtime.trap("_decompressBatch finishStreaming: " # msg);
+      switch (gzipDecoder.finish()) {
+        case (#err(msg)) Runtime.trap("_decompressBatch finish: " # msg);
         case (#ok(_)) {};
       };
+      List.addAll(_decompress_buf, gzipDecoder.decompressed().vals());
+      gzipDecoder.clear();
     };
   };
 

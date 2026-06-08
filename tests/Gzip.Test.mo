@@ -1,6 +1,5 @@
 import { test; suite; expect } "mo:test";
 import Array "mo:core/Array";
-import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
 import Runtime "mo:core/Runtime";
 
@@ -22,19 +21,15 @@ func roundTripStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8] {
     case (#ok(_)) {};
   };
 
-  let collected = List.empty<Nat8>();
-  let consume = func(out : [Nat8]) {
-    for (b in out.vals()) List.add(collected, b);
-  };
-  switch (decoder.finishStreaming(consume)) {
-    case (#err(msg)) Runtime.trap("finishStreaming error: " # msg);
+  switch (decoder.finish()) {
+    case (#err(msg)) Runtime.trap("finish error: " # msg);
     case (#ok(summary)) {
-      if (summary.size != List.size(collected)) {
-        Runtime.trap("finishStreaming size mismatch");
+      if (summary.size != decoder.decompressedSize()) {
+        Runtime.trap("finish size mismatch");
       };
     };
   };
-  List.toArray(collected);
+  decoder.decompressed();
 };
 
 func defaultBuilder() : Gzip.EncoderBuilder {
@@ -57,12 +52,11 @@ func roundTripEncodeStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [Nat8]
     case (#err msg) Runtime.trap("roundTripEncodeStreaming decode error: " # msg);
     case (#ok _) {};
   };
-  let collected = List.empty<Nat8>();
-  switch (decoder.finishStreaming(func(c) { List.addAll(collected, c.vals()) })) {
-    case (#err msg) Runtime.trap("roundTripEncodeStreaming finishStreaming error: " # msg);
+  switch (decoder.finish()) {
+    case (#err msg) Runtime.trap("roundTripEncodeStreaming finish error: " # msg);
     case (#ok _) {};
   };
-  List.toArray(collected);
+  decoder.decompressed();
 };
 
 /// Streaming encode + decode only — no additional comparison.
@@ -74,12 +68,11 @@ func fastRoundTripEncodeStreaming(data : [Nat8], enc : Gzip.EncoderBuilder) : [N
     case (#err msg) Runtime.trap("fastRoundTripEncodeStreaming decode error: " # msg);
     case (#ok _) {};
   };
-  let collected = List.empty<Nat8>();
-  switch (decoder.finishStreaming(func(c) { List.addAll(collected, c.vals()) })) {
-    case (#err msg) Runtime.trap("fastRoundTripEncodeStreaming finishStreaming error: " # msg);
+  switch (decoder.finish()) {
+    case (#err msg) Runtime.trap("fastRoundTripEncodeStreaming finish error: " # msg);
     case (#ok _) {};
   };
-  List.toArray(collected);
+  decoder.decompressed();
 };
 
 // ── Suite: LZSS level options ─────────────────────────────────────────────
@@ -135,8 +128,7 @@ suite(
 
         let dec = Gzip.Decoder();
         ignore dec.decode(compressed);
-        let nop = func(_ : [Nat8]) {};
-        switch (dec.finishStreaming(nop)) {
+        switch (dec.finish()) {
           case (#ok(r)) {
             switch (r.header.os) {
               case (#Macintosh) {};
@@ -159,8 +151,7 @@ suite(
 
         let dec = Gzip.Decoder();
         ignore dec.decode(compressed);
-        let nop = func(_ : [Nat8]) {};
-        switch (dec.finishStreaming(nop)) {
+        switch (dec.finish()) {
           case (#ok(r)) {
             switch (r.header.filename) {
               case (?"hello.txt") {};
@@ -205,12 +196,11 @@ suite(
         expect.nat8(compressed[1]).equal(0x8b);
         let dec = Gzip.Decoder();
         ignore dec.decode(compressed);
-        let out = List.empty<Nat8>();
-        switch (dec.finishStreaming(func cs { List.addAll(out, cs.vals()) })) {
+        switch (dec.finish()) {
           case (#err msg) Runtime.trap(msg);
           case (#ok _) {};
         };
-        expect.array(List.toArray(out), Nat8.toText, Nat8.equal).equal(data);
+        expect.array(dec.decompressed(), Nat8.toText, Nat8.equal).equal(data);
       },
     );
 
@@ -234,20 +224,20 @@ suite(
         // Both compressed outputs decompress back to their original input.
         let dec = Gzip.Decoder();
         ignore dec.decode(compA);
-        let outA = List.empty<Nat8>();
-        switch (dec.finishStreaming(func cs { List.addAll(outA, cs.vals()) })) {
+        switch (dec.finish()) {
           case (#err msg) Runtime.trap("reuse test decode A: " # msg);
           case (#ok _) {};
         };
-        expect.array(List.toArray(outA), Nat8.toText, Nat8.equal).equal(dataA);
+        expect.array(dec.decompressed(), Nat8.toText, Nat8.equal).equal(dataA);
+        dec.clear();
 
         ignore dec.decode(compB);
-        let outB = List.empty<Nat8>();
-        switch (dec.finishStreaming(func cs { List.addAll(outB, cs.vals()) })) {
+        switch (dec.finish()) {
           case (#err msg) Runtime.trap("reuse test decode B: " # msg);
           case (#ok _) {};
         };
-        expect.array(List.toArray(outB), Nat8.toText, Nat8.equal).equal(dataB);
+        expect.array(dec.decompressed(), Nat8.toText, Nat8.equal).equal(dataB);
+        dec.clear();
       },
     );
 
@@ -265,8 +255,7 @@ suite(
       func() {
         let decoder = Gzip.Decoder();
         ignore decoder.decode([0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]);
-        let nop = func(_ : [Nat8]) {};
-        switch (decoder.finishStreaming(nop)) {
+        switch (decoder.finish()) {
           case (#err(_)) {}; // expected
           case (#ok(_)) Runtime.trap("Expected error for invalid magic bytes");
         };
@@ -291,8 +280,7 @@ suite(
 
         let decoder = Gzip.Decoder();
         ignore decoder.decode(corrupted);
-        let nop = func(_ : [Nat8]) {};
-        switch (decoder.finishStreaming(nop)) {
+        switch (decoder.finish()) {
           case (#err(_)) {}; // expected
           case (#ok(_)) Runtime.trap("Expected error for corrupted data");
         };
@@ -302,7 +290,7 @@ suite(
   },
 );
 
-// ── Suite: Streaming decode (finishStreaming) ────────────────────────────
+// ── Suite: Streaming decode ───────────────────────────────────────────────
 
 suite(
   "Streaming decode",
@@ -401,16 +389,14 @@ func multiStepDecode(data : [Nat8], maxOutBytes : Nat) : [Nat8] {
     case (#ok _) {};
   };
 
-  let collected = List.empty<Nat8>();
-  let consume = func(out : [Nat8]) { List.addAll(collected, out.vals()) };
   var steps = 0;
   label drive loop {
-    switch (decoder.step(maxOutBytes, consume)) {
+    switch (decoder.step(maxOutBytes)) {
       case (#err msg) Runtime.trap("multiStepDecode step error: " # msg);
       case (#ok(#more)) { steps += 1 };
       case (#ok(#done summary)) {
         steps += 1;
-        if (summary.size != List.size(collected)) {
+        if (summary.size != decoder.decompressedSize()) {
           Runtime.trap("multiStepDecode: summary.size mismatch");
         };
         break drive;
@@ -423,7 +409,7 @@ func multiStepDecode(data : [Nat8], maxOutBytes : Nat) : [Nat8] {
   if (data.size() > 1_000_000 and steps < 2) {
     Runtime.trap("multiStepDecode: expected multiple steps, got " # debug_show steps);
   };
-  List.toArray(collected);
+  decoder.decompressed();
 };
 
 suite(
@@ -444,6 +430,52 @@ suite(
         expect.nat8(result[n / 3]).equal(0xAA);
         expect.nat8(result[n / 2]).equal(0xAA);
         expect.nat8(result[n - 1]).equal(0xAA);
+      },
+    );
+
+  },
+);
+
+// ── Suite: Decoder reuse ──────────────────────────────────────────────────
+
+suite(
+  "Decoder reuse",
+  func() {
+
+    test(
+      "decoder reuses cleanly — two consecutive decompressions are independent",
+      func() {
+        let enc = Gzip.EncoderBuilder().build();
+        let dataA = Array.tabulate<Nat8>(512, func(i) { Nat8.fromNat(i % 64) });
+        let dataB = Array.tabulate<Nat8>(256, func(i) { Nat8.fromNat(255 - i % 128) });
+
+        enc.encode(dataA);
+        enc.finish();
+        let compA = enc.compressed();
+        enc.clear();
+
+        enc.encode(dataB);
+        enc.finish();
+        let compB = enc.compressed();
+        enc.clear();
+
+        let dec = Gzip.Decoder();
+
+        ignore dec.decode(compA);
+        switch (dec.finish()) {
+          case (#err msg) Runtime.trap("decoder reuse test A: " # msg);
+          case (#ok _) {};
+        };
+        expect.array(dec.decompressed(), Nat8.toText, Nat8.equal).equal(dataA);
+        dec.clear();
+
+        ignore dec.decode(compB);
+        switch (dec.finish()) {
+          case (#err msg) Runtime.trap("decoder reuse test B: " # msg);
+          case (#ok _) {};
+        };
+        expect.array(dec.decompressed(), Nat8.toText, Nat8.equal).equal(dataB);
+        dec.clear();
       },
     );
 

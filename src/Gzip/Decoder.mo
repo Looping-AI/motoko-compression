@@ -2,11 +2,11 @@
 ///
 /// Usage:
 ///   1. Call `decode(bytes)` one or more times to feed compressed data.
-///   2. Call `finishStreaming(consume)` to decompress and verify the stream,
-///      receiving output in bounded chunks via the `consume` callback.
+///   2. Call `finish()` to decompress and verify the stream.
+///      Output accumulates internally; read it via `decompressed()` or `chunks()`.
 ///
 /// `decode()` only accumulates bytes; all decompression work happens in
-/// `finishStreaming()`.  This avoids partial-block reads that would trap in BitReader.
+/// `finish()`.  This avoids partial-block reads that would trap in BitReader.
 
 import Array "mo:core/Array";
 import List "mo:core/List";
@@ -25,9 +25,9 @@ module {
 
   // ── Public types ─────────────────────────────────────────────────────────
 
-  /// Returned by `Decoder.finishStreaming()` on success. Carries the header and
-  /// verified decoded-stream metadata, but not the bytes themselves — those are
-  /// delivered incrementally through the caller's `consume` callback.
+  /// Returned by `Decoder.finish()` / `Decoder.step()` on success. Carries the
+  /// header and verified decoded-stream metadata, but not the bytes themselves —
+  /// those are available via `decompressed()` or `chunks()`.
   public type StreamedSummary = {
     header : Header.Header;
     size : Nat;
@@ -39,14 +39,19 @@ module {
   /// Stateful Gzip decoder.
   ///
   /// The decoder accumulates compressed input across multiple `decode()` calls;
-  /// `finishStreaming()` performs the actual decompression and footer verification.
+  /// `finish()` performs the actual decompression and footer verification.
+  /// Decompressed output accumulates internally; read it via `decompressed()`
+  /// or `chunks()` after `finish()` (or after each `step()` call).
   public class Decoder() {
 
     // Compressed input fragments collected by decode() calls.
     // We defer concatenation until start() so that no doubling reallocations
     // occur in BitBuffer while the caller feeds the stream in chunks.
-    let chunks : List.List<[Nat8]> = List.empty();
+    let inputChunks : List.List<[Nat8]> = List.empty();
     var totalBytes : Nat = 0;
+
+    // Decompressed output accumulated across step() calls.
+    let decompressedChunks : List.List<[Nat8]> = List.empty();
 
     // ── In-progress streaming-decode state (set by start, used by step) ──────
     var header : ?Header.Header = null;
@@ -65,7 +70,7 @@ module {
     /// Returns `#ok` always; errors are only surfaced by `start()`/`step()`.
     public func decode(bytes : [Nat8]) : Result<(), Text> {
       if (bytes.size() > 0) {
-        List.add(chunks, bytes);
+        List.add(inputChunks, bytes);
         totalBytes += bytes.size();
       };
       #ok();
@@ -78,11 +83,11 @@ module {
       // Build one BitReader from the accumulated fragments: one pre-sized
       // allocation + one sequential copy, no doubling reallocations.
       let reader = BitReader.BitReader(totalBytes);
-      for (chunk in List.values(chunks)) {
+      for (chunk in List.values(inputChunks)) {
         reader.addBytes(chunk);
       };
       // Fragments are fully copied; release them to allow GC.
-      List.clear(chunks);
+      List.clear(inputChunks);
       totalBytes := 0;
 
       // 1. Decode the Gzip header.
@@ -116,12 +121,12 @@ module {
       #ok(parsedHeader);
     };
 
-    /// Decompress at most `maxOutBytes` of output, delivering it to `consume`
-    /// in bounded chunks, then return `#more` (call again) or `#done` with the
-    /// verified `StreamedSummary`. CRC32 and ISIZE are verified incrementally;
-    /// on `#done` the footer is checked and the decoder is reset via `clear()`.
-    /// Must be preceded by `start()`.
-    public func step(maxOutBytes : Nat, consume : ([Nat8]) -> ()) : Result<{ #more; #done : StreamedSummary }, Text> {
+    /// Decompress at most `maxOutBytes` of output, accumulating it internally,
+    /// then return `#more` (call again) or `#done` with the verified
+    /// `StreamedSummary`. CRC32 and ISIZE are verified incrementally;
+    /// on `#done` the streaming state is reset (but decompressed output is kept
+    /// until `clear()` is called). Must be preceded by `start()`.
+    public func step(maxOutBytes : Nat) : Result<{ #more; #done : StreamedSummary }, Text> {
       let ?deflate = deflateState else {
         return #err("Gzip.Decoder.step: call start() first");
       };
@@ -132,7 +137,7 @@ module {
       let sink = func(chunk : [Nat8]) {
         crc.update(chunk);
         total += chunk.size();
-        consume(chunk);
+        List.add(decompressedChunks, chunk);
       };
 
       switch (deflate.decodeBounded(outCapHint, maxOutBytes, sink)) {
@@ -196,20 +201,26 @@ module {
         size = total;
         crc32 = actualCrc32;
       };
-      clear();
+
+      // Reset streaming state; decompressed output remains readable via
+      // decompressed() / chunks() until clear() is called.
+      header := null;
+      deflateState := null;
+      crcState := null;
+      inputStore := null;
+      sliceStart := 0;
+      sliceLen := 0;
+      outCapHint := 0;
 
       #ok(#done(summary));
     };
 
-    /// Decompress and deliver the decoded output to `consume` in bounded chunks,
-    /// never materialising the full output array. CRC32 and ISIZE are verified
-    /// incrementally as chunks are produced. Returns the header plus the
-    /// verified decoded size and CRC32.
+    /// Decompress the buffered input in one shot, accumulating output internally.
+    /// CRC32 and ISIZE are verified. Read result via `decompressed()` or `chunks()`.
     ///
     /// One-shot wrapper that drives `start()` + `step()` to completion; use the
     /// `start`/`step` pair directly to spread decoding across messages.
-    /// Calls `clear()` on success before returning.
-    public func finishStreaming(consume : ([Nat8]) -> ()) : Result<StreamedSummary, Text> {
+    public func finish() : Result<StreamedSummary, Text> {
       switch (start()) {
         case (#err(msg)) return #err(msg);
         case (#ok(_)) {};
@@ -217,7 +228,7 @@ module {
       // A large per-step budget so the whole stream decodes in one driving loop.
       let WHOLE : Nat = 0xFFFF_FFFF_FFFF;
       loop {
-        switch (step(WHOLE, consume)) {
+        switch (step(WHOLE)) {
           case (#err(msg)) return #err(msg);
           case (#ok(#more)) {};
           case (#ok(#done(summary))) return #ok(summary);
@@ -225,10 +236,26 @@ module {
       };
     };
 
+    /// Return all decompressed output as a single flat array.
+    /// Allocates a new array — prefer `chunks()` when only iteration is needed.
+    public func decompressed() : [Nat8] {
+      Array.flatten(List.toArray(decompressedChunks));
+    };
+
+    /// Return the raw decompressed output chunks without merging them.
+    public func chunks() : [[Nat8]] {
+      List.toArray(decompressedChunks);
+    };
+
+    /// Total decompressed bytes accumulated so far (useful for progress tracking
+    /// across multiple `step()` calls before the final `#done`).
+    public func decompressedSize() : Nat { total };
+
     /// Reset the decoder state so it can be reused for a new stream.
     public func clear() {
-      List.clear(chunks);
+      List.clear(inputChunks);
       totalBytes := 0;
+      List.clear(decompressedChunks);
       header := null;
       deflateState := null;
       crcState := null;

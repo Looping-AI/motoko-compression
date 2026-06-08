@@ -39,8 +39,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
 
   // ── Transient state ───────────────────────────────────────────────────────
 
-  /// Fresh decoder per canister lifetime; replaced on clear().
-  transient var gzipDecoder = Gzip.Decoder();
+  transient let gzipDecoder = Gzip.Decoder();
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -68,7 +67,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
   public func clear() : async () {
     List.clear(_chunks);
     _decompressed := null;
-    gzipDecoder := Gzip.Decoder();
+    gzipDecoder.clear();
   };
 
   /// Return the number of bytes accumulated so far (query — no state change).
@@ -80,7 +79,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
 
   /// Internal: accumulate a batch of compressed chunks into the decoder buffer.
   /// External gzip data is ONE continuous stream, so decode() only accumulates bytes —
-  /// finishStreaming() is called once by decompress() after all batches complete.
+  /// finish() is called once by decompress() after all batches complete.
   /// Guarded so only this canister may call it — each await gives a fresh instruction budget.
   public shared ({ caller }) func _decodeBatch(batch : [[Nat8]]) : async () {
     assert caller == canisterId();
@@ -94,7 +93,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
 
   /// Decompress all accumulated chunks and cache the result in _decompressed.
   /// Spreads decode() work across ICP messages via self-calls (DECODE_BATCH_SIZE per call),
-  /// then calls finishStreaming() once to perform the actual decompression.
+  /// then calls finish() once to perform the actual decompression.
   public func decompress() : async () {
     let all = List.toArray(_chunks);
     let n = all.size();
@@ -105,12 +104,11 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() = self 
       await _decodeBatch(batch);
       i := hi;
     };
-    let buf = List.empty<Nat8>();
-    let consume = func(chunk : [Nat8]) { List.addAll(buf, chunk.vals()) };
-    switch (gzipDecoder.finishStreaming(consume)) {
-      case (#err(msg)) Runtime.trap("decompress finishStreaming: " # msg);
-      case (#ok(_)) _decompressed := ?List.toArray(buf);
+    switch (gzipDecoder.finish()) {
+      case (#err(msg)) Runtime.trap("decompress finish: " # msg);
+      case (#ok(_)) _decompressed := ?gzipDecoder.decompressed();
     };
+    gzipDecoder.clear();
   };
 
   /// Return a 2 MiB page of the decompressed bytes (0-indexed).

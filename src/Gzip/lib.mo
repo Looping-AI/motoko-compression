@@ -28,9 +28,8 @@
 ///   // Decode — feed compressed bytes to the decoder.
 ///   let dec = Gzip.Decoder();
 ///   ignore dec.decode(compressed);
-///   let output = Buffer.Buffer<Nat8>(0);
-///   switch (dec.finishStreaming(func cs { Buffer.addAll(output, cs.vals()) })) {
-///     case (#ok(_))    { /* use output.toArray() */ };
+///   switch (dec.finish()) {
+///     case (#ok(_))    { let output = dec.decompressed() };
 ///     case (#err(msg)) Runtime.trap(msg);
 ///   };
 ///
@@ -64,15 +63,13 @@
 ///   };
 ///
 ///   // Each self-call: budget maxOutBytes of decompressed output per step.
-///   switch (dec.step(6_000_000, func cs { consume(cs) })) {
+///   switch (dec.step(6_000_000)) {
 ///     case (#ok(#more))           selfCallAgain();
-///     case (#ok(#done(summary)))  finalize(summary);
+///     case (#ok(#done(summary)))  { let output = dec.decompressed(); finalize(summary) };
 ///     case (#err(msg))            Runtime.trap(msg);
 ///   };
 
-import Array "mo:core/Array";
 import Blob "mo:core/Blob";
-import List "mo:core/List";
 import Result "mo:core/Result";
 import Text "mo:core/Text";
 
@@ -103,12 +100,13 @@ module {
 
   // ── Decoder ──────────────────────────────────────────────────────────────
 
-  /// Summary returned by `Decoder.finishStreaming()` / `Decoder.step()`.
+  /// Summary returned by `Decoder.finish()` / `Decoder.step()` on success.
   public type StreamedSummary = DecoderFile.StreamedSummary;
 
   /// Construct a stateful Gzip decoder.
   /// Feed compressed bytes with `decode()`, then drive decompression with
-  /// `finishStreaming(consume)` (one-shot) or `start()` + `step()` (incremental).
+  /// `finish()` (one-shot) or `start()` + `step()` (incremental).
+  /// Output accumulates internally; read it via `decompressed()` or `chunks()`.
   public let Decoder = DecoderFile.Decoder;
 
   /// Type of the stateful Gzip decoder (constructed via `Decoder()`).
@@ -146,17 +144,16 @@ module {
     out;
   };
 
-  /// Decompress `bytes` in one call, collecting all output into a single array.
-  /// For large data use `Decoder` + `finishStreaming` or the `start`/`step` API.
+  /// Decompress `bytes` in one call, returning all output as a single array.
+  /// For large data use `Decoder` + `finish()` or the `start`/`step` API.
   public func decompress(bytes : [Nat8]) : Result.Result<[Nat8], Text> {
     let dec = DecoderFile.Decoder();
     ignore dec.decode(bytes);
-    let parts = List.empty<[Nat8]>();
-    switch (dec.finishStreaming(func cs { List.add(parts, cs) })) {
+    switch (dec.finish()) {
       case (#err(msg)) return #err(msg);
       case (#ok(_)) {};
     };
-    #ok(Array.flatten(List.toArray(parts)));
+    #ok(dec.decompressed());
   };
 
 };
