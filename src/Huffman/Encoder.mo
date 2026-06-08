@@ -222,6 +222,13 @@ module {
         Array.fromVarArray(code_bitwidths);
       };
 
+      func getU(l : List.List<Node>, i : Nat) : Node {
+        switch (List.get(l, i)) {
+          case (?v) v;
+          case null Runtime.unreachable();
+        };
+      };
+
       public func merge(
         buffer_a : List.List<Node>,
         buffer_b : List.List<Node>,
@@ -232,14 +239,8 @@ module {
         let buffer = List.empty<Node>();
 
         while (i < List.size(buffer_a) and j < List.size(buffer_b)) {
-          let a = switch (List.get(buffer_a, i)) {
-            case (?v) v;
-            case null Runtime.unreachable();
-          };
-          let b = switch (List.get(buffer_b, j)) {
-            case (?v) v;
-            case null Runtime.unreachable();
-          };
+          let a = getU(buffer_a, i);
+          let b = getU(buffer_b, j);
 
           if (a.weight < b.weight) {
             i += 1;
@@ -253,21 +254,13 @@ module {
         if (i < List.size(buffer_a)) {
           var idx = i;
           while (idx < List.size(buffer_a)) {
-            let v = switch (List.get(buffer_a, idx)) {
-              case (?v) v;
-              case null Runtime.unreachable();
-            };
-            List.add(buffer, v);
+            List.add(buffer, getU(buffer_a, idx));
             idx += 1;
           };
         } else {
           var idx = j;
           while (idx < List.size(buffer_b)) {
-            let v = switch (List.get(buffer_b, idx)) {
-              case (?v) v;
-              case null Runtime.unreachable();
-            };
-            List.add(buffer, v);
+            List.add(buffer, getU(buffer_b, idx));
             idx += 1;
           };
         };
@@ -286,22 +279,10 @@ module {
           let j = i * 2 + 1;
 
           if (j < List.size(nodes)) {
-            let a = switch (List.get(nodes, i * 2)) {
-              case (?v) v;
-              case null Runtime.unreachable();
-            };
-            let b = switch (List.get(nodes, j)) {
-              case (?v) v;
-              case null Runtime.unreachable();
-            };
-            Node.merge(a, b);
+            Node.merge(getU(nodes, i * 2), getU(nodes, j));
           };
 
-          let merged = switch (List.get(nodes, i * 2)) {
-            case (?v) v;
-            case null Runtime.unreachable();
-          };
-          List.put(nodes, i, merged);
+          List.put(nodes, i, getU(nodes, i * 2));
 
           i += 1;
         };

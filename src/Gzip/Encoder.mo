@@ -174,6 +174,18 @@ module {
     /// Total bytes drained to `on_output` so far in this streaming session.
     var streamed_out : Nat = 0;
 
+    func ensureHeaderWritten() {
+      if (not header_written) {
+        header_written := true;
+        Header.encode(bitbuffer, header, deflate_options.lzss);
+      };
+    };
+
+    func writeFooter(crc32_val : Nat32) {
+      bitbuffer.addBytes(Utils.natToLeBytes(Nat32.toNat(crc32_val), 4));
+      bitbuffer.addBytes(Utils.natToLeBytes(input_size % 4294967296, 4));
+    };
+
     let deflate = DeflateEncoder.Encoder(bitbuffer, deflate_options);
     deflate.setOnBlockFlushed(
       func(byte_offset : Nat) {
@@ -219,10 +231,7 @@ module {
       bitbuffer.reserve(reserveTarget);
       input_size += bytes.size();
       crc32.update(bytes);
-      if (not header_written) {
-        header_written := true;
-        Header.encode(bitbuffer, header, deflate_options.lzss);
-      };
+      ensureHeaderWritten();
       deflate.encode(bytes);
     };
 
@@ -263,14 +272,10 @@ module {
         case (?s) s;
         case null Runtime.trap("Gzip.Encoder.finishStreaming: call setOnOutput first");
       };
-      if (not header_written) {
-        header_written := true;
-        Header.encode(bitbuffer, header, deflate_options.lzss);
-      };
+      ensureHeaderWritten();
       ignore deflate.finish();
       let crc32_val = crc32.finish();
-      bitbuffer.addBytes(Utils.natToLeBytes(Nat32.toNat(crc32_val), 4));
-      bitbuffer.addBytes(Utils.natToLeBytes(input_size % 4294967296, 4));
+      writeFooter(crc32_val);
       // Drain all remaining bytes (byteAlign already done by deflate.finish footer).
       let remaining = bitbuffer.drainCompleteBytes();
       streamed_out += remaining.size();
@@ -292,18 +297,12 @@ module {
         case (?_) Runtime.trap("Gzip.Encoder.finish: setOnOutput was called; use finishStreaming() instead");
         case null {};
       };
-      // Write the Gzip header if no data was ever encoded
-      if (not header_written) {
-        header_written := true;
-        Header.encode(bitbuffer, header, deflate_options.lzss);
-      };
-
+      ensureHeaderWritten();
       ignore deflate.finish();
 
       // Footer: CRC32 (4 bytes LE) + ISIZE (4 bytes LE, mod 2^32)
       let crc32_val = crc32.finish();
-      bitbuffer.addBytes(Utils.natToLeBytes(Nat32.toNat(crc32_val), 4));
-      bitbuffer.addBytes(Utils.natToLeBytes(input_size % 4294967296, 4));
+      writeFooter(crc32_val);
 
       let total = bitbuffer.byteSize();
       let all = bitbuffer.getBytes(0, total);

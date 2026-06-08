@@ -134,13 +134,6 @@ module {
       };
     };
 
-    public func save(bitbuffer : BitBuffer, codec : Symbol.Encoder) : Result<(), Text> {
-      switch (prepareSave(codec)) {
-        case (#ok(plan)) { emit(bitbuffer, plan); #ok() };
-        case (#err(msg)) #err(msg);
-      };
-    };
-
     // ── Internal: run-length encode bitwidths ──────────────────────────
 
     type BitwidthCode = { symbol : Nat; count : Nat; bitwidth : Nat };

@@ -45,19 +45,6 @@ module {
       len += 1;
     };
 
-    /// Append all bytes from an immutable array. O(n) with one pre-grow.
-    public func addBytes(bs : [Nat8]) {
-      let n = bs.size();
-      if (n == 0) return;
-      ensureRoom(n);
-      var i = 0;
-      while (i < n) {
-        buf[len] := bs[i];
-        len += 1;
-        i += 1;
-      };
-    };
-
     /// Copy `length` bytes from `distance` bytes back in the output buffer.
     ///
     /// Handles the overlapping case (distance < length): because we advance
@@ -117,11 +104,6 @@ module {
     /// written bytes straight into `store()` and need to sync the length back.
     /// Caller must ensure `n <= capacity()`.
     public func setLen(n : Nat) { len := n };
-
-    /// Copy all bytes into a fresh immutable array. O(n).
-    public func toArray() : [Nat8] {
-      Array.tabulate<Nat8>(len, func(i) { buf[i] });
-    };
 
     // ── Sliding-window streaming support ──────────────────────────────────
 

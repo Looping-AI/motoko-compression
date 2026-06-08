@@ -131,8 +131,6 @@ module {
       };
     };
 
-    /// Append two adjacent bit fields in a single accumulator merge & drain.
-    ///
     /// Append four adjacent bit fields in a single accumulator merge & drain.
     ///
     /// Equivalent to two `addBits2` calls but pays the `acc` merge,

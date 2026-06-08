@@ -169,6 +169,16 @@ module {
 
   // ── Decode ───────────────────────────────────────────────────────────────
 
+  func readNullTerminatedText(reader : BitReader.BitReader) : ?Text {
+    let bytes = List.empty<Nat8>();
+    var b = reader.readByte();
+    while (b != 0) {
+      List.add(bytes, b);
+      b := reader.readByte();
+    };
+    Text.decodeUtf8(Blob.fromArray(List.toArray(bytes)));
+  };
+
   /// Decode a Gzip header from `reader`, advancing the read position past it.
   /// Returns `#err` for invalid magic or compression method.
   public func decode(reader : BitReader.BitReader) : Result<Header, Text> {
@@ -217,30 +227,10 @@ module {
     } else { [] };
 
     // FNAME — read until null terminator
-    let filename : ?Text = if (has_filename) {
-      let bytes = List.empty<Nat8>();
-      var b = reader.readByte();
-      while (b != 0) {
-        List.add(bytes, b);
-        b := reader.readByte();
-      };
-      Text.decodeUtf8(Blob.fromArray(List.toArray(bytes)));
-    } else {
-      null;
-    };
+    let filename : ?Text = if (has_filename) readNullTerminatedText(reader) else null;
 
     // FCOMMENT — read until null terminator
-    let comment : ?Text = if (has_comment) {
-      let bytes = List.empty<Nat8>();
-      var b = reader.readByte();
-      while (b != 0) {
-        List.add(bytes, b);
-        b := reader.readByte();
-      };
-      Text.decodeUtf8(Blob.fromArray(List.toArray(bytes)));
-    } else {
-      null;
-    };
+    let comment : ?Text = if (has_comment) readNullTerminatedText(reader) else null;
 
     // FHCRC — verify CRC16 over the header bytes consumed so far
     if (is_verified) {
