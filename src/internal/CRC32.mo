@@ -28,8 +28,14 @@ module CRC32 {
         payloadCount -= PAYLOAD_SIZE;
 
         if (payloadCount > 0) {
-          // shift payload to the left by PAYLOAD_SIZE
-          // only occurs once when the inputSize is == 16
+          // Shift the back half of the payload to the front.
+          // This branch fires exactly once per CRC32 lifetime, during the very
+          // first flush: for the first INIT_SIZE (16) bytes, inputSize < INIT_SIZE
+          // prevents flushing, so payloadCount grows to 16 (2×PAYLOAD_SIZE).
+          // After the subtraction payloadCount = 8, leaving a remainder to shift.
+          // All subsequent flushes have payloadCount == PAYLOAD_SIZE exactly,
+          // so the remainder is always 0 after subtraction and this branch is
+          // dead. The update() fast path never reaches here at all.
           var i = 0;
           while (i < payloadCount) {
             payload[i] := payload[i + PAYLOAD_SIZE];
