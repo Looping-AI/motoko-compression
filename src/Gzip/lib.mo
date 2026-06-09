@@ -2,7 +2,7 @@
 ///
 /// Import this module to access all Gzip types, classes, and helpers:
 ///
-///   import Gzip "mo:compression/Gzip";
+///   import Gzip "mo:gzip";
 ///
 /// ─────────────────────────────────────────────────────────────────────────
 /// FLOW 1 — One-shot helpers  (small data, single call)

@@ -1,5 +1,5 @@
 {
-  "name": "motoko-compression",
+  "name": "motoko-gzip",
   "private": true,
   "scripts": {
     "format": "prettier --write .",

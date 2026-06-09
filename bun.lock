@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "motoko-compression",
+      "name": "motoko-gzip",
       "devDependencies": {
         "@dfinity/agent": "^3.4.3",
         "@dfinity/candid": "^3.4.3",

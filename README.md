@@ -1,21 +1,23 @@
-# motoko-compression
+# Motoko Gzip
 
 A Motoko compression library for the [Internet Computer](https://internetcomputer.org/), implementing **Gzip**, **DEFLATE**, **LZSS**, and **Huffman** on top of `mo:core`.
 
 ## Status
 
-| Algorithm | Encode | Decode | Import                          |
-| --------- | ------ | ------ | ------------------------------- |
-| Gzip      | ✅     | ✅     | `mo:motoko-compression/Gzip`    |
-| DEFLATE   | ✅     | ✅     | `mo:motoko-compression/Deflate` |
-| LZSS      | ✅     | ✅     | `mo:motoko-compression/LZSS`    |
-| Huffman   | ✅     | ✅     | internal building blocks        |
+| Algorithm | Encode | Decode | Import                   |
+| --------- | ------ | ------ | ------------------------ |
+| Gzip      | ✅     | ✅     | `mo:gzip` (default)      |
+| DEFLATE   | ✅     | ✅     | `mo:gzip/Deflate`        |
+| LZSS      | ✅     | ✅     | `mo:gzip/LZSS`           |
+| Huffman   | ✅     | ✅     | internal building blocks |
 
 ## Installation
 
 ```bash
-mops add motoko-compression
+mops add gzip
 ```
+
+Equivalent explicit import for Gzip is `mo:gzip/Gzip`.
 
 ## Gzip quick start
 
@@ -28,7 +30,7 @@ in your canister — the convenience helpers call `clear()` internally so state 
 import Blob "mo:core/Blob";
 import Runtime "mo:core/Runtime";
 import Text "mo:core/Text";
-import Gzip "mo:motoko-compression/Gzip";
+import Gzip "mo:gzip";
 
 // Reuse these across calls — declare as `transient let` in a canister.
 let enc = Gzip.EncoderBuilder().build();
@@ -57,7 +59,7 @@ calls `finish()` to flush the Gzip footer.
 
 ```motoko
 import Array "mo:core/Array";
-import Gzip "mo:motoko-compression/Gzip";
+import Gzip "mo:gzip";
 
 let enc = Gzip.EncoderBuilder().build();
 
@@ -84,7 +86,7 @@ internally and is read once `#done` is returned.
 
 ```motoko
 import Runtime "mo:core/Runtime";
-import Gzip "mo:motoko-compression/Gzip";
+import Gzip "mo:gzip";
 
 let dec = Gzip.Decoder();
 

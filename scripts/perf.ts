@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Performance measurement script for motoko-compression.
+ * Performance measurement script for motoko-gzip.
  *
  * Usage:
  *   bun run scripts/perf.ts component=<name>

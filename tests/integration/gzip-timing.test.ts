@@ -1,7 +1,7 @@
 /**
  * Gzip timing test.
  *
- * Compares wall-clock time of the motoko-compression canister gzip
+ * Compares wall-clock time of the motoko-gzip canister gzip
  * implementation against node:zlib. A dynamic baseline discount is measured
  * at startup by calling the canister's no-op `ping()` method several times,
  * then averaged to capture the true per-message round-trip overhead for this

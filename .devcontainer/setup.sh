@@ -6,7 +6,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 # shellcheck source=../versions.env
 source "$REPO_ROOT/versions.env"
 
-echo "=== motoko-compression devcontainer setup ==="
+echo "=== motoko-gzip devcontainer setup ==="
 
 # 1. Install system dependencies
 sudo apt-get update

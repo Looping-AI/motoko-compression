@@ -116,7 +116,7 @@ Note: fixed Huffman is the default because dynamic table computation is expensiv
 
 ```motoko
 // ── Import ──────────────────────────────────────────────────────────────────
-import Gzip "mo:compression/Gzip";
+import Gzip "mo:gzip";
 
 // ── One-shot (small data) ───────────────────────────────────────────────────
 let enc = Gzip.EncoderBuilder().build(); // reuse as transient let

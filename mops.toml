@@ -1,6 +1,11 @@
 [package]
-name = "motoko-compression"
-version = "0.1.0"
+name = "gzip"
+version = "1.0.0"
+description = "Motoko compression library implementing Gzip encode/decode with an internal Deflate, Huffman, and LZSS stack."
+repository = "https://github.com/Looping-AI/motoko-gzip"
+keywords = ["motoko", "gzip", "deflate", "compression", "decompression", "lzss", "huffman"]
+license = "MIT"
+files = ["src/**/*.mo", "README.md", "LICENSE"]
 
 [dependencies]
 core = "2.5.0"

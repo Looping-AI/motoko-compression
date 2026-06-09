@@ -1,5 +1,5 @@
 {
-  "name": "motoko-compression",
+  "name": "motoko-gzip",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
   "features": {
     // Node version — keep manually in sync with NODE_VERSION in versions.env
