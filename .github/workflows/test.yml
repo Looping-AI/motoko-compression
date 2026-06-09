@@ -1,0 +1,70 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Version pins ────────────────────────────────────────────────────────
+      - name: Load version pins from versions.env
+        run: grep -v '^#' versions.env | grep -v '^$' >> $GITHUB_ENV
+
+      # ── Node (needed for ic-mops) ────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # ── Motoko toolchain ─────────────────────────────────────────────────────
+
+      - name: Install ic-mops
+        run: npm install -g ic-mops
+
+      - name: Install Mops packages (also fetches moc toolchain)
+        run: mops install
+
+      # ── didc ─────────────────────────────────────────────────────────────────
+      - name: Install didc
+        run: |
+          curl -fsSL \
+            "https://github.com/dfinity/candid/releases/download/${DIDC_VERSION}/didc-linux64" \
+            -o /usr/local/bin/didc
+          chmod +x /usr/local/bin/didc
+
+      # ── Bun + TypeScript deps (includes pocket-ic binary via postinstall) ───
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Bun dependencies
+        run: bun install
+
+      # ── Format ───────────────────────────────────────────────────────────────
+      - name: Check formatting
+        run: bun run format:check
+
+      # ── Mops ─────────────────────────────────────────────────────────────────
+      - name: Check Motoko
+        run: mops check
+
+      # ── Lintoko ─────────────────────────────────────────────────────────────────
+      - name: Lint Motoko
+        run: bun run lint
+
+      # ── Build + Test ─────────────────────────────────────────────────────────
+      - name: Run unit tests
+        run: mops test
+
+      - name: Build canisters
+        run: bun run test:build
+
+      - name: Run integration tests
+        run: bun test tests/integration/
+        env:
+          POCKET_IC_MUTE_SERVER: "1"

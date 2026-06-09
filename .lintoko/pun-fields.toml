@@ -1,0 +1,14 @@
+name = "pun-fields"
+severity = "warning"
+description = "Use field punning to to avoid repetition: Replace `{ @field = @field }` with `{ @field }`"
+query = """
+((exp_field
+  (identifier) @field
+  (var_exp (identifier) @value)) @error
+  (#eq? @field @value))
+(exp_field
+  "var"
+  (identifier) @field
+  (var_exp (identifier) @value)) @filter
+"""
+fix = "@field"

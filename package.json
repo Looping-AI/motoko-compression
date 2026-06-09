@@ -1,0 +1,31 @@
+{
+  "name": "motoko-compression",
+  "private": true,
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "$(mops toolchain bin lintoko) -r .lintoko",
+    "postinstall": "husky",
+    "test:build": "bun run tests/integration/build.ts",
+    "test": "bun test tests/integration/",
+    "test:traps": "bun test tests/traps.test.ts",
+    "test:correctness": "bun test tests/integration/gzip-correctness.test.ts",
+    "test:interop": "bun test tests/integration/gzip-interop.test.ts",
+    "test:timing": "bun test tests/integration/gzip-timing.test.ts",
+    "test:image": "bun test tests/integration/image-compression.test.ts",
+    "perf": "bun run scripts/perf.ts"
+  },
+  "devDependencies": {
+    "@dfinity/agent": "^3.4.3",
+    "@dfinity/candid": "^3.4.3",
+    "@dfinity/pic": "^0.21.0",
+    "@dfinity/principal": "^3.4.3",
+    "@types/bun": "^1.3.14",
+    "husky": "^9.1.7",
+    "prettier": "^3.8.3",
+    "prettier-plugin-motoko": "^0.13.0"
+  },
+  "trustedDependencies": [
+    "@dfinity/pic"
+  ]
+}

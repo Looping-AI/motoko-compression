@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "canister-security": {
+      "source": "dfinity/icskills",
+      "sourceType": "github",
+      "skillPath": "skills/canister-security/SKILL.md",
+      "computedHash": "8367257eb731552d5406e4d7ee49879036b7bcbb9483fdb2664d1953e81738f1"
+    },
+    "cycles-management": {
+      "source": "dfinity/icskills",
+      "sourceType": "github",
+      "skillPath": "skills/cycles-management/SKILL.md",
+      "computedHash": "4b8f9ac545376886b6473084ae5de6c77edc4856c2da339f95d3a0b22528068d"
+    },
+    "icp-cli": {
+      "source": "dfinity/icskills",
+      "sourceType": "github",
+      "skillPath": "skills/icp-cli/SKILL.md",
+      "computedHash": "da74dbb9e76285fb7266119026d2e067329e19aa65b586a5437dffdc176a1701"
+    },
+    "mops-cli": {
+      "source": "dfinity/icskills",
+      "sourceType": "github",
+      "skillPath": "skills/mops-cli/SKILL.md",
+      "computedHash": "5099853cb6e1a7dc406d6b8dbcd42c295df4d7da2e815d79e1409182ecba4e70"
+    },
+    "motoko": {
+      "source": "dfinity/icskills",
+      "sourceType": "github",
+      "skillPath": "skills/motoko/SKILL.md",
+      "computedHash": "60aa4ea2c2863b125f4098c73f982bdd300d97e5bae14c8241960b17629adfa5"
+    }
+  }
+}

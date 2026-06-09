@@ -6,7 +6,17 @@ version = "0.1.0"
 core = "2.5.0"
 
 [toolchain]
-moc = "1.7.0"
+moc = "1.9.0"
+lintoko = "0.10.0"
 
 [dev-dependencies]
 test = "2.1.2"
+
+[canisters.compression]
+main = "example/compress.mo"
+
+[canisters.image-compression]
+main = "example/compress-images.mo"
+
+[canisters.external-decompress]
+main = "example/external-decompress.mo"
