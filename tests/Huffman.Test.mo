@@ -185,7 +185,7 @@ suite(
     );
 
     test(
-      "all-zero bitwidths → #err (symbol_count=0)",
+      "all-zero bitwidths → #ok (symbol_count=0)",
       func() {
         // symbol_count collapses to 0 then builder(1) is called with no assignments
         // restore_huffman_codes on all-zeros → #ok empty encoder
