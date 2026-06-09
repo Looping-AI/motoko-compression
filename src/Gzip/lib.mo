@@ -50,7 +50,7 @@
 ///     case (#err(msg)) Runtime.trap(msg);
 ///     case (#ok(#more)) rescheduleTimer();
 ///     case (#ok(#done)) {
-///.      // Do something with the output — either:
+///       // Do something with the output — either:
 ///       let output = dec.decompressed();          // [Nat8] — all bytes merged into one array
 ///       for (chunk in dec.chunks().vals()) { … }; // — or iterate [[Nat8]] without the merge allocation
 ///     };

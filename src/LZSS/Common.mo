@@ -21,7 +21,7 @@ module {
     #fast;
     /// Window = 8 192 bytes.  Balanced speed and compression ratio.
     #balance;
-    /// Window = 32 768 bytes. Best compression ratio (default).
+    /// Window = 32 768 bytes. Best compression ratio.
     #best;
   };
 

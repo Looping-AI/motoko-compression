@@ -4,7 +4,7 @@
 ///   - No `Buffer<Nat8>` — all API boundaries use `[Nat8]` / `Blob`.
 ///   - `EncoderBuilder.lzss` takes `CompressionLevel`, not a `Lzss.Encoder` object.
 ///   - `encodeBuffer` dropped (Buffer type gone).
-///   - Default lzss = `#balance`; `force_huffman_kind = null` (auto fixed/dynamic per block).
+///   - Default lzss = `#balance`; `force_huffman_kind = ?#fixed` (fixed Huffman for all blocks by default).
 ///   - `deflateBlockSize` and `outputChunkSize` are separate, orthogonal knobs.
 ///   - Output is accumulated internally; call `finish()` to flush, then
 ///     `compressed()` to get all bytes or `chunks()` to iterate without merging.
@@ -51,7 +51,7 @@ module {
 
     // lzss: #balance matches zlib's default. #fast is counter-intuitively slower: a smaller
     //   window triggers slideWindow() more often, multiplying WASM bounds checks across the window array.
-    // force_huffman_kind: null auto-selects fixed vs dynamic Huffman, gives best ratio; fixed is typically fastest.
+    // force_huffman_kind: ?#fixed (default) — fixed tables are fastest; null auto-selects per block for best ratio.
     var deflateOpts : DeflateOptions = {
       lzss = #balance;
       deflate_block_size = DEFAULT_DEFLATE_BLOCK_SIZE;
@@ -72,7 +72,7 @@ module {
       self;
     };
 
-    /// Auto-select fixed vs dynamic Huffman per block (default).
+    /// Auto-select fixed vs dynamic Huffman per block.
     public func autoHuffman() : EncoderBuilder {
       deflateOpts := { deflateOpts with force_huffman_kind = null };
       self;

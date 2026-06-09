@@ -20,9 +20,9 @@ module {
     /// working memory. Does NOT affect LZSS back-reference reach (the
     /// 32 KiB sliding window persists across blocks). Recommended: 32 KiB.
     deflate_block_size : Nat;
-    /// Huffman table selection. `null` (the default) auto-selects fixed or
-    /// dynamic per block by comparing their exact bit cost and picking the
-    /// smaller. `?#fixed` / `?#dynamic` force a specific kind for every block.
+    /// Huffman table selection. `null` auto-selects fixed or dynamic per block
+    /// by comparing their exact bit cost and picking the smaller.
+    /// `?#fixed` / `?#dynamic` force a specific kind for every block.
     force_huffman_kind : ?Block.HuffmanKind;
     /// LZSS compression level.
     lzss : Common.CompressionLevel;
