@@ -78,8 +78,8 @@ shared ({ caller = _owner }) persistent actor class ImageStore() = self {
   // ── Transient state ────────────────────────────────────────────────────────
 
   transient let decodedCache = Map.empty<Text, [Nat8]>();
-  transient let encoder : Gzip.Encoder = Gzip.EncoderBuilder().build();
-  transient let decoder : Gzip.Decoder = Gzip.Decoder();
+  transient let encoder : Gzip.Encoder = Gzip.buildEncoder(Gzip.defaultOptions());
+  transient let decoder : Gzip.Decoder = Gzip.buildDecoder();
   transient var timerHandle : ?Timer.TimerId = null;
 
   transient let MB : Nat = 1_024 * 1_024;

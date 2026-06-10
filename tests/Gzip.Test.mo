@@ -7,8 +7,6 @@ import Text "mo:core/Text";
 
 import Gzip "../src/Gzip/lib";
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-
 func assertDecompress(dec : Gzip.Decoder, bytes : [Nat8], expected : [Nat8]) {
   switch (Gzip.decompress(dec, bytes)) {
     case (#err msg) Runtime.trap("Unexpected error: " # msg);
@@ -16,13 +14,11 @@ func assertDecompress(dec : Gzip.Decoder, bytes : [Nat8], expected : [Nat8]) {
   };
 };
 
-// ── Suite 1: compress / decompress round-trip ─────────────────────────────
-
 suite(
   "compress / decompress helpers",
   func() {
-    let enc = Gzip.EncoderBuilder().build();
-    let dec = Gzip.Decoder();
+    let enc = Gzip.buildEncoder(Gzip.defaultOptions());
+    let dec = Gzip.buildDecoder();
 
     test(
       "empty data",
@@ -46,7 +42,6 @@ suite(
       func() {
         let data = Array.repeat<Nat8>(0xAB, 4096);
         let compressed = Gzip.compress(enc, data);
-        // Highly compressible — verify the compressed form is smaller and round-trips.
         expect.bool(compressed.size() < data.size()).isTrue();
         assertDecompress(dec, compressed, data);
       },
@@ -63,53 +58,43 @@ suite(
   },
 );
 
-// ── Suite 2: encoder / decoder reuse ─────────────────────────────────────
-
 suite(
-  "object reuse across calls",
+  "stateful codec builders",
   func() {
-    let enc = Gzip.EncoderBuilder().build();
-    let dec = Gzip.Decoder();
-
     test(
       "encoder reused for three distinct payloads",
       func() {
+        let enc = Gzip.buildEncoder(Gzip.defaultOptions());
+        let dec = Gzip.buildDecoder();
         let payloads : [[Nat8]] = [
           Array.repeat<Nat8>(0x01, 100),
           Array.repeat<Nat8>(0x02, 200),
           Array.repeat<Nat8>(0x03, 50),
         ];
         for (data in payloads.vals()) {
-          let compressed = Gzip.compress(enc, data);
-          assertDecompress(dec, compressed, data);
-        };
-      },
-    );
+          enc.encode(data);
+          enc.finish();
+          let compressed = enc.compressed();
+          enc.clear();
 
-    test(
-      "decoder reused for three distinct compressed streams",
-      func() {
-        let enc2 = Gzip.EncoderBuilder().build();
-        let streams : [([Nat8], [Nat8])] = [
-          (Gzip.compress(enc2, [0x11, 0x22, 0x33]), [0x11, 0x22, 0x33]),
-          (Gzip.compress(enc2, [0xAA, 0xBB]), [0xAA, 0xBB]),
-          (Gzip.compress(enc2, []), []),
-        ];
-        for ((compressed, expected) in streams.vals()) {
-          assertDecompress(dec, compressed, expected);
+          dec.clear();
+          dec.decode(compressed);
+          switch (dec.finish()) {
+            case (#err msg) Runtime.trap("Decode error: " # msg);
+            case (#ok _) {};
+          };
+          expect.array(dec.decompressed(), Nat8.toText, Nat8.equal).equal(data);
         };
       },
     );
   },
 );
 
-// ── Suite 3: compressText helper ──────────────────────────────────────────
-
 suite(
   "compressText",
   func() {
-    let enc = Gzip.EncoderBuilder().build();
-    let dec = Gzip.Decoder();
+    let enc = Gzip.buildEncoder(Gzip.defaultOptions());
+    let dec = Gzip.buildDecoder();
 
     test(
       "ASCII text round-trips as UTF-8 bytes",
@@ -141,13 +126,11 @@ suite(
   },
 );
 
-// ── Suite 4: compressBlob helper ──────────────────────────────────────────
-
 suite(
   "compressBlob",
   func() {
-    let enc = Gzip.EncoderBuilder().build();
-    let dec = Gzip.Decoder();
+    let enc = Gzip.buildEncoder(Gzip.defaultOptions());
+    let dec = Gzip.buildDecoder();
 
     test(
       "blob round-trips byte-for-byte",
@@ -169,12 +152,11 @@ suite(
   },
 );
 
-// ── Suite 5: decompress error handling ───────────────────────────────────
-
 suite(
   "decompress error handling",
   func() {
-    let dec = Gzip.Decoder();
+    let dec = Gzip.buildDecoder();
+    let enc = Gzip.buildEncoder(Gzip.defaultOptions());
 
     test(
       "garbage bytes return #err",
@@ -190,9 +172,7 @@ suite(
     test(
       "truncated gzip stream returns #err",
       func() {
-        let enc = Gzip.EncoderBuilder().build();
         let full = Gzip.compress(enc, Array.repeat<Nat8>(0xAA, 100));
-        // Keep only the header bytes — strip the body.
         let truncated = Array.tabulate<Nat8>(10, func(i) = full[i]);
         switch (Gzip.decompress(dec, truncated)) {
           case (#ok _) Runtime.trap("Expected error for truncated input");

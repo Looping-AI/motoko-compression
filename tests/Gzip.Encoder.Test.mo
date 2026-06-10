@@ -15,7 +15,7 @@ func roundTrip(encoder : Encoder.Encoder, data : [Nat8]) : [Nat8] {
   encoder.finish();
   let compressed = encoder.compressed();
   encoder.clear();
-  let dec = Gzip.Decoder();
+  let dec = Gzip.buildDecoder();
   dec.decode(compressed);
   switch (dec.finish()) {
     case (#err(msg)) Runtime.trap("Decode error: " # msg);
@@ -36,7 +36,7 @@ func roundTripChunked(encoder : Encoder.Encoder, data : [Nat8], chunkLen : Nat) 
   encoder.finish();
   let compressed = encoder.compressed();
   encoder.clear();
-  let dec = Gzip.Decoder();
+  let dec = Gzip.buildDecoder();
   dec.decode(compressed);
   switch (dec.finish()) {
     case (#err(msg)) Runtime.trap("Decode chunked error: " # msg);
@@ -45,16 +45,22 @@ func roundTripChunked(encoder : Encoder.Encoder, data : [Nat8], chunkLen : Nat) 
   dec.decompressed();
 };
 
-// ── Suite: EncoderBuilder configuration ──────────────────────────────────
+let defaultOpts = Gzip.defaultOptions();
+
+func buildEncoder(opts : Gzip.GzipOptions) : Encoder.Encoder {
+  Gzip.buildEncoder(opts);
+};
+
+// ── Suite: Encoder options configuration ──────────────────────────────────
 
 suite(
-  "EncoderBuilder configuration",
+  "Encoder options configuration",
   func() {
 
     test(
       "default outputChunkSize is 6 MiB",
       func() {
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         expect.nat(enc.outputChunkSize()).equal(6_291_456);
       },
     );
@@ -62,7 +68,7 @@ suite(
     test(
       "default deflateBlockSize is 32 KiB",
       func() {
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         expect.nat(enc.deflateBlockSize()).equal(32_768);
       },
     );
@@ -70,7 +76,7 @@ suite(
     test(
       "outputChunkSize(n) overrides the default",
       func() {
-        let enc = Encoder.EncoderBuilder().outputChunkSize(1_000).build();
+        let enc = buildEncoder({ defaultOpts with outputChunkSize = 1_000 });
         expect.nat(enc.outputChunkSize()).equal(1_000);
       },
     );
@@ -78,15 +84,21 @@ suite(
     test(
       "deflateBlockSize(n) overrides the default",
       func() {
-        let enc = Encoder.EncoderBuilder().deflateBlockSize(512).build();
+        let enc = buildEncoder({ defaultOpts with deflateBlockSize = 512 });
         expect.nat(enc.deflateBlockSize()).equal(512);
       },
     );
 
     test(
-      "builder methods chain and all settings take effect",
+      "options record applies all settings",
       func() {
-        let enc = Encoder.EncoderBuilder().outputChunkSize(2_000).deflateBlockSize(128).fixedHuffman().lzss(#fast).build();
+        let enc = buildEncoder({
+          defaultOpts with
+          outputChunkSize = 2_000;
+          deflateBlockSize = 128;
+          huffman = #fixed;
+          lzss = #fast;
+        });
         expect.nat(enc.outputChunkSize()).equal(2_000);
         expect.nat(enc.deflateBlockSize()).equal(128);
       },
@@ -104,7 +116,7 @@ suite(
     test(
       "empty input",
       func() {
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         expect.array(roundTrip(enc, []), Nat8.toText, Nat8.equal).equal([]);
       },
     );
@@ -112,7 +124,7 @@ suite(
     test(
       "single byte",
       func() {
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         expect.array(roundTrip(enc, [42]), Nat8.toText, Nat8.equal).equal([42]);
       },
     );
@@ -122,7 +134,7 @@ suite(
       func() {
         // "Hello World!" in ASCII
         let data : [Nat8] = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33];
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         expect.array(roundTrip(enc, data), Nat8.toText, Nat8.equal).equal(data);
       },
     );
@@ -131,7 +143,7 @@ suite(
       "all bytes 0..255",
       func() {
         let data = Array.tabulate<Nat8>(256, func(i) = Nat8.fromNat(i));
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         expect.array(roundTrip(enc, data), Nat8.toText, Nat8.equal).equal(data);
       },
     );
@@ -140,7 +152,7 @@ suite(
       "highly repetitive input (LZSS back-references)",
       func() {
         let data = Array.tabulate<Nat8>(500, func(_) = 0xAB);
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         expect.array(roundTrip(enc, data), Nat8.toText, Nat8.equal).equal(data);
       },
     );
@@ -157,7 +169,7 @@ suite(
     test(
       "output starts with Gzip magic bytes 0x1f 0x8b",
       func() {
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         enc.encode([1, 2, 3]);
         enc.finish();
         let out = enc.compressed();
@@ -171,7 +183,7 @@ suite(
     test(
       "empty-input output is still a valid Gzip stream",
       func() {
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         enc.finish();
         let out = enc.compressed();
         enc.clear();
@@ -187,7 +199,7 @@ suite(
       "compressed size is smaller than original for repetitive data",
       func() {
         let data = Array.tabulate<Nat8>(4096, func(i) = Nat8.fromNat(i % 8));
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         enc.encode(data);
         enc.finish();
         let out = enc.compressed();
@@ -208,7 +220,7 @@ suite(
     test(
       "two encode() calls produce the same output as one",
       func() {
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
 
         // Single call
         let data : [Nat8] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -225,7 +237,7 @@ suite(
         enc.clear();
 
         // Both must decompress to the original
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(singleOut);
         switch (dec.finish()) {
           case (#err(msg)) Runtime.trap(msg);
@@ -250,7 +262,7 @@ suite(
       "1 KiB data fed in 32-byte slices round-trips",
       func() {
         let data = Array.tabulate<Nat8>(1024, func(i) = Nat8.fromNat(i % 251));
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         expect.array(roundTripChunked(enc, data, 32), Nat8.toText, Nat8.equal).equal(data);
       },
     );
@@ -261,7 +273,7 @@ suite(
         // Extremely small block size forces a block flush on every encode call,
         // exercising the STREAM_FLUSH_THRESHOLD drain callback heavily.
         let data = Array.tabulate<Nat8>(128, func(i) = Nat8.fromNat(i));
-        let enc = Encoder.EncoderBuilder().deflateBlockSize(1).build();
+        let enc = buildEncoder({ defaultOpts with deflateBlockSize = 1 });
         expect.array(roundTripChunked(enc, data, 16), Nat8.toText, Nat8.equal).equal(data);
       },
     );
@@ -279,7 +291,7 @@ suite(
       "single-chunk output: chunks()[0] equals compressed()",
       func() {
         let data : [Nat8] = [10, 20, 30, 40, 50];
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         enc.encode(data);
         enc.finish();
         let merged = enc.compressed();
@@ -298,7 +310,7 @@ suite(
         // chunks in practice; instead we verify logical equivalence by comparing
         // Array.flatten(chunks()) with compressed() for a moderately-sized input.
         let data = Array.tabulate<Nat8>(2048, func(i) = Nat8.fromNat(i % 16));
-        let enc = Encoder.EncoderBuilder().deflateBlockSize(64).build();
+        let enc = buildEncoder({ defaultOpts with deflateBlockSize = 64 });
         enc.encode(data);
         enc.finish();
         let merged = enc.compressed();
@@ -322,7 +334,7 @@ suite(
     test(
       "two consecutive compressions with clear() are independent",
       func() {
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
 
         let dataA = Array.tabulate<Nat8>(256, func(i) = Nat8.fromNat(i % 64));
         let dataB = Array.tabulate<Nat8>(128, func(i) = Nat8.fromNat(255 - (i % 128)));
@@ -335,7 +347,7 @@ suite(
     test(
       "clear() after finish() resets headerWritten — next stream has its own header",
       func() {
-        let enc = Encoder.EncoderBuilder().build();
+        let enc = buildEncoder(defaultOpts);
         enc.encode([1, 2, 3]);
         enc.finish();
         let first = enc.compressed();
@@ -347,7 +359,7 @@ suite(
         enc.clear();
 
         // Both outputs are independently valid Gzip streams.
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
 
         dec.decode(first);
         switch (dec.finish()) {
@@ -380,7 +392,7 @@ suite(
     test(
       "fixedHuffman round-trips",
       func() {
-        let enc = Encoder.EncoderBuilder().fixedHuffman().build();
+        let enc = buildEncoder({ defaultOpts with huffman = #fixed });
         expect.array(roundTrip(enc, data), Nat8.toText, Nat8.equal).equal(data);
       },
     );
@@ -388,7 +400,7 @@ suite(
     test(
       "dynamicHuffman round-trips",
       func() {
-        let enc = Encoder.EncoderBuilder().dynamicHuffman().build();
+        let enc = buildEncoder({ defaultOpts with huffman = #dynamic });
         expect.array(roundTrip(enc, data), Nat8.toText, Nat8.equal).equal(data);
       },
     );
@@ -396,7 +408,7 @@ suite(
     test(
       "autoHuffman round-trips",
       func() {
-        let enc = Encoder.EncoderBuilder().autoHuffman().build();
+        let enc = buildEncoder({ defaultOpts with huffman = #auto });
         expect.array(roundTrip(enc, data), Nat8.toText, Nat8.equal).equal(data);
       },
     );
@@ -415,7 +427,7 @@ suite(
     test(
       "#fast round-trips",
       func() {
-        let enc = Encoder.EncoderBuilder().lzss(#fast).build();
+        let enc = buildEncoder({ defaultOpts with lzss = #fast });
         expect.array(roundTrip(enc, data), Nat8.toText, Nat8.equal).equal(data);
       },
     );
@@ -423,7 +435,7 @@ suite(
     test(
       "#balance round-trips",
       func() {
-        let enc = Encoder.EncoderBuilder().lzss(#balance).build();
+        let enc = buildEncoder({ defaultOpts with lzss = #balance });
         expect.array(roundTrip(enc, data), Nat8.toText, Nat8.equal).equal(data);
       },
     );
@@ -431,7 +443,7 @@ suite(
     test(
       "#best round-trips",
       func() {
-        let enc = Encoder.EncoderBuilder().lzss(#best).build();
+        let enc = buildEncoder({ defaultOpts with lzss = #best });
         expect.array(roundTrip(enc, data), Nat8.toText, Nat8.equal).equal(data);
       },
     );

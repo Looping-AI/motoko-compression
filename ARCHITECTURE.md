@@ -10,7 +10,7 @@ The Gzip API has two complementary modes depending on payload size:
 
 - **Multi-step (timer-driven)** — `encode()` + `finish()` spread across timer ticks for large encoding; `start()` + repeated `step()` spread across timer ticks for large decoding. Each tick runs inside a fresh IC instruction budget (~40B instructions).
 
-Reuse encoder and decoder instances across calls by declaring them as `transient let` canister fields. One-shot helpers call `clear()` internally so state never leaks between calls.
+Reuse encoder and decoder instances across calls by declaring them as `transient let` canister fields built via `Gzip.buildEncoder(options)` and `Gzip.buildDecoder()`.
 
 ### 2. Output accumulates internally — no callbacks
 
@@ -55,7 +55,7 @@ Gzip  (RFC 1952 wrapper: header, CRC32, ISIZE)
 src/
   Gzip/
     lib.mo          ← public entry point; re-exports all types + one-shot helpers
-    Encoder.mo      ← Gzip encoder class + EncoderBuilder
+    Encoder.mo      ← Gzip encoder class
     Decoder.mo      ← Gzip decoder class (start/step/finish/clear)
     Header.mo       ← RFC 1952 header encode/decode
   Deflate/
@@ -92,14 +92,14 @@ src/
 
 Completed DEFLATE blocks drain from `BitBuffer` into the internal chunk list when the buffer exceeds 1 MiB (the `STREAM_FLUSH_THRESHOLD`). This bounds peak memory use during large encodes.
 
-`EncoderBuilder` options map directly to steps 1–3:
+`GzipOptions` maps directly to steps 1–3:
 
 | Option                                                     | Affects                            | Default        |
 | ---------------------------------------------------------- | ---------------------------------- | -------------- |
-| `.lzss(#fast\|#balance\|#best)`                            | Match quality vs. speed (step 1)   | `#balance`     |
-| `.fixedHuffman()` / `.dynamicHuffman()` / `.autoHuffman()` | Code table choice (step 2)         | `fixedHuffman` |
-| `.deflateBlockSize(bytes)`                                 | DEFLATE block formation (step 2–3) | 32 KiB         |
-| `.outputChunkSize(bytes)`                                  | Recommended per-tick input slice   | 6 MiB          |
+| `lzss = #fast\|#balance\|#best`                            | Match quality vs. speed (step 1)   | `#balance`     |
+| `huffman = #fixed\|#dynamic\|#auto`                        | Code table choice (step 2)         | `#fixed`       |
+| `deflateBlockSize = bytes`                                 | DEFLATE block formation (step 2–3) | 32 KiB         |
+| `outputChunkSize = bytes`                                  | Recommended per-tick input slice   | 6 MiB          |
 
 Note: fixed Huffman is the default because dynamic table computation is expensive at IC instruction rates and rarely yields a meaningful ratio gain over fixed tables at the 32 KiB block size.
 
@@ -119,8 +119,8 @@ Note: fixed Huffman is the default because dynamic table computation is expensiv
 import Gzip "mo:gzip";
 
 // ── One-shot (small data) ───────────────────────────────────────────────────
-let enc = Gzip.EncoderBuilder().build(); // reuse as transient let
-let dec = Gzip.Decoder(); // reuse as transient let
+let enc = Gzip.buildEncoder(Gzip.defaultOptions()); // reuse as transient let
+let dec = Gzip.buildDecoder(); // reuse as transient let
 
 let compressed : [Nat8] = Gzip.compress(enc, input);
 let compressed : [Nat8] = Gzip.compressText(enc, text);
@@ -128,7 +128,7 @@ let compressed : [Nat8] = Gzip.compressBlob(enc, blob);
 let result : Result<[Nat8], Text> = Gzip.decompress(dec, compressed);
 
 // ── Multi-step encoding (large data, spread across timer ticks) ─────────────
-let enc = Gzip.EncoderBuilder().build();
+let enc = Gzip.buildEncoder(Gzip.defaultOptions());
 
 // Each timer tick: feed exactly enc.outputChunkSize() bytes of raw input.
 enc.encode(nextSlice(enc.outputChunkSize()));
@@ -140,7 +140,7 @@ let out : [[Nat8]] = enc.chunks(); // no-copy iteration
 enc.clear();
 
 // ── Multi-step decoding (large data, spread across timer ticks) ─────────────
-let dec = Gzip.Decoder();
+let dec = Gzip.buildDecoder();
 
 dec.decode(compressed); // or multiple fragments
 switch (dec.start()) {
