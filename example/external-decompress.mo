@@ -37,7 +37,7 @@ shared ({ caller = _owner }) persistent actor class ExternalDecompress() {
 
   // ── Transient state ───────────────────────────────────────────────────────
 
-  transient let gzipDecoder = Gzip.Decoder();
+  transient let gzipDecoder = Gzip.buildDecoder();
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 

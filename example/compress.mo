@@ -11,14 +11,14 @@
 /// of spinning up the full encoder+decoder pair:
 ///
 ///   // Encoding only:
-///   let compressed = Gzip.compress(enc, rawBytes);      // [Nat8]
-///   let compressed = Gzip.compressText(enc, text);      // [Nat8]
-///   let compressed = Gzip.compressBlob(enc, blob);      // [Nat8]
+///   let compressed = Gzip.compress(encoder, rawBytes);      // [Nat8]
+///   let compressed = Gzip.compressText(encoder, text);      // [Nat8]
+///   let compressed = Gzip.compressBlob(encoder, blob);      // [Nat8]
 ///
 ///   // Decoding only:
-///   let result = Gzip.decompress(dec, compressed);      // Result<[Nat8], Text>
+///   let result = Gzip.decompress(decoder, compressed);      // Result<[Nat8], Text>
 ///
-///   Keep `enc` and `dec` as `transient let` canister fields and reuse them
+///   Keep `encoder` and `decoder` as `transient let` canister fields and reuse them
 ///   across calls — each helper calls `clear()` internally so state never leaks.
 ///
 /// Usage (small):
@@ -111,8 +111,8 @@ shared ({ caller = _owner }) persistent actor class Compression() = self {
   // Live streaming codecs — always-live singletons; reused across jobs via
   // clear(). Transient: an upgrade discards them and `postupgrade` fails any
   // in-progress job accordingly.
-  transient let encoder : Gzip.Encoder = Gzip.EncoderBuilder().build();
-  transient let decoder : Gzip.Decoder = Gzip.Decoder();
+  transient let encoder : Gzip.Encoder = Gzip.buildEncoder(Gzip.defaultOptions());
+  transient let decoder : Gzip.Decoder = Gzip.buildDecoder();
 
   transient var timerHandle : ?Timer.TimerId = null;
 

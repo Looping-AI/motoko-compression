@@ -23,8 +23,8 @@ Equivalent explicit import for Gzip is `mo:gzip/Gzip`.
 
 ### One-shot round trip
 
-Best for small payloads (≤ 6 MiB input). Keep the encoder and decoder as `transient let`
-in your canister — the convenience helpers call `clear()` internally so state never leaks.
+Best for small payloads (≤ 6 MiB input). Keep encoder/decoder as `transient let`
+and pass them to helpers so internal state is reused. Helpers call `clear()`.
 
 ```motoko
 import Blob "mo:core/Blob";
@@ -32,11 +32,9 @@ import Runtime "mo:core/Runtime";
 import Text "mo:core/Text";
 import Gzip "mo:gzip";
 
-// Reuse these across calls — declare as `transient let` in a canister.
-let enc = Gzip.EncoderBuilder().build();
-let dec = Gzip.Decoder();
-
 let input = Blob.toArray(Text.encodeUtf8("Hello, Internet Computer!"));
+let enc = Gzip.buildEncoder(Gzip.defaultOptions());
+let dec = Gzip.buildDecoder();
 
 let compressed = Gzip.compress(enc, input);
 
@@ -61,7 +59,7 @@ calls `finish()` to flush the Gzip footer.
 import Array "mo:core/Array";
 import Gzip "mo:gzip";
 
-let enc = Gzip.EncoderBuilder().build();
+let enc = Gzip.buildEncoder(Gzip.defaultOptions());
 
 // Each timer run: feed one slice of raw input.
 let lo = offset;
@@ -88,7 +86,7 @@ internally and is read once `#done` is returned.
 import Runtime "mo:core/Runtime";
 import Gzip "mo:gzip";
 
-let dec = Gzip.Decoder();
+let dec = Gzip.buildDecoder();
 
 // Feed all compressed bytes first (one or more decode() calls).
 dec.decode(compressed);
@@ -113,14 +111,14 @@ switch (dec.step(#default)) {
 
 Pass `#custom(n)` to `step()` to override the default 21 MiB output budget per tick.
 
-## EncoderBuilder options
+## GzipOptions fields
 
-| Option                                                     | Effect                                                     |
-| ---------------------------------------------------------- | ---------------------------------------------------------- |
-| `.lzss(#fast \| #balance \| #best)`                        | Match quality vs. speed                                    |
-| `.fixedHuffman()` / `.dynamicHuffman()` / `.autoHuffman()` | Huffman table strategy                                     |
-| `.deflateBlockSize(bytes)`                                 | DEFLATE block size (not IC message size)                   |
-| `.outputChunkSize(bytes)`                                  | Recommended per-self-call input slice size (default 6 MiB) |
+| Option                                  | Effect                                                     |
+| --------------------------------------- | ---------------------------------------------------------- |
+| `lzss = #fast \| #balance \| #best`     | Match quality vs. speed                                    |
+| `huffman = #fixed \| #dynamic \| #auto` | Huffman table strategy                                     |
+| `deflateBlockSize = bytes`              | DEFLATE block size (not IC message size)                   |
+| `outputChunkSize = bytes`               | Recommended per-self-call input slice size (default 6 MiB) |
 
 ## Performance
 

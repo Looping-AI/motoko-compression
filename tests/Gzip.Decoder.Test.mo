@@ -7,10 +7,10 @@ import Gzip "../src/Gzip/lib";
 
 // ── Fixture helper ─────────────────────────────────────────────────────────
 
-/// Compress `data` with the default encoder (balance LZSS, auto Huffman).
+/// Compress `data` with the default encoder (balance LZSS, fixed Huffman).
 /// Used ONLY to generate gzip byte fixtures; the decoder is the object under test.
 func gzip(data : [Nat8]) : [Nat8] {
-  let enc = Gzip.EncoderBuilder().build();
+  let enc = Gzip.buildEncoder(Gzip.defaultOptions());
   enc.encode(data);
   enc.finish();
   enc.compressed();
@@ -25,7 +25,7 @@ suite(
     test(
       "empty payload decompresses to empty array",
       func() {
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip([]));
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("Unexpected error: " # msg);
@@ -39,7 +39,7 @@ suite(
       "single byte",
       func() {
         let data : [Nat8] = [0x42];
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip(data));
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("Unexpected error: " # msg);
@@ -54,7 +54,7 @@ suite(
       func() {
         // "Hello, Gzip!" = 72 101 108 108 111 44 32 71 122 105 112 33
         let data : [Nat8] = [72, 101, 108, 108, 111, 44, 32, 71, 122, 105, 112, 33];
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip(data));
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("Unexpected error: " # msg);
@@ -68,7 +68,7 @@ suite(
       "all 256 byte values",
       func() {
         let data = Array.tabulate<Nat8>(256, func(i) { Nat8.fromNat(i) });
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip(data));
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("Unexpected error: " # msg);
@@ -82,7 +82,7 @@ suite(
       "highly repetitive payload exercises LZSS back-references",
       func() {
         let data = Array.tabulate<Nat8>(1024, func(i) { Nat8.fromNat(i % 8) });
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip(data));
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("Unexpected error: " # msg);
@@ -106,7 +106,7 @@ suite(
       func() {
         let data : [Nat8] = [10, 20, 30, 40, 50];
         let bytes = gzip(data);
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         for (b in bytes.vals()) {
           dec.decode([b]);
         };
@@ -126,7 +126,7 @@ suite(
         let mid = bytes.size() / 2;
         let first = Array.tabulate<Nat8>(mid, func(i) { bytes[i] });
         let second = Array.tabulate<Nat8>(bytes.size() - mid, func(i) { bytes[mid + i] });
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(first);
         dec.decode(second);
         switch (dec.finish()) {
@@ -142,7 +142,7 @@ suite(
       func() {
         let data : [Nat8] = [7, 8, 9];
         let bytes = gzip(data);
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode([]);
         dec.decode([]);
         dec.decode(bytes);
@@ -168,7 +168,7 @@ suite(
       "chunks() and decompressed() return equivalent data",
       func() {
         let data = Array.tabulate<Nat8>(256, func(i) { Nat8.fromNat(i % 64) });
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip(data));
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("finish error: " # msg);
@@ -186,7 +186,7 @@ suite(
       func() {
         let n = 512;
         let data = Array.tabulate<Nat8>(n, func(i) { Nat8.fromNat(i % 256) });
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip(data));
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("finish error: " # msg);
@@ -200,7 +200,7 @@ suite(
     test(
       "decompressed() and chunks() and decompressedSize() are 0 on fresh decoder",
       func() {
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         expect.nat(dec.decompressedSize()).equal(0);
         expect.array(dec.decompressed(), Nat8.toText, Nat8.equal).equal([]);
         expect.nat(dec.chunks().size()).equal(0);
@@ -219,7 +219,7 @@ suite(
     test(
       "step() without start() returns #err",
       func() {
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip([1, 2, 3]));
         switch (dec.step(#default)) {
           case (#err _) {};
@@ -232,7 +232,7 @@ suite(
       "start() returns #ok with a valid header",
       func() {
         let data : [Nat8] = [65, 66, 67]; // "ABC"
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip(data));
         switch (dec.start()) {
           case (#err msg) Runtime.trap("start() unexpected error: " # msg);
@@ -259,7 +259,7 @@ suite(
         // Data well below the ~1 MiB internal flush threshold, so a single
         // step() with the default 21 MiB budget returns #done immediately.
         let data : [Nat8] = [10, 20, 30, 40];
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip(data));
         switch (dec.start()) {
           case (#err msg) Runtime.trap("start error: " # msg);
@@ -287,7 +287,7 @@ suite(
       "clear() resets decompressed output and size to zero",
       func() {
         let data : [Nat8] = [1, 2, 3, 4, 5];
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(gzip(data));
         switch (dec.finish()) {
           case (#err msg) Runtime.trap("finish error: " # msg);
@@ -308,7 +308,7 @@ suite(
       func() {
         let dataA : [Nat8] = [11, 22, 33];
         let dataB : [Nat8] = [44, 55, 66, 77];
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
 
         dec.decode(gzip(dataA));
         switch (dec.finish()) {
@@ -332,7 +332,7 @@ suite(
       func() {
         let data : [Nat8] = [99, 88, 77];
         let bytes = gzip(data);
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
 
         // Feed only the first half of a stream, then abandon it.
         dec.decode(Array.tabulate<Nat8>(bytes.size() / 2, func(i) { bytes[i] }));
@@ -362,7 +362,7 @@ suite(
       func() {
         // Valid-length 10-byte header but wrong magic (0x00 0x00 instead of 0x1f 0x8b).
         let bad : [Nat8] = [0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03];
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(bad);
         switch (dec.finish()) {
           case (#err _) {};
@@ -376,7 +376,7 @@ suite(
       func() {
         // Correct magic, CM = 0x07 (not deflate which is 0x08).
         let bad : [Nat8] = [0x1f, 0x8b, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03];
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(bad);
         switch (dec.finish()) {
           case (#err _) {};
@@ -391,7 +391,7 @@ suite(
         // Dropping the 8-byte footer leaves intact deflate data but no CRC32/ISIZE.
         let all = gzip([1, 2, 3, 4, 5]);
         let truncated = Array.tabulate<Nat8>(all.size() - 8, func(i) { all[i] });
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(truncated);
         switch (dec.finish()) {
           case (#err _) {};
@@ -411,7 +411,7 @@ suite(
           n,
           func(i) { if (i == n - 8) { ^all[i] } else { all[i] } },
         );
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(corrupted);
         switch (dec.finish()) {
           case (#err _) {};
@@ -431,7 +431,7 @@ suite(
           n,
           func(i) { if (i == n - 1) { ^all[i] } else { all[i] } },
         );
-        let dec = Gzip.Decoder();
+        let dec = Gzip.buildDecoder();
         dec.decode(corrupted);
         switch (dec.finish()) {
           case (#err _) {};
