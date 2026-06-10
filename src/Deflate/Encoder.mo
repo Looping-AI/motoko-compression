@@ -104,6 +104,16 @@ module {
       flush(true);
       bitbuffer.byteAlign();
     };
+
+    /// Get the number of bytes in the compressed output.
+    public func byteSize() : Nat {
+      bitbuffer.byteSize();
+    };
+
+    /// Get all compressed bytes.
+    public func getCompressedBytes() : [Nat8] {
+      bitbuffer.getBytes(0, bitbuffer.byteSize());
+    };
   };
 
 };

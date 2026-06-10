@@ -4,7 +4,6 @@ import List "mo:core/List";
 import Nat8 "mo:core/Nat8";
 import Nat "mo:core/Nat";
 import Runtime "mo:core/Runtime";
-import BitBuffer "../src/internal/BitBuffer";
 import DeflateDecoder "../src/Deflate/Decoder";
 import CodeTables "../src/Deflate/CodeTables";
 import Deflate "../src/Deflate/lib";
@@ -13,11 +12,10 @@ import Deflate "../src/Deflate/lib";
 
 /// Encode `data` with `options`, decode the result, and return the decoded bytes.
 func roundTrip(data : [Nat8], options : Deflate.DeflateOptions) : [Nat8] {
-  let bb = BitBuffer.new();
-  let encoder = Deflate.Encoder(bb, options);
+  let encoder = Deflate.buildEncoder(options);
   encoder.encode(data);
   encoder.finish();
-  let bytes = bb.getBytes(0, bb.byteSize());
+  let bytes = encoder.getCompressedBytes();
 
   let decoder = DeflateDecoder.fromBytes(bytes);
   let collected = List.empty<Nat8>();
@@ -30,11 +28,10 @@ func roundTrip(data : [Nat8], options : Deflate.DeflateOptions) : [Nat8] {
 
 /// Encode `data` with `options` and return the compressed byte count.
 func compressedSize(data : [Nat8], options : Deflate.DeflateOptions) : Nat {
-  let bb = BitBuffer.new();
-  let encoder = Deflate.Encoder(bb, options);
+  let encoder = Deflate.buildEncoder(options);
   encoder.encode(data);
   encoder.finish();
-  bb.byteSize();
+  encoder.byteSize();
 };
 
 let fixedOpts : Deflate.DeflateOptions = {
