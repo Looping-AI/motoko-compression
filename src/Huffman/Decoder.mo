@@ -39,9 +39,13 @@ module {
   let FAST_ROOT_BITS : Nat = 10;
   let POW2 : [Nat] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
 
+  /// Two-level (zlib-style) fast Huffman decoder backed by a single flat table.
+  /// Use `fromBitwidthsFast` to construct; decode symbols with `decodeRaw`.
   public class FastDecoder(tbl : [var Nat64], initRootBits : Nat) {
 
+    /// Number of bits used for the primary table index (≤ `MAX_BITWIDTH`).
     public let rootBits = initRootBits;
+    /// Flat packed decode table. Each entry packs a symbol/offset and a consume count.
     public let table = tbl;
 
     /// Decode one symbol from the bit accumulator.  Returns `DECODE_ERROR`

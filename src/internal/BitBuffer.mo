@@ -31,6 +31,7 @@ module {
   // Used by the read path (getBits / getByte).
   let MASKS8 : [Nat8] = [0, 1, 3, 7, 15, 31, 63, 127, 255];
 
+  /// Growable bit-level write/read buffer, packed LSB-first (DEFLATE convention).
   public class BitBuffer(initCapacity : Nat) {
 
     // ── Backing store ─────────────────────────────────────────────────────

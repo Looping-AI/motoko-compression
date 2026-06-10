@@ -7,8 +7,10 @@ import Result "mo:core/Result";
 module {
   type Result<A, B> = Result.Result<A, B>;
 
+  /// Maximum Huffman code bitwidth allowed by RFC 1951.
   public let MAX_BITWIDTH : Nat = 15;
 
+  /// A Huffman code: the number of bits and the LSB-first bit pattern.
   public type Code = {
     bitwidth : Nat;
     bits : Nat16;
@@ -33,6 +35,7 @@ module {
     };
   };
 
+  /// Interface for accumulating symbol→code mappings and producing an encoder or decoder.
   public type BuilderInterface<A> = {
     setMapping : (Nat, Code) -> Result<(), Text>;
     build : () -> A;

@@ -69,20 +69,27 @@ module {
 
   // ── Header ───────────────────────────────────────────────────────────────
 
+  /// RFC 1952 FEXTRA field: a two-byte subfield ID and associated data bytes.
   public type ExtraField = HeaderFile.ExtraField;
+  /// Operating system identifier written into byte 9 of the Gzip header (RFC 1952).
   public type Os = HeaderFile.Os;
+  /// Decoded Gzip header fields (RFC 1952 §2.3).
   public type Header = HeaderFile.Header;
 
   // ── Public configuration ─────────────────────────────────────────────────
 
+  /// LZSS compression level: `#fast`, `#balance`, or `#best`.
   public type CompressionLevel = Common.CompressionLevel;
 
+  /// Huffman table selection: `#fixed` (RFC static tables), `#dynamic` (per-block),
+  /// or `#auto` (picks the cheaper variant per block).
   public type HuffmanMode = {
     #fixed;
     #dynamic;
     #auto;
   };
 
+  /// Full configuration for the Gzip encoder.
   public type GzipOptions = {
     lzss : CompressionLevel;
     deflateBlockSize : Nat;
@@ -111,7 +118,11 @@ module {
 
   // ── Stateful codec types ────────────────────────────────────────────────
 
+  /// Stateful Gzip encoder. Create with `buildEncoder`; feed data with `encode`;
+  /// finalise with `finish`; retrieve output with `compressed` or `chunks`.
   public type Encoder = EncoderFile.Encoder;
+  /// Stateful Gzip decoder. Create with `buildDecoder`; feed compressed bytes
+  /// with `decode`; run with `finish` or the resumable `start`/`step` API.
   public type Decoder = DecoderFile.Decoder;
 
   /// Create a configured stateful Gzip encoder.

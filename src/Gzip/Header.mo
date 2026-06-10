@@ -74,6 +74,8 @@ module {
 
   // ── Default header ───────────────────────────────────────────────────────
 
+  /// Construct a default Gzip header: no filename/comment/extra fields, OS = Unix,
+  /// modification time set to the current time, XFL = 0x00 (unspecified level).
   public func defaultHeader() : Header = {
     is_text = false;
     is_verified = false;
@@ -262,6 +264,7 @@ module {
 
   // ── OS helpers ─────────────────────────────────────────────────────────
 
+  /// Convert an `Os` variant to its RFC 1952 byte value (byte 9 of the header).
   public func osToByte(os : Os) : Nat8 = switch os {
     case (#FatFs) 0x00;
     case (#Amiga) 0x01;
@@ -280,6 +283,7 @@ module {
     case (#Unknown) 0xff;
   };
 
+  /// Convert an RFC 1952 OS byte to its `Os` variant. Unknown values map to `#Unknown`.
   public func byteToOs(byte : Nat8) : Os = switch byte {
     case 0x00 #FatFs;
     case 0x01 #Amiga;

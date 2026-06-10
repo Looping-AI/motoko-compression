@@ -57,11 +57,15 @@ module {
 
   // ── Encoder class ──────────────────────────────────────────────────────
 
+  /// Pairs a literal/length Huffman encoder with a distance Huffman encoder
+  /// for encoding Deflate compressed symbols.
   public class Encoder(
     literal_encoder : HuffmanEncoder.Encoder,
     distance_encoder : HuffmanEncoder.Encoder,
   ) {
+    /// Huffman encoder for literal/length codes (symbols 0–285).
     public let literal = literal_encoder;
+    /// Huffman encoder for distance codes (symbols 0–29).
     public let distance = distance_encoder;
   };
 

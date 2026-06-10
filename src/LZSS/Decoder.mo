@@ -15,6 +15,8 @@ module {
 
   // ── Decoder class ───────────────────────────────────────────────────────
 
+  /// Stateless LZSS symbol consumer. Applies literal bytes and back-reference
+  /// pointers to a caller-managed `List.List<Nat8>` output buffer.
   public class Decoder() {
 
     /// Append a literal byte to `output`.

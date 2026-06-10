@@ -14,6 +14,7 @@ module {
 
   // ── Options ────────────────────────────────────────────────────────────
 
+  /// Configuration for the Deflate encoder.
   public type DeflateOptions = {
     /// Maximum number of uncompressed bytes per Deflate block.
     /// Controls compression ratio (Huffman table overhead) and per-block
@@ -30,6 +31,8 @@ module {
 
   // ── Encoder class ──────────────────────────────────────────────────────
 
+  /// Stateful Deflate encoder. Write compressed data into `bitbuffer` by calling
+  /// `encode` for each input slice, then `finish` to flush the final block.
   public class Encoder(bitbuffer : BitBuffer, options : DeflateOptions) {
 
     let block = Block.block(
@@ -46,6 +49,7 @@ module {
     // sym_bytes captured from the block just before each flush (block resets after flush).
     var prevFlushedSymBytes : Nat = 0;
 
+    /// Register a callback invoked with the buffer's byte size after each block flush.
     public func setOnBlockFlushed(cb : (Nat) -> ()) {
       onBlockFlushed := ?cb;
     };

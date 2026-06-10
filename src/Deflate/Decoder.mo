@@ -153,6 +153,8 @@ module {
 
   // ── Decoder class ──────────────────────────────────────────────────────
 
+  /// Stateful RFC 1951 Deflate decoder. Feed it a `BitAccumulator` and drive
+  /// decompression with `decodeBounded` (suspendable) or `decodeStreamingWithCapacity`.
   public class Decoder(acc : BitAccumulator.BitAccumulator) {
 
     var err : ?Text = null;
