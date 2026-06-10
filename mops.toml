@@ -1,6 +1,6 @@
 [package]
 name = "gzip"
-version = "1.0.0"
+version = "1.0.1"
 description = "Motoko compression library implementing Gzip encode/decode with an internal Deflate, Huffman, and LZSS stack."
 repository = "https://github.com/Looping-AI/motoko-gzip"
 keywords = [
