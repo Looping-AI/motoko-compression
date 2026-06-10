@@ -94,12 +94,12 @@ Completed DEFLATE blocks drain from `BitBuffer` into the internal chunk list whe
 
 `GzipOptions` maps directly to steps 1–3:
 
-| Option                                                     | Affects                            | Default        |
-| ---------------------------------------------------------- | ---------------------------------- | -------------- |
-| `lzss = #fast\|#balance\|#best`                            | Match quality vs. speed (step 1)   | `#balance`     |
-| `huffman = #fixed\|#dynamic\|#auto`                        | Code table choice (step 2)         | `#fixed`       |
-| `deflateBlockSize = bytes`                                 | DEFLATE block formation (step 2–3) | 32 KiB         |
-| `outputChunkSize = bytes`                                  | Recommended per-tick input slice   | 6 MiB          |
+| Option                              | Affects                            | Default    |
+| ----------------------------------- | ---------------------------------- | ---------- |
+| `lzss = #fast\|#balance\|#best`     | Match quality vs. speed (step 1)   | `#balance` |
+| `huffman = #fixed\|#dynamic\|#auto` | Code table choice (step 2)         | `#fixed`   |
+| `deflateBlockSize = bytes`          | DEFLATE block formation (step 2–3) | 32 KiB     |
+| `outputChunkSize = bytes`           | Recommended per-tick input slice   | 6 MiB      |
 
 Note: fixed Huffman is the default because dynamic table computation is expensive at IC instruction rates and rarely yields a meaningful ratio gain over fixed tables at the 32 KiB block size.
 

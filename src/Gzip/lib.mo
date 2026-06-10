@@ -138,7 +138,7 @@ module {
 
   /// Compress `bytes` in one call using a reusable encoder to avoid
   /// re-allocating internal structures on every call.
-  /// The helper calls `clear()` so encoder state never leaks between calls.  
+  /// The helper calls `clear()` so encoder state never leaks between calls.
   /// For large data use `enc.encode()` + `enc.finish()` + `enc.compressed()` directly across timer runs.
   public func compress(enc : Encoder, bytes : [Nat8]) : [Nat8] {
     enc.encode(bytes);

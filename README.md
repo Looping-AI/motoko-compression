@@ -113,12 +113,12 @@ Pass `#custom(n)` to `step()` to override the default 21 MiB output budget per t
 
 ## GzipOptions fields
 
-| Option                                                     | Effect                                                     |
-| ---------------------------------------------------------- | ---------------------------------------------------------- |
-| `lzss = #fast \| #balance \| #best`                        | Match quality vs. speed                                    |
-| `huffman = #fixed \| #dynamic \| #auto`                    | Huffman table strategy                                     |
-| `deflateBlockSize = bytes`                                 | DEFLATE block size (not IC message size)                   |
-| `outputChunkSize = bytes`                                  | Recommended per-self-call input slice size (default 6 MiB) |
+| Option                                  | Effect                                                     |
+| --------------------------------------- | ---------------------------------------------------------- |
+| `lzss = #fast \| #balance \| #best`     | Match quality vs. speed                                    |
+| `huffman = #fixed \| #dynamic \| #auto` | Huffman table strategy                                     |
+| `deflateBlockSize = bytes`              | DEFLATE block size (not IC message size)                   |
+| `outputChunkSize = bytes`               | Recommended per-self-call input slice size (default 6 MiB) |
 
 ## Performance
 
