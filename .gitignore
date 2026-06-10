@@ -14,3 +14,6 @@ tests/integration/builds/
 # Perf script artifacts
 scripts/builds/
 scripts/output/
+
+# Benchmarks
+.bench
