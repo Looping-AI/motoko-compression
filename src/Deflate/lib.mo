@@ -12,7 +12,6 @@ import DeflateDecoder "Decoder";
 module {
 
   public type Encoder = DeflateEncoder.Encoder;
-  public let Encoder = DeflateEncoder.Encoder;
   public type Decoder = DeflateDecoder.Decoder;
   public type DeflateOptions = DeflateEncoder.DeflateOptions;
   public type CompressionLevel = Common.CompressionLevel;

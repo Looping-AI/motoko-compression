@@ -52,7 +52,7 @@ import Blob "mo:core/Blob";
 import Random "mo:core/Random";
 import Runtime "mo:core/Runtime";
 import Timer "mo:core/Timer";
-import Gzip "../src/Gzip/lib";
+import Gzip "../src";
 
 shared ({ caller = _owner }) persistent actor class Compression() = self {
 

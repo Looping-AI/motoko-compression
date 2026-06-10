@@ -1,7 +1,7 @@
 /**
  * Gzip correctness test.
  *
- * Verifies that the motoko-compression gzip implementation round-trips data
+ * Verifies that the motoko-gzip implementation round-trips data
  * correctly: generateBytes → requestCompressJob → requestDecompressJob must
  * reproduce the original bytes exactly.
  *

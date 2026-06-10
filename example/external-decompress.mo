@@ -1,7 +1,7 @@
 /// Example: interoperability test canister.
 ///
 /// Receives externally-compressed gzip data (e.g. from node:zlib, pako, or
-/// any standard gzip producer), decompresses it using the motoko-compression
+/// any standard gzip producer), decompresses it using the motoko-gzip
 /// library, and returns the original bytes — proving round-trip compatibility
 /// with foreign gzip implementations.
 ///
@@ -19,7 +19,7 @@ import Array "mo:core/Array";
 import List "mo:core/List";
 import Nat "mo:core/Nat";
 import Runtime "mo:core/Runtime";
-import Gzip "../src/Gzip/lib";
+import Gzip "../src";
 
 shared ({ caller = _owner }) persistent actor class ExternalDecompress() {
 

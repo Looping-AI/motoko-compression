@@ -1,7 +1,7 @@
 /**
  * Gzip interoperability test.
  *
- * Verifies that the motoko-compression gzip decoder can decompress data
+ * Verifies that the motoko-gzip decoder can decompress data
  * produced by node:zlib — proving cross-implementation compatibility.
  *
  * Structured tests: 1 MiB and 10 MiB payloads mirroring compress.mo generateBytes():
