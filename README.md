@@ -4,12 +4,12 @@ A Motoko compression library for the [Internet Computer](https://internetcompute
 
 ## Status
 
-| Algorithm | Encode | Decode | Import                   |
-| --------- | ------ | ------ | ------------------------ |
-| Gzip      | ✅     | ✅     | `mo:gzip` (default)      |
-| DEFLATE   | ✅     | ✅     | `mo:gzip/Deflate`        |
-| LZSS      | ✅     | ✅     | `mo:gzip/LZSS`           |
-| Huffman   | ✅     | ✅     | internal building blocks |
+| Algorithm | Encode | Decode | Import              |
+| --------- | ------ | ------ | ------------------- |
+| Gzip      | ✅     | ✅     | `mo:gzip` (default) |
+| DEFLATE   | ✅     | ✅     | `mo:gzip/Deflate`   |
+| LZSS      | ✅     | ✅     | internal            |
+| Huffman   | ✅     | ✅     | internal            |
 
 ## Installation
 

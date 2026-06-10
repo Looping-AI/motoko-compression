@@ -19,7 +19,7 @@ import Array "mo:core/Array";
 import List "mo:core/List";
 import Nat "mo:core/Nat";
 import Runtime "mo:core/Runtime";
-import Gzip "../src/Gzip/lib";
+import Gzip "../src";
 
 shared ({ caller = _owner }) persistent actor class ExternalDecompress() {
 

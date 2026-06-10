@@ -35,7 +35,7 @@ import Nat "mo:core/Nat";
 import Runtime "mo:core/Runtime";
 import Text "mo:core/Text";
 import Timer "mo:core/Timer";
-import Gzip "../src/Gzip/lib";
+import Gzip "../src";
 
 shared ({ caller = _owner }) persistent actor class ImageStore() = self {
 
