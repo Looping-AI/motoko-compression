@@ -7,7 +7,7 @@ import Gzip "../src/Gzip/lib";
 
 // ── Fixture helper ─────────────────────────────────────────────────────────
 
-/// Compress `data` with the default encoder (balance LZSS, auto Huffman).
+/// Compress `data` with the default encoder (balance LZSS, fixed Huffman).
 /// Used ONLY to generate gzip byte fixtures; the decoder is the object under test.
 func gzip(data : [Nat8]) : [Nat8] {
   let enc = Gzip.buildEncoder(Gzip.defaultOptions());
