@@ -22,7 +22,7 @@ module {
   public type Code = Common.Code;
 
   /// Build a Huffman encoder from a per-symbol bitwidth array.
-  /// Returns `#err` if the array is empty or the canonical codes conflict.
+  /// Returns `#err` if the array is empty.
   public func fromBitwidths(bitwidths : [Nat]) : Result<Encoder, Text> {
     if (bitwidths.size() == 0) return #err("bitwidths is empty");
 
