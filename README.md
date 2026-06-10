@@ -17,8 +17,6 @@ A Motoko compression library for the [Internet Computer](https://internetcompute
 mops add gzip
 ```
 
-Equivalent explicit import for Gzip is `mo:gzip/Gzip`.
-
 ## Gzip quick start
 
 ### One-shot round trip

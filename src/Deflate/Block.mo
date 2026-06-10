@@ -28,12 +28,16 @@ module {
 
   // ── Block interface ────────────────────────────────────────────────────────
 
+  /// Common interface for a Deflate block accumulator: accepts raw bytes,
+  /// tracks block size, and flushes the encoded block into a `BitBuffer`.
   public type BlockInterface = {
+    /// Number of raw input bytes accumulated in the current block.
     size : () -> Nat;
     /// Raw bytes emitted as symbols so far in this block (literals × 1 + pointers × len).
     /// Does NOT include bytes still in the LZSS lookahead; those appear only after the
     /// final flush. Use this to compute how many raw bytes have been committed to output.
     symBytes : () -> Nat;
+    /// Feed one raw byte into the block.
     add : (Nat8) -> ();
     /// Bulk-feed the slice `data[off ..< off + len]`. Equivalent to calling
     /// `add` on each byte in turn, but routes through the LZSS bulk path.
@@ -44,6 +48,7 @@ module {
     /// lookahead buffer. Calling LZSS flush between non-final blocks would
     /// corrupt cross-block matches.
     flush : (BitBuffer, Bool) -> ();
+    /// Reset all block state (symbols, frequencies, input size counter).
     clear : () -> ();
   };
 
@@ -54,6 +59,8 @@ module {
 
   // ── Compressed block ───────────────────────────────────────────────────────
 
+  /// Compressed-block implementation. Buffers LZSS symbols (or emits them
+  /// directly for `#fixed` force), then flushes with the best Huffman variant.
   public class Compress(
     bb : BitBuffer,
     lzss : LzssEncoder.Encoder,
@@ -170,14 +177,18 @@ module {
 
     let sink : LzssCommon.MatchSink = if (direct) directSink else bufferedSink;
 
+    /// Number of raw input bytes accumulated in the current block.
     public func size() : Nat { inputSize };
+    /// Raw bytes emitted as symbols so far in this block (literals count 1; pointers count their length).
     public func symBytes() : Nat { symBytesCount };
 
+    /// Feed one raw byte into the block.
     public func add(byte : Nat8) {
       inputSize += 1;
       lzss.encodeByte(byte, sink);
     };
 
+    /// Bulk-feed the slice `data[off ..< off + len]`.
     public func addBytes(data : [Nat8], off : Nat, len : Nat) {
       inputSize += len;
       lzss.encodeRange(data, off, len, sink);
@@ -248,6 +259,7 @@ module {
       emitSymbols(bitbuffer, fixedEnc);
     };
 
+    /// Emit the block payload. `is_final` writes BFINAL=1 and drains the LZSS lookahead.
     public func flush(bitbuffer : BitBuffer, is_final : Bool) {
       if (direct) {
         // Fixed direct-emit: symbols were already written to `bb` as they
@@ -329,6 +341,7 @@ module {
       };
     };
 
+    /// Reset all block state (symbols, frequencies, input size counter, and LZSS window).
     public func clear() {
       lzss.clear();
       resetState();

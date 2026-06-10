@@ -11,6 +11,8 @@ module CRC32 {
     crc32.finish();
   };
 
+  /// Incremental CRC-32 (IEEE polynomial). Feed bytes with `updateByte`/`update`,
+  /// then call `finish` to obtain the checksum. Automatically resets after each `finish`.
   public class CRC32() {
     var inputSize = 0;
 
@@ -22,6 +24,7 @@ module CRC32 {
     let CRC_INIT_VALUE : Nat32 = 0xFFFF_FFFF;
     var crc = CRC_INIT_VALUE;
 
+    /// Feed one byte into the running CRC.
     public func updateByte(byte : Nat8) {
       if (inputSize >= INIT_SIZE and payloadCount >= PAYLOAD_SIZE) {
         crc := singleSlicingUpdate(crc);
@@ -50,6 +53,7 @@ module CRC32 {
       inputSize += 1;
     };
 
+    /// Feed a slice of bytes into the running CRC. Faster than calling `updateByte` per byte.
     public func update(data : [Nat8]) {
       let n = data.size();
       if (n == 0) return;
@@ -123,12 +127,14 @@ module CRC32 {
       ^u;
     };
 
+    /// Reset the CRC state to the initial value without returning a checksum.
     public func reset() {
       inputSize := 0;
       payloadCount := 0;
       crc := CRC_INIT_VALUE;
     };
 
+    /// Return the CRC-32 of all bytes fed so far, then reset for reuse.
     public func finish() : Nat32 {
       let res = if (payloadCount == 0) { ^crc } else {
         simpleUpdate(crc);

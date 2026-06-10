@@ -20,6 +20,7 @@ import Common "Common";
 
 module {
 
+  /// Callback pair that receives LZSS encoder output without heap allocation.
   public type MatchSink = Common.MatchSink;
 
   // ── Per-level tuning ───────────────────────────────────────────────────
@@ -101,6 +102,8 @@ module {
 
   // ── Encoder class ──────────────────────────────────────────────────────
 
+  /// Stateful LZSS encoder. Feed bytes with `encodeByte` or `encodeRange`,
+  /// then call `flush` to drain the lookahead, delivering symbols via a `MatchSink`.
   public class Encoder(level : Common.CompressionLevel) {
 
     // Window: history + lookahead. All level choices use power-of-2 sizes,

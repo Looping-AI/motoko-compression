@@ -13,6 +13,7 @@ import Prim "mo:⛔";
 
 module {
 
+  /// Precomputed RFC 1951 length/distance lookup tables, built once per encoder instance.
   public class CodeTables() {
 
     // ── Source extra-bit counts (literal arrays, written at module scope) ──
@@ -87,12 +88,17 @@ module {
     // ── Public lookup tables ───────────────────────────────────────────────
 
     // Indexed by `len - 3` (len ∈ 3..258).
+    /// RFC 1951 length code (257..285) for each match length, indexed by `len - 3`.
     public let lengthCode : [var Nat] = Prim.Array_init<Nat>(256, 0);
+    /// Number of extra bits for each length code entry, indexed by `len - 3`.
     public let lengthExtraBits : [var Nat] = Prim.Array_init<Nat>(256, 0);
+    /// Extra-bit value for each length code entry, indexed by `len - 3`.
     public let lengthExtraVal : [var Nat] = Prim.Array_init<Nat>(256, 0);
 
     // Indexed by distance code (0..29).
+    /// Number of extra bits for each distance code (0..29).
     public let distExtraBits : [var Nat] = Prim.Array_init<Nat>(30, 0);
+    /// Base distance value for each distance code (0..29).
     public let distBase : [var Nat] = Prim.Array_init<Nat>(30, 0);
 
     // zlib two-tier `_dist_code`: [0..255] = zero-based distance direct;

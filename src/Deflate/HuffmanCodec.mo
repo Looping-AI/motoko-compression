@@ -27,8 +27,12 @@ module {
 
   // ── Dynamic Huffman codec ──────────────────────────────────────────────
 
+  /// Builds dynamic Huffman tables from symbol frequencies and emits the
+  /// RFC 1951 dynamic block header (HLIT/HDIST/HCLEN + code-length sequences).
   public class DynamicHuffmanCodec() {
 
+    /// Build a `Symbol.Encoder` from literal and distance frequency tables.
+    /// Mutates both arrays (adds EndOfBlock count and ensures a distance entry).
     public func buildFromFreqs(lit_freqs : [var Nat], dist_freqs : [var Nat]) : Result<Symbol.Encoder, Text> {
       // EndOfBlock is always emitted; apply to the caller's array (caller resets after flush).
       lit_freqs[256] += 1;
@@ -209,6 +213,8 @@ module {
 
   // ── Fixed Huffman codec ────────────────────────────────────────────────
 
+  /// Builds the fixed RFC 1951 Huffman tables (§3.2.6). Ignores frequency
+  /// arguments; always returns the same pre-defined encoder.
   public class FixedHuffmanCodec() {
 
     func build() : Result<Symbol.Encoder, Text> {
@@ -249,6 +255,7 @@ module {
       #ok(Symbol.Encoder(le, db.build()));
     };
 
+    /// Return the fixed RFC 1951 encoder. Frequency arguments are ignored.
     public func buildFromFreqs(_ : [var Nat], _ : [var Nat]) : Result<Symbol.Encoder, Text> {
       build();
     };

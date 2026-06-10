@@ -11,6 +11,8 @@ import BitBuffer "BitBuffer";
 
 module {
 
+  /// Bit-level sequential reader backed by an internal `BitBuffer`.
+  /// Bits are consumed LSB-first (DEFLATE convention).
   public class BitReader(initCapacity : Nat) {
     var offset = 0;
     let bitbuffer = BitBuffer.BitBuffer(initCapacity);

@@ -16,6 +16,8 @@ import Runtime "mo:core/Runtime";
 
 module {
 
+  /// Growable byte output buffer that also serves as the LZSS sliding window.
+  /// Backing store doubles in capacity when full (amortised O(1) `add`).
   public class OutByteBuffer(initCap : Nat) {
     var cap : Nat = if (initCap > 0) initCap else 4096;
     var buf : [var Nat8] = Prim.Array_init<Nat8>(cap, (0 : Nat8));
