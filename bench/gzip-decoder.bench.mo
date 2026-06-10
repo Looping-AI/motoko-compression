@@ -11,19 +11,22 @@ module {
   func mixedPayload(size : Nat) : [Nat8] {
     let third = size / 3;
     var state : Nat = 2_463_534_242;
-    Array.tabulate<Nat8>(size, func(i) {
-      if (i < third) {
-        // repetitive
-        Nat8.fromNat(0xAA);
-      } else if (i < third * 2) {
-        // progressive
-        Nat8.fromNat(i % 251);
-      } else {
-        // pseudo-random
-        state := (state * 1_664_525 + 1_013_904_223) % 4_294_967_296;
-        Nat8.fromNat((state / 16_777_216) % 256);
-      }
-    });
+    Array.tabulate<Nat8>(
+      size,
+      func(i) {
+        if (i < third) {
+          // repetitive
+          Nat8.fromNat(0xAA);
+        } else if (i < third * 2) {
+          // progressive
+          Nat8.fromNat(i % 251);
+        } else {
+          // pseudo-random
+          state := (state * 1_664_525 + 1_013_904_223) % 4_294_967_296;
+          Nat8.fromNat((state / 16_777_216) % 256);
+        };
+      },
+    );
   };
 
   func chunked(bytes : [Nat8], chunkSize : Nat) : [[Nat8]] {
@@ -32,11 +35,14 @@ module {
     } else {
       (bytes.size() + chunkSize - 1) / chunkSize;
     };
-    Array.tabulate<[Nat8]>(chunkCount, func(i) {
-      let start = i * chunkSize;
-      let end = if (start + chunkSize > bytes.size()) bytes.size() else start + chunkSize;
-      Array.tabulate<Nat8>(end - start, func(j) { bytes[start + j] });
-    });
+    Array.tabulate<[Nat8]>(
+      chunkCount,
+      func(i) {
+        let start = i * chunkSize;
+        let end = if (start + chunkSize > bytes.size()) bytes.size() else start + chunkSize;
+        Array.tabulate<Nat8>(end - start, func(j) { bytes[start + j] });
+      },
+    );
   };
 
   func compress(data : [Nat8]) : [Nat8] {
@@ -110,24 +116,26 @@ module {
     bench.description("Decode gzip payloads with one-shot and chunked feeds");
     bench.rows(["1KiB", "10KiB", "100KiB", "1MiB", "2MiB", "4MiB"]);
     bench.cols(["one-shot", "1KiB chunks"]);
-    bench.runner(func(row, col) {
-      let dec = Gzip.buildDecoder();
-      switch (col) {
-        case ("one-shot") {
-          dec.decode(compressedFor(row));
+    bench.runner(
+      func(row, col) {
+        let dec = Gzip.buildDecoder();
+        switch (col) {
+          case ("one-shot") {
+            dec.decode(compressedFor(row));
+          };
+          case ("1KiB chunks") {
+            feed(dec, chunksFor(row, col));
+          };
+          case (_) Runtime.trap("unexpected decoder mode: " # col);
         };
-        case ("1KiB chunks") {
-          feed(dec, chunksFor(row, col));
+        switch (dec.finish()) {
+          case (#err(msg)) Runtime.trap("decode failed: " # msg);
+          case (#ok(_)) {};
         };
-        case (_) Runtime.trap("unexpected decoder mode: " # col);
-      };
-      switch (dec.finish()) {
-        case (#err(msg)) Runtime.trap("decode failed: " # msg);
-        case (#ok(_)) {};
-      };
-      ignore dec.decompressed();
-      dec.clear();
-    });
+        ignore dec.decompressed();
+        dec.clear();
+      }
+    );
 
     bench;
   };
